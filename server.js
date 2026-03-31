@@ -30,11 +30,11 @@ app.use(cookieParser());
 const corsOptions = {
   origin: function (origin, callback) {
     const allowedOrigins = [
-      "http://192.168.1.156:5000",
-      "http://localhost:5173",
-      "http://localhost:5174",
-      "http://192.168.1.72:5000",
-      "http://localhost:5000",
+      // "http://192.168.1.156:5000",
+      // "http://localhost:5173",
+      // "http://localhost:5174",
+      // "http://192.168.1.72:5000",
+      // "http://localhost:5000",
       process.env.FRONTEND_URL,
     ];
 
@@ -56,22 +56,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// const corsOptions = {
-// origin: [
-//   "http://192.168.1.156:5000",
-//   "http://localhost:5174",
-//   "http://localhost:5173",
-//   "http://192.168.1.72:5000",
-//   "http://localhost:5000",
-//   process.env.FRONTEND_URL,
-// ],
-
-//   credentials: true,
-//   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-//   allowedHeaders: ["Content-Type", "Authorization"],
-// };
-
-// app.use(cors(corsOptions));
 
 setupSwagger(app, API_PREFIX);
 if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {

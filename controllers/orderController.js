@@ -5,7 +5,7 @@ const orderManager = require('../utils/orderManager');
 require("dotenv").config({ quiet: true });
 
 const getBaseUrl = () => {
-  return process.env.BACKEND_URL || 'http://localhost:5000';
+  return process.env.BACKEND_URL;
 };
 
 const shapeOrderHistorySummary = (order) => ({
