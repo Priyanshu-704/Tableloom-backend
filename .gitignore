@@ -1,0 +1,103 @@
+# ----------------------------------------
+# Node Modules & Dependencies
+# ----------------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Optional: comment out lock files above if you prefer keeping lock files in git
+
+
+# ----------------------------------------
+# Environment Variables / Secrets
+# ----------------------------------------
+.env
+.env.*      # .env.dev .env.stage .env.prod etc.
+!.env.example
+
+
+# ----------------------------------------
+# Logs
+# ----------------------------------------
+logs/
+*.log
+*.log.*
+log.txt
+debug.log
+
+
+# ----------------------------------------
+# Runtime Data
+# ----------------------------------------
+pids/
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+
+
+# ----------------------------------------
+# Build Output
+# ----------------------------------------
+dist/
+build/
+out/
+coverage/
+.cache/
+.next/
+serverless/
+.vercel/
+
+
+# ----------------------------------------
+# Testing
+# ----------------------------------------
+coverage/
+.nyc_output/
+.jest/
+
+# ----------------------------------------
+# TypeScript
+# ----------------------------------------
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+
+# ----------------------------------------
+# OS Files
+# ----------------------------------------
+.DS_Store
+Thumbs.db
+
+
+# ----------------------------------------
+# IDE / Editor Files
+# ----------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
+# ----------------------------------------
+# Docker
+# ----------------------------------------
+docker-data/
+*.tar
+
+
+# ----------------------------------------
+# Local Database / SQLite / Prisma
+# ----------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+prisma/migrations/
+prisma/dev.db
