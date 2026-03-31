@@ -5,7 +5,7 @@ require("dotenv").config({ quiet: true });
 
 const DEFAULT_SUPER_ADMIN = {
   name: "Platform Super Admin",
-  email: process.env.SUPER_ADMIN_EMAIL || "superadmin@quickbite.com",
+  email: process.env.SUPER_ADMIN_EMAIL || "superadmin@tableloom.com",
   password: process.env.SUPER_ADMIN_PASSWORD || "SUperAdmin99!!",
 };
 

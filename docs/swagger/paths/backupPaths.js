@@ -59,14 +59,14 @@
  *                 example: mongodb+srv://user:password@cluster.mongodb.net/
  *               targetDbName:
  *                 type: string
- *                 example: quickbite_clone
+ *                 example: tableloom_clone
  *               mode:
  *                 type: string
  *                 enum: [replace, append]
  *                 default: replace
  *           example:
  *             targetUri: mongodb+srv://user:password@cluster.mongodb.net/
- *             targetDbName: quickbite_clone
+ *             targetDbName: tableloom_clone
  *             mode: replace
  *     responses:
  *       200:

@@ -52,14 +52,14 @@ const appSettingSchema = new mongoose.Schema(
       default: "app-settings",
     },
     restaurant: {
-      name: { type: String, default: "QuickBite Restaurant" },
+      name: { type: String, default: "Tableloom Restaurant" },
       address: {
         type: String,
         default: "123 Food Street, Culinary District, 10001",
       },
       phone: { type: String, default: "+1 (555) 123-4567" },
-      email: { type: String, default: "info@quickbite.com" },
-      website: { type: String, default: "www.quickbite.com" },
+      email: { type: String, default: "info@tableloom.com" },
+      website: { type: String, default: "www.tableloom.com" },
       description: {
         type: String,
         default:

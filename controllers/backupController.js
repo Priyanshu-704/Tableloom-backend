@@ -64,7 +64,7 @@ exports.exportBackup = async (req, res) => {
       collections: await loadCollectionDocuments("export"),
     };
 
-    const filename = `quickbite-backup-${new Date()
+    const filename = `tableloom-backup-${new Date()
       .toISOString()
       .replace(/[:.]/g, "-")}.json`;
 

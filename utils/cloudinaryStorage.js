@@ -5,7 +5,7 @@ require("dotenv").config({ quiet: true });
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
 const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
-const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "dz-quick-bites";
+const CLOUDINARY_FOLDER = process.env.CLOUDINARY_FOLDER || "tableloom";
 
 const isCloudinaryConfigured = Boolean(
   CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET,
