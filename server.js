@@ -15,7 +15,6 @@ const { resolveTenant } = require("./middleware/tenant");
 dotenv.config({ quiet: true });
 
 const connectDB = require("./config/database");
-connectDB();
 
 const app = express();
 const API_PREFIX = "/api";
@@ -116,13 +115,24 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  logger.info(`📚 Swagger UI: http://localhost:${PORT}${API_PREFIX}/docs`);
-  logger.info(`⚡ WebSocket: ws://localhost:${PORT}`);
-  delayMonitor.start().catch((error) => {
-    logger.error("Failed to start delay monitor:", error.message);
-  });
-});
+const startServer = async () => {
+  try {
+    await connectDB();
+
+    server.listen(PORT, () => {
+      logger.info(`📚 Swagger UI: http://localhost:${PORT}${API_PREFIX}/docs`);
+      logger.info(`⚡ WebSocket: ws://localhost:${PORT}`);
+      delayMonitor.start().catch((error) => {
+        logger.error("Failed to start delay monitor:", error.message);
+      });
+    });
+  } catch (error) {
+    logger.error("Failed to bootstrap server:", error.message);
+    process.exit(1);
+  }
+};
+
+startServer();
 
 process.on("SIGTERM", () => {
   delayMonitor.stop();
