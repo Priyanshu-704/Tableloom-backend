@@ -1,5 +1,5 @@
 const { logger } = require("./../utils/logger.js");
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 require("dotenv").config({ quiet: true });
 
 const reconcileIndexes = async () => {
@@ -30,13 +30,20 @@ const reconcileIndexes = async () => {
 
 const connectDB = async () => {
   try {
-    const conn = await mongoose.connect(process.env.MONGODB_URI);
+    if (!process.env.MONGODB_URI) {
+      throw new Error("MONGODB_URI is not configured");
+    }
+
+    const conn = await mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+    });
     await reconcileIndexes();
 
     logger.info(`MongoDB Connected: ${conn.connection.host}`);
+    return conn;
   } catch (error) {
-    logger.error(error);
-    process.exit(1);
+    logger.error("MongoDB connection failed:", error.message);
+    throw error;
   }
 };
 
