@@ -1,5 +1,23 @@
 const Tenant = require("../models/Tenant");
 const { runWithTenant } = require("../utils/tenantContext");
+const {
+  getCacheEntry,
+  setCacheEntry,
+} = require("../utils/responseCache");
+
+const TENANT_LOOKUP_CACHE_TTL_MS = 60 * 1000;
+
+const normalizeLookupCacheKey = (lookup = null) => {
+  if (!lookup) {
+    return "";
+  }
+
+  if (lookup._id) {
+    return `tenant:id:${lookup._id}`;
+  }
+
+  return `tenant:slug-key:${lookup.slug}:${lookup.key}`;
+};
 
 const resolveTenantLookup = (req) => {
   const tenantId = req.header("x-tenant-id") || req.query.tenantId || null;
@@ -29,7 +47,26 @@ exports.resolveTenant = async (req, res, next) => {
       return runWithTenant(null, next);
     }
 
-    const tenant = await Tenant.findOne(lookup).lean();
+    const cacheKey = normalizeLookupCacheKey(lookup);
+    let tenant = cacheKey ? getCacheEntry(cacheKey) : null;
+
+    if (!tenant) {
+      tenant = await Tenant.findOne(lookup)
+        .select("_id name slug key status branding")
+        .lean();
+
+      if (tenant && cacheKey) {
+        setCacheEntry(cacheKey, tenant, TENANT_LOOKUP_CACHE_TTL_MS);
+
+        if (tenant._id) {
+          setCacheEntry(
+            normalizeLookupCacheKey({ _id: tenant._id }),
+            tenant,
+            TENANT_LOOKUP_CACHE_TTL_MS,
+          );
+        }
+      }
+    }
 
     if (!tenant || tenant.status !== "active") {
       return res.status(404).json({
@@ -39,6 +76,7 @@ exports.resolveTenant = async (req, res, next) => {
     }
 
     req.tenant = tenant;
+    req.tenantId = String(tenant._id || "");
     return runWithTenant(tenant, next);
   } catch (error) {
     return next(error);

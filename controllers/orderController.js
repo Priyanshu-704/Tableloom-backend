@@ -102,7 +102,9 @@ exports.getOrderBySession = async (req, res) => {
     const customer = await Customer.findOne({ 
       sessionId: req.params.sessionId,
       isActive: true 
-    });
+    })
+      .select("_id")
+      .lean();
 
     if (!customer) {
       return res.status(404).json({
@@ -147,7 +149,9 @@ exports.getOrderHistoryBySession = async (req, res) => {
     const customer = await Customer.findOne({
       sessionId: req.params.sessionId,
       isActive: true,
-    });
+    })
+      .select("_id")
+      .lean();
 
     if (!customer) {
       return res.status(404).json({

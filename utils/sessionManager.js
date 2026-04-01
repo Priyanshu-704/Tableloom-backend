@@ -9,8 +9,13 @@ const billManager = require("./billManager");
 const Bill = require("../models/Bill");
 const path = require("path");
 require("dotenv").config({ quiet: true });
+const {
+  getCacheEntry,
+  setCacheEntry,
+} = require("./responseCache");
 
 const SESSION_TIMEOUT_MINUTES = 60;
+const SESSION_ACTIVITY_WRITE_TTL_MS = 30 * 1000;
 
 const generateSessionId = () => {
   return `sess_${crypto.randomBytes(16).toString("hex")}_${Date.now()}`;
@@ -155,6 +160,11 @@ exports.getCustomerSession = async (sessionId) => {
 
 exports.updateSessionActivity = async (sessionId) => {
   try {
+    const activityCacheKey = `session:activity:${sessionId}`;
+    if (getCacheEntry(activityCacheKey)) {
+      return null;
+    }
+
     const customer = await Customer.findOneAndUpdate(
       {
         sessionId,
@@ -172,6 +182,7 @@ exports.updateSessionActivity = async (sessionId) => {
       return null;
     }
 
+    setCacheEntry(activityCacheKey, true, SESSION_ACTIVITY_WRITE_TTL_MS);
     return customer;
   } catch (error) {
     throw error;

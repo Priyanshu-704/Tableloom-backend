@@ -15,6 +15,7 @@ require("dotenv").config({ quiet: true });
 const { deleteAsset } = require("../utils/cloudinaryStorage");
 
 const MENU_CACHE_PREFIX = "menu:";
+const MENU_ITEMS_CACHE_TTL_MS = 15 * 1000;
 const MENU_FILTERS_CACHE_TTL_MS = 30 * 1000;
 const MENU_CATEGORIES_CACHE_TTL_MS = 20 * 1000;
 
@@ -1119,37 +1120,45 @@ exports.getMenuItems = async (req, res) => {
       ? "name description image category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices"
       : "name description image category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
 
-    let menuItemsQuery = MenuItem.find(mongoQuery)
-      .select(menuItemSelect)
-      .populate("category", "name")
-      .populate("prices.sizeId", "name code")
-      .sort(query ? { name: 1 } : sortConfig)
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    const cacheKey = `${MENU_CACHE_PREFIX}items:${req.tenantId || "public"}:${responseView}:${getBaseUrl(req)}:${req.originalUrl}`;
+    const payload = await getOrSetCache(
+      cacheKey,
+      MENU_ITEMS_CACHE_TTL_MS,
+      async () => {
+        let menuItemsQuery = MenuItem.find(mongoQuery)
+          .select(menuItemSelect)
+          .populate("category", "name")
+          .populate("prices.sizeId", "name code")
+          .sort(query ? { name: 1 } : sortConfig)
+          .skip(skip)
+          .limit(limitNum)
+          .lean();
 
-    if (isAdmin) {
-      menuItemsQuery = menuItemsQuery.populate("station", "name stationType status");
-    }
+        if (isAdmin) {
+          menuItemsQuery = menuItemsQuery.populate("station", "name stationType status");
+        }
 
-    let menuItems = await menuItemsQuery;
+        const [menuItems, total] = await Promise.all([
+          menuItemsQuery,
+          MenuItem.countDocuments(mongoQuery),
+        ]);
 
-    const total = await MenuItem.countDocuments(mongoQuery);
-
-    menuItems = menuItems.map((item) =>
-      shapeMenuItemForResponse(req, item, responseView),
+        return {
+          success: true,
+          count: menuItems.length,
+          total,
+          pagination: {
+            page: pageNum,
+            pages: Math.ceil(total / limitNum),
+          },
+          data: menuItems.map((item) =>
+            shapeMenuItemForResponse(req, item, responseView),
+          ),
+        };
+      },
     );
 
-    return res.status(200).json({
-      success: true,
-      count: menuItems.length,
-      total,
-      pagination: {
-        page: pageNum,
-        pages: Math.ceil(total / limitNum),
-      },
-      data: menuItems,
-    });
+    return res.status(200).json(payload);
   } catch (error) {
     logger.error("Get menu items error:", error);
     return res.status(500).json({

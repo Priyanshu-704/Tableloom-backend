@@ -4,9 +4,15 @@ const Customer = require("../models/Customer");
 const User = require("../models/User");
 const notificationManager = require("./notificationManager");
 const socketManager = require("./socketManager");
+const { getOrSetCache } = require("./responseCache");
+const { getCurrentTenantId } = require("./tenantContext");
 
 const ACTIVE_SESSION_STATUSES = ["active", "payment_pending"];
 const ACTIVE_CALL_STATUSES = ["pending", "assigned", "acknowledged", "in_progress"];
+const WAITER_CALL_CACHE_PREFIX = "waiter-call:";
+const WAITER_CALL_LIST_CACHE_TTL_MS = 8 * 1000;
+const WAITER_CALL_STATS_CACHE_TTL_MS = 10 * 1000;
+const WAITER_CALL_DASHBOARD_CACHE_TTL_MS = 8 * 1000;
 
 const getDateRange = (period) => {
   const now = new Date();
@@ -130,6 +136,9 @@ const buildCallPayload = (call) => ({
   createdAt: call.createdAt,
   updatedAt: call.updatedAt,
 });
+
+const getWaiterCallCacheKey = (suffix = "") =>
+  `${WAITER_CALL_CACHE_PREFIX}${getCurrentTenantId() || "default"}:${suffix}`;
 
 exports.calculateUrgencyLevel = (callType = "waiter", priority = "medium") => {
   const callTypeWeight = toCallTypeWeight[callType] || 2;
@@ -432,10 +441,16 @@ exports.getPendingCalls = async (filters = {}) => {
     if (filters.priority) query.priority = filters.priority;
     if (filters.location) query.location = filters.location;
 
-    return await WaiterCall.find(query)
-      .populate("table", "tableNumber tableName location coordinates")
-      .populate("customer", "name phone")
-      .sort({ createdAt: 1 });
+    return await getOrSetCache(
+      getWaiterCallCacheKey(`pending:${JSON.stringify(filters || {})}`),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find(query)
+          .populate("table", "tableNumber tableName location coordinates")
+          .populate("customer", "name phone")
+          .sort({ createdAt: 1 })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get pending calls failed:", error);
     throw error;
@@ -444,12 +459,18 @@ exports.getPendingCalls = async (filters = {}) => {
 
 exports.getActiveCalls = async () => {
   try {
-    return await WaiterCall.find({ status: { $in: ACTIVE_CALL_STATUSES } })
-      .populate("table", "tableNumber tableName location coordinates")
-      .populate("customer", "name phone")
-      .populate("acknowledgedBy", "name role profileImage")
-      .populate("assignedTo", "name role")
-      .sort({ updatedAt: -1, createdAt: -1 });
+    return await getOrSetCache(
+      getWaiterCallCacheKey("active"),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find({ status: { $in: ACTIVE_CALL_STATUSES } })
+          .populate("table", "tableNumber tableName location coordinates")
+          .populate("customer", "name phone")
+          .populate("acknowledgedBy", "name role profileImage")
+          .populate("assignedTo", "name role")
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get active calls failed:", error);
     throw error;
@@ -462,15 +483,21 @@ exports.getSessionActiveCalls = async (sessionId) => {
       return [];
     }
 
-    return await WaiterCall.find({
-      sessionId,
-      status: { $in: ACTIVE_CALL_STATUSES },
-    })
-      .populate("table", "tableNumber tableName location coordinates")
-      .populate("customer", "name phone")
-      .populate("acknowledgedBy", "name role profileImage")
-      .populate("assignedTo", "name role")
-      .sort({ updatedAt: -1, createdAt: -1 });
+    return await getOrSetCache(
+      getWaiterCallCacheKey(`session:${sessionId}`),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find({
+          sessionId,
+          status: { $in: ACTIVE_CALL_STATUSES },
+        })
+          .populate("table", "tableNumber tableName location coordinates")
+          .populate("customer", "name phone")
+          .populate("acknowledgedBy", "name role profileImage")
+          .populate("assignedTo", "name role")
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get session active calls failed:", error);
     throw error;
@@ -503,57 +530,61 @@ exports.getCallStatistics = async (period = "today") => {
   try {
     const dateFilter = { createdAt: getDateRange(period) };
 
-    const grouped = await WaiterCall.aggregate([
-      { $match: dateFilter },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          avgResponseTime: { $avg: "$responseTime" },
-          avgResolutionTime: { $avg: "$resolutionTime" },
-        },
+    return await getOrSetCache(
+      getWaiterCallCacheKey(`stats:${period}`),
+      WAITER_CALL_STATS_CACHE_TTL_MS,
+      async () => {
+        const [grouped, byType, pendingCalls, activeCalls] = await Promise.all([
+          WaiterCall.aggregate([
+            { $match: dateFilter },
+            {
+              $group: {
+                _id: "$status",
+                count: { $sum: 1 },
+                avgResponseTime: { $avg: "$responseTime" },
+                avgResolutionTime: { $avg: "$resolutionTime" },
+              },
+            },
+          ]),
+          WaiterCall.aggregate([
+            { $match: dateFilter },
+            { $group: { _id: "$callType", count: { $sum: 1 } } },
+            { $project: { _id: 0, callType: "$_id", count: 1 } },
+          ]),
+          WaiterCall.countDocuments({ ...dateFilter, status: "pending" }),
+          WaiterCall.countDocuments({
+            ...dateFilter,
+            status: { $in: ACTIVE_CALL_STATUSES },
+          }),
+        ]);
+
+        const byStatus = grouped.map((item) => ({
+          status: item._id,
+          count: item.count,
+          avgResponseTime: item.avgResponseTime || 0,
+          avgResolutionTime: item.avgResolutionTime || 0,
+        }));
+
+        const totalCalls = byStatus.reduce((sum, item) => sum + item.count, 0);
+        const avgResponseTime = byStatus.length
+          ? byStatus.reduce((sum, item) => sum + item.avgResponseTime, 0) / byStatus.length
+          : 0;
+        const avgResolutionTime = byStatus.length
+          ? byStatus.reduce((sum, item) => sum + item.avgResolutionTime, 0) / byStatus.length
+            : 0;
+
+        return {
+          totalCalls,
+          pendingCalls,
+          activeCalls,
+          byStatus,
+          byType,
+          avgResponseTime,
+          avgResolutionTime,
+          period,
+        };
       },
-    ]);
-
-    const byStatus = grouped.map((item) => ({
-      status: item._id,
-      count: item.count,
-      avgResponseTime: item.avgResponseTime || 0,
-      avgResolutionTime: item.avgResolutionTime || 0,
-    }));
-
-    const totalCalls = byStatus.reduce((sum, item) => sum + item.count, 0);
-
-    const byType = await WaiterCall.aggregate([
-      { $match: dateFilter },
-      { $group: { _id: "$callType", count: { $sum: 1 } } },
-      { $project: { _id: 0, callType: "$_id", count: 1 } },
-    ]);
-
-    const pendingCalls = await WaiterCall.countDocuments({ ...dateFilter, status: "pending" });
-    const activeCalls = await WaiterCall.countDocuments({
-      ...dateFilter,
-      status: { $in: ACTIVE_CALL_STATUSES },
-    });
-
-    const avgResponseTime = byStatus.length
-      ? byStatus.reduce((sum, item) => sum + item.avgResponseTime, 0) / byStatus.length
-      : 0;
-
-    const avgResolutionTime = byStatus.length
-      ? byStatus.reduce((sum, item) => sum + item.avgResolutionTime, 0) / byStatus.length
-      : 0;
-
-    return {
-      totalCalls,
-      pendingCalls,
-      activeCalls,
-      byStatus,
-      byType,
-      avgResponseTime,
-      avgResolutionTime,
-      period,
-    };
+    );
   } catch (error) {
     logger.error("Get call statistics failed:", error);
     throw error;
@@ -616,25 +647,32 @@ exports.getStaffPerformance = async (startDate, endDate) => {
 
 exports.getCallDashboard = async () => {
   try {
-    const [pendingCalls, activeCalls, statistics, recentCompleted] = await Promise.all([
-      this.getPendingCalls(),
-      this.getActiveCalls(),
-      this.getCallStatistics("today"),
-      WaiterCall.find({ status: "completed" })
-        .sort({ completedAt: -1 })
-        .limit(10)
-        .populate("table", "tableNumber tableName")
-        .populate("acknowledgedBy", "name")
-        .populate("completedBy", "name"),
-    ]);
+    return await getOrSetCache(
+      getWaiterCallCacheKey("dashboard"),
+      WAITER_CALL_DASHBOARD_CACHE_TTL_MS,
+      async () => {
+        const [pendingCalls, activeCalls, statistics, recentCompleted] = await Promise.all([
+          this.getPendingCalls(),
+          this.getActiveCalls(),
+          this.getCallStatistics("today"),
+          WaiterCall.find({ status: "completed" })
+            .sort({ completedAt: -1 })
+            .limit(10)
+            .populate("table", "tableNumber tableName")
+            .populate("acknowledgedBy", "name")
+            .populate("completedBy", "name")
+            .lean(),
+        ]);
 
-    return {
-      pendingCalls,
-      activeCalls,
-      statistics,
-      recentCompleted,
-      lastUpdated: new Date(),
-    };
+        return {
+          pendingCalls,
+          activeCalls,
+          statistics,
+          recentCompleted,
+          lastUpdated: new Date(),
+        };
+      },
+    );
   } catch (error) {
     logger.error("Get call dashboard failed:", error);
     throw error;

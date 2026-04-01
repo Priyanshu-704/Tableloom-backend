@@ -11,6 +11,11 @@ const {
   notFoundHandler,
   errorHandler,
 } = require("./middleware/errorHandler");
+const {
+  requestProfiler,
+  getRequestProfilerSnapshot,
+  resetRequestProfilerStats,
+} = require("./middleware/requestProfiler");
 const { resolveTenant } = require("./middleware/tenant");
 
 dotenv.config({ quiet: true });
@@ -87,6 +92,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
+app.use(requestProfiler);
 
 setupSwagger(app, API_PREFIX);
 if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
@@ -113,6 +119,30 @@ app.get(`${API_PREFIX}/healthz`, (req, res) => {
   });
 });
 
+const profilingEndpointEnabled =
+  process.env.PROFILE_ENDPOINT_ENABLED === "true" ||
+  process.env.NODE_ENV !== "production";
+
+if (profilingEndpointEnabled) {
+  app.get(`${API_PREFIX}/healthz/profiling`, (req, res) => {
+    const limit = parseInt(req.query.limit, 10) || 20;
+
+    res.status(200).json({
+      success: true,
+      data: getRequestProfilerSnapshot(limit),
+    });
+  });
+
+  app.post(`${API_PREFIX}/healthz/profiling/reset`, (_req, res) => {
+    resetRequestProfilerStats();
+
+    res.status(200).json({
+      success: true,
+      message: "Request profiler stats reset successfully",
+    });
+  });
+}
+
 if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
   app.get(`${legacyApiPrefix}/healthz`, (req, res) => {
     const dbConnected = mongoose.connection.readyState === 1;
@@ -126,6 +156,26 @@ if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
       legacy: true,
     });
   });
+
+  if (profilingEndpointEnabled) {
+    app.get(`${legacyApiPrefix}/healthz/profiling`, (req, res) => {
+      const limit = parseInt(req.query.limit, 10) || 20;
+
+      res.status(200).json({
+        success: true,
+        data: getRequestProfilerSnapshot(limit),
+      });
+    });
+
+    app.post(`${legacyApiPrefix}/healthz/profiling/reset`, (_req, res) => {
+      resetRequestProfilerStats();
+
+      res.status(200).json({
+        success: true,
+        message: "Request profiler stats reset successfully",
+      });
+    });
+  }
 }
 
 app.get("/", (req, res) => {

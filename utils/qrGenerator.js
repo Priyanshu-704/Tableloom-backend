@@ -79,7 +79,11 @@ const generateQRData = (tableId, tableNumber, tenant = null) => {
 const verifyQRToken = async (tableId, token) => {
   try {
    
-    const table = await Table.findById(tableId);
+    const table = await Table.findById(tableId)
+      .select(
+        "_id tableNumber tableName capacity location status isActive qrToken qrTokenExpiry",
+      )
+      .lean();
     
     if (!table) {
       return { isValid: false, message: 'Table not found' };

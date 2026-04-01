@@ -3,7 +3,12 @@ const billManager = require("../utils/billManager");
 const sessionManager = require("../utils/sessionManager");
 const Bill = require("../models/Bill");
 const { sendError, sendPaginated, sendSuccess } = require("../utils/httpResponse");
+const { getOrSetCache } = require("../utils/responseCache");
 require("dotenv").config({ quiet: true });
+
+const BILL_CACHE_PREFIX = "bill:";
+const BILL_LIST_CACHE_TTL_MS = 15 * 1000;
+const BILL_STATS_CACHE_TTL_MS = 20 * 1000;
 
 const toBillPaymentSummary = (bill = {}) => ({
   id: bill?._id || bill?.id || null,
@@ -402,24 +407,34 @@ exports.getBillsAdmin = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const bills = await Bill.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum)
-      .populate("customerId", "name phone email")
-      .populate("tableId", "tableNumber tableName");
+    const cacheKey = `${BILL_CACHE_PREFIX}list:${req.tenantId || "default"}:${JSON.stringify(req.query || {})}`;
+    const cached = await getOrSetCache(cacheKey, BILL_LIST_CACHE_TTL_MS, async () => {
+      const [bills, total] = await Promise.all([
+        Bill.find(query)
+          .select("billNumber sessionId customerName customerEmail customerPhone paymentStatus billStatus paymentMethod paidAt totalAmount createdAt tableId items metadata")
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .populate("tableId", "tableNumber tableName")
+          .lean(),
+        Bill.countDocuments(query),
+      ]);
 
-    const total = await Bill.countDocuments(query);
+      return {
+        data: bills.map(toBillAdminItem),
+        pagination: {
+          page: pageNum,
+          pages: Math.ceil(total / limitNum),
+          total,
+        },
+      };
+    });
 
     return sendPaginated(
       res,
       200,
-      bills.map(toBillAdminItem),
-      {
-        page: pageNum,
-        pages: Math.ceil(total / limitNum),
-        total,
-      }
+      cached.data,
+      cached.pagination
     );
   } catch (error) {
     logger.error("Get bills failed:", error);
@@ -432,62 +447,67 @@ exports.getBillStatistics = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const [
-      totalBills,
-      pendingBills,
-      paidBills,
-      todayBills,
-      todayRevenue,
-      monthlyRevenue,
-    ] = await Promise.all([
-      Bill.countDocuments(),
-      Bill.countDocuments({ paymentStatus: "pending" }),
-      Bill.countDocuments({ paymentStatus: "paid" }),
-      Bill.countDocuments({ createdAt: { $gte: today } }),
-      Bill.aggregate([
-        {
-          $match: {
-            paymentStatus: "paid",
-            paidAt: { $gte: today },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$totalAmount" },
-          },
-        },
-      ]),
-      Bill.aggregate([
-        {
-          $match: {
-            paymentStatus: "paid",
-            paidAt: {
-              $gte: new Date(
-                new Date().getFullYear(),
-                new Date().getMonth(),
-                1,
-              ),
+    const cacheKey = `${BILL_CACHE_PREFIX}stats:${req.tenantId || "default"}`;
+    const data = await getOrSetCache(cacheKey, BILL_STATS_CACHE_TTL_MS, async () => {
+      const monthStart = new Date(
+        new Date().getFullYear(),
+        new Date().getMonth(),
+        1,
+      );
+
+      const [
+        totalBills,
+        pendingBills,
+        paidBills,
+        todayBills,
+        todayRevenue,
+        monthlyRevenue,
+      ] = await Promise.all([
+        Bill.countDocuments(),
+        Bill.countDocuments({ paymentStatus: "pending" }),
+        Bill.countDocuments({ paymentStatus: "paid" }),
+        Bill.countDocuments({ createdAt: { $gte: today } }),
+        Bill.aggregate([
+          {
+            $match: {
+              paymentStatus: "paid",
+              paidAt: { $gte: today },
             },
           },
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$totalAmount" },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$totalAmount" },
+            },
           },
-        },
-      ]),
-    ]);
+        ]),
+        Bill.aggregate([
+          {
+            $match: {
+              paymentStatus: "paid",
+              paidAt: { $gte: monthStart },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$totalAmount" },
+            },
+          },
+        ]),
+      ]);
 
-    return sendSuccess(res, 200, null, {
+      return {
         totalBills,
         pendingBills,
         paidBills,
         todayBills,
         todayRevenue: todayRevenue[0]?.total || 0,
         monthlyRevenue: monthlyRevenue[0]?.total || 0,
+      };
     });
+
+    return sendSuccess(res, 200, null, data);
   } catch (error) {
     logger.error("Get bill statistics failed:", error);
     return sendError(res, 500, "Failed to get bill statistics", error);
