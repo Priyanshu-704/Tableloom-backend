@@ -27,20 +27,50 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use(cookieParser());
 
+const normalizeOrigin = (value = "") => {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    return new URL(normalized).origin;
+  } catch {
+    return normalized.replace(/\/+$/, "");
+  }
+};
+
+const configuredOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.CORS_ORIGIN,
+  process.env.CORS_ORIGINS,
+]
+  .filter(Boolean)
+  .flatMap((value) => String(value).split(","))
+  .map(normalizeOrigin)
+  .filter(Boolean);
+
+const allowedOrigins = new Set(configuredOrigins);
+
+if (process.env.NODE_ENV !== "production") {
+  [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5000",
+  ].forEach((origin) => allowedOrigins.add(origin));
+}
+
 const corsOptions = {
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      // "http://192.168.1.156:5000",
-      // "http://localhost:5173",
-      // "http://localhost:5174",
-      // "http://192.168.1.72:5000",
-      // "http://localhost:5000",
-      process.env.FRONTEND_URL,
-    ];
+    const requestOrigin = normalizeOrigin(origin);
 
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || allowedOrigins.has(requestOrigin)) {
       callback(null, true);
     } else {
+      logger.warn(`Blocked CORS origin: ${requestOrigin || origin}`);
       callback(new Error("CORS not allowed"));
     }
   },
@@ -56,6 +86,7 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 setupSwagger(app, API_PREFIX);
 if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {

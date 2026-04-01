@@ -4,25 +4,27 @@ const Customer = require("../models/Customer");
 const {
   generateQRCode,
   generateQRData,
+  buildTenantTableQrUrl,
   deleteQRFile,
 } = require("../utils/qrGenerator");
 require("dotenv").config({ quiet: true });
 
 const getBaseUrl = () => process.env.BACKEND_URL;
-const getFrontendUrl = () => process.env.FRONTEND_URL;
 
-const buildTableQrUrl = (table) => {
+const buildTableQrUrl = (table, tenant = null) => {
   if (!table?.qrToken || !table?.tableNumber || !table?._id) {
     return null;
   }
 
-  const baseUrl = getFrontendUrl();
-  const encodedTableNumber = encodeURIComponent(String(table.tableNumber));
-
-  return `${baseUrl}/table/${encodedTableNumber}?table=${table._id}&token=${table.qrToken}`;
+  return buildTenantTableQrUrl({
+    tableId: table._id,
+    tableNumber: table.tableNumber,
+    token: table.qrToken,
+    tenant,
+  });
 };
 
-const sanitizeTable = (table, { includeAdminFields = true } = {}) => {
+const sanitizeTable = (table, { includeAdminFields = true, tenant = null } = {}) => {
   const tableObj = table.toObject ? table.toObject() : { ...table };
 
   if (tableObj.createdBy?.name) {
@@ -40,7 +42,7 @@ const sanitizeTable = (table, { includeAdminFields = true } = {}) => {
   tableObj.qrCode = tableObj.qrCode
     ? `${getBaseUrl()}/images/table-qr/${tableObj._id}`
     : null;
-  tableObj.qrUrl = buildTableQrUrl(tableObj);
+  tableObj.qrUrl = buildTableQrUrl(tableObj, tenant);
 
   if (tableObj.qrTokenExpiry) {
     const remainingMs = new Date(tableObj.qrTokenExpiry) - new Date();
@@ -101,7 +103,7 @@ exports.createTable = async (req, res) => {
       createdBy: req.user.id,
     });
 
-    const qrInfo = generateQRData(table._id, tableNumber);
+    const qrInfo = generateQRData(table._id, tableNumber, req.tenant);
 
     const qrUpload = await generateQRCode(qrInfo.url, tableNumber);
 
@@ -117,7 +119,7 @@ exports.createTable = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Table created successfully with QR code",
-      data: sanitizeTable(table),
+      data: sanitizeTable(table, { tenant: req.tenant }),
     });
   } catch (error) {
     logger.error(error);
@@ -186,6 +188,7 @@ exports.getTables = async (req, res) => {
     const sanitizedTables = tables.map((table) =>
       sanitizeTable(table, {
         includeAdminFields: ["admin", "manager"].includes(req.user.role),
+        tenant: req.tenant,
       }),
     );
 
@@ -228,6 +231,7 @@ exports.getTable = async (req, res) => {
       success: true,
       data: sanitizeTable(table, {
         includeAdminFields: ["admin", "manager"].includes(req.user.role),
+        tenant: req.tenant,
       }),
     });
   } catch (error) {
@@ -280,7 +284,7 @@ exports.updateTable = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Table updated successfully",
-      data: sanitizeTable(table),
+      data: sanitizeTable(table, { tenant: req.tenant }),
     });
   } catch (error) {
     logger.error(error);
@@ -409,7 +413,7 @@ exports.toggleTableActive = async (req, res) => {
       message: `Table ${
         table.isActive ? "activated" : "deactivated"
       } successfully`,
-      data: sanitizeTable(table),
+      data: sanitizeTable(table, { tenant: req.tenant }),
     });
   } catch (error) {
     logger.error(error);
@@ -564,7 +568,7 @@ exports.regenerateQRCode = async (req, res) => {
       await deleteQRFile(table.qrPublicId || table.qrImageBucket);
     }
 
-    const qrInfo = generateQRData(table._id, table.tableNumber);
+    const qrInfo = generateQRData(table._id, table.tableNumber, req.tenant);
     const qrUpload = await generateQRCode(qrInfo.url, table.tableNumber);
 
     table.qrToken = qrInfo.token;
@@ -609,7 +613,7 @@ exports.refreshQRToken = async (req, res) => {
       });
     }
 
-    const qrInfo = generateQRData(table._id, table.tableNumber);
+    const qrInfo = generateQRData(table._id, table.tableNumber, req.tenant);
 
     table.qrToken = qrInfo.token;
     table.qrTokenExpiry = qrInfo.expiry;

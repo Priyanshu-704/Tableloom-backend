@@ -41,13 +41,32 @@ const generateQRCode = async (data, tableNumber) => {
   }
 };
 
-const generateQRData = (tableId, tableNumber) => {
-  const baseUrl = process.env.FRONTEND_URL;
+const normalizeBaseUrl = (value = "") => String(value || "").replace(/\/+$/, "");
+
+const buildTenantTableQrUrl = ({ tableId, tableNumber, token, tenant } = {}) => {
+  const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const encodedTableNumber = encodeURIComponent(String(tableNumber || ""));
+
+  if (!baseUrl || !tableId || !token || !encodedTableNumber) {
+    return null;
+  }
+
+  const tenantSlug = String(tenant?.slug || "").trim().toLowerCase();
+  const tenantKey = String(tenant?.key || "").trim().toLowerCase();
+  const tenantPrefix = tenantSlug && tenantKey ? `/${tenantSlug}/${tenantKey}` : "";
+
+  return `${baseUrl}${tenantPrefix}/table/${encodedTableNumber}?table=${tableId}&token=${token}`;
+};
+
+const generateQRData = (tableId, tableNumber, tenant = null) => {
   const timestamp = Date.now();
   const token = crypto.randomBytes(32).toString('hex');
-
-  const encodedTableNumber = encodeURIComponent(String(tableNumber || ""));
-  const qrUrl = `${baseUrl}/table/${encodedTableNumber}?table=${tableId}&token=${token}`;
+  const qrUrl = buildTenantTableQrUrl({
+    tableId,
+    tableNumber,
+    token,
+    tenant,
+  });
 
   return {
     url: qrUrl,
@@ -99,7 +118,7 @@ const verifyQRToken = async (tableId, token) => {
   }
 };
 
-const refreshQRToken = async (tableId) => {
+const refreshQRToken = async (tableId, tenant = null) => {
   try {
     const table = await Table.findById(tableId);
     
@@ -107,7 +126,7 @@ const refreshQRToken = async (tableId) => {
       throw new Error('Table not found');
     }
     
-    const qrInfo = generateQRData(tableId, table.tableNumber);
+    const qrInfo = generateQRData(tableId, table.tableNumber, tenant);
     
     table.qrToken = qrInfo.token;
     table.qrTokenExpiry = qrInfo.expiry;
@@ -147,6 +166,7 @@ const deleteQRFile = async (publicId) => {
 module.exports = {
   generateQRCode,
   generateQRData,
+  buildTenantTableQrUrl,
   deleteQRFile,
   verifyQRToken, 
   refreshQRToken
