@@ -13,14 +13,12 @@ const { getOrSetCache, clearCache } = require("../utils/responseCache");
 require("dotenv").config({ quiet: true });
 
 const { deleteAsset } = require("../utils/cloudinaryStorage");
+const { buildTenantAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
 
 const MENU_CACHE_PREFIX = "menu:";
 const MENU_ITEMS_CACHE_TTL_MS = 15 * 1000;
 const MENU_FILTERS_CACHE_TTL_MS = 30 * 1000;
 const MENU_CATEGORIES_CACHE_TTL_MS = 20 * 1000;
-
-const getBaseUrl = (req) =>
-  process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}/api`;
 
 const invalidateMenuReadCaches = () => clearCache(MENU_CACHE_PREFIX);
 
@@ -44,7 +42,9 @@ const getMenuResponseView = (req) => {
 };
 
 const buildImageUrl = (req, type, id, hasImage) =>
-  hasImage ? `${getBaseUrl(req)}/images/${type}/${id}` : null;
+  hasImage
+    ? buildTenantAssetUrl(req, `/images/${type}/${id}`)
+    : null;
 
 const shapeMenuPrice = (price = {}, includeCostPrice = false) => ({
   price: price.price,
@@ -539,9 +539,7 @@ exports.getCategoryById = async (req, res) => {
       });
     }
 
-    category.image = category.image
-      ? `${getBaseUrl(req)}/images/category/${category._id}`
-      : null;
+    category.image = buildImageUrl(req, "category", category._id, category.image);
 
     category.storageType = category.image ? "cloudinary" : "none";
 
@@ -1128,7 +1126,7 @@ exports.getMenuItems = async (req, res) => {
       ? "name description image category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices"
       : "name description image category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
 
-    const cacheKey = `${MENU_CACHE_PREFIX}items:${req.tenantId || "public"}:${responseView}:${getBaseUrl(req)}:${req.originalUrl}`;
+    const cacheKey = `${MENU_CACHE_PREFIX}items:${req.tenantId || "public"}:${responseView}:${getApiBaseUrl(req)}:${req.originalUrl}`;
     const payload = await getOrSetCache(
       cacheKey,
       MENU_ITEMS_CACHE_TTL_MS,
@@ -1314,9 +1312,12 @@ exports.getMenuItem = async (req, res) => {
         ...(price.costPrice && { costPrice: price.costPrice }),
       }));
     }
-    menuItem.image = menuItem.image
-      ? `${getBaseUrl(req)}/images/menu-item/${menuItem._id}`
-      : null;
+    menuItem.image = buildImageUrl(
+      req,
+      "menu-item",
+      menuItem._id,
+      menuItem.image,
+    );
     menuItem.activeDiscount = getActiveDiscount(menuItem.discount);
 
     res.status(200).json({
@@ -2046,9 +2047,7 @@ exports.getSeasonalItems = async (req, res) => {
       .lean();
 
     const formattedItems = seasonalItems.map((item) => {
-      item.image = item.image
-        ? `${getBaseUrl(req)}/images/menu-item/${item._id}`
-        : null;
+      item.image = buildImageUrl(req, "menu-item", item._id, item.image);
 
       if (Array.isArray(item.prices)) {
         item.prices = item.prices.map((price) => ({

@@ -10,11 +10,8 @@ const kitchenManager = require("./kitchenManager");
 const { orderStatusColors } = require("../utils/statusColors");
 const User = require("../models/User");
 const Bill = require("../models/Bill");
+const { buildTenantAssetUrl } = require("./assetUrl");
 require("dotenv").config({ quiet: true });
-
-const getBaseUrl = () => {
-  return process.env.BACKEND_URL;
-};
 
 const transformMenuItemData = (menuItem) => {
   if (!menuItem) return null;
@@ -22,7 +19,10 @@ const transformMenuItemData = (menuItem) => {
   const menuItemObj = menuItem.toObject ? menuItem.toObject() : menuItem;
 
   if (menuItemObj.image) {
-    menuItemObj.image = `${getBaseUrl()}/images/menu-item/${menuItemObj._id}`;
+    menuItemObj.image = buildTenantAssetUrl(
+      null,
+      `/images/menu-item/${menuItemObj._id}`,
+    );
   }
 
   if (menuItemObj.prices && Array.isArray(menuItemObj.prices)) {

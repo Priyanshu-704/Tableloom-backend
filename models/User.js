@@ -240,7 +240,7 @@ userSchema.methods.getPermissions = function () {
 
 // Check if user has a specific permission
 userSchema.methods.hasPermission = function (permission) {
-  if (this.role === "super_admin") return true;
+  if (["super_admin", "admin"].includes(String(this.role).toLowerCase())) return true;
 
   const userPermissions = this.getPermissions();
   return userPermissions.includes(permission);
@@ -248,7 +248,7 @@ userSchema.methods.hasPermission = function (permission) {
 
 // Check if user has any of the specified permissions
 userSchema.methods.hasAnyPermission = function (permissionsArray) {
-  if (this.role === "super_admin") return true;
+  if (["super_admin", "admin"].includes(String(this.role).toLowerCase())) return true;
 
   const userPermissions = this.getPermissions();
   return permissionsArray.some((permission) =>

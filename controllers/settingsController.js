@@ -3,6 +3,7 @@ const AppSetting = require("../models/AppSetting");
 const { deleteAsset } = require("../utils/cloudinaryStorage");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const delayMonitor = require("../utils/delayMonitor");
+const { buildTenantAssetUrl } = require("../utils/assetUrl");
 
 const deepMerge = (target = {}, source = {}) => {
   const output = { ...(target || {}) };
@@ -80,7 +81,7 @@ const buildRestaurantSettings = (req, restaurant = {}) => ({
   ...(restaurant || {}),
   logo:
     restaurant?.logo && !String(restaurant.logo).startsWith("/")
-      ? `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}/api`}/images/restaurant-logo`
+      ? buildTenantAssetUrl(req, "/images/restaurant-logo")
       : restaurant?.logo || "/tableloom-mark.svg",
 });
 

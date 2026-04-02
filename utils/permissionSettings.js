@@ -175,7 +175,7 @@ const getEffectivePermissionsForUser = async (user) => {
     return [];
   }
 
-  if (normalizeRoleKey(user.role) === "super_admin") {
+  if (["super_admin", "admin"].includes(normalizeRoleKey(user.role))) {
     return [...AllPermissions];
   }
 

@@ -14,7 +14,9 @@ require("dotenv").config({ quiet: true });
 exports.checkPermission = (user, permission) => {
   if (!user || !user.role) return false;
 
-  if (user.role === "super_admin") return true;
+  if (["super_admin", "admin"].includes(String(user.role).toLowerCase())) {
+    return true;
+  }
 
   const targetPermission = normalizePermission(permission);
   const effectivePermissions =
@@ -263,7 +265,7 @@ exports.hasAnyPermission = (...permissions) => {
       req.user.resolvedPermissions || req.user.getPermissions?.() || [];
 
     if (
-      req.user.role !== "super_admin" &&
+      !["super_admin", "admin"].includes(String(req.user.role).toLowerCase()) &&
       !normalizedPermissions.some((permission) =>
         effectivePermissions.includes(permission)
       )

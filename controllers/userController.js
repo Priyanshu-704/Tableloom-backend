@@ -275,6 +275,14 @@ exports.loginStaff = async (req, res) => {
         });
       }
 
+      if (!tenantId && user.role !== "super_admin") {
+        return res.status(403).json({
+          success: false,
+          message:
+            "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL.",
+        });
+      }
+
       // Generate access token with permissions
       const accessToken = generateAccessToken(user._id);
 

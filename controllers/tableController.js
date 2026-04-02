@@ -8,9 +8,8 @@ const {
   deleteQRFile,
 } = require("../utils/qrGenerator");
 const { fetchRemoteBuffer } = require("../utils/cloudinaryStorage");
+const { buildTenantAssetQuery, buildTenantAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
 require("dotenv").config({ quiet: true });
-
-const getBaseUrl = () => process.env.BACKEND_URL;
 
 const buildTableQrUrl = (table, tenant = null) => {
   if (!table?.qrToken || !table?.tableNumber || !table?._id) {
@@ -41,7 +40,7 @@ const sanitizeTable = (table, { includeAdminFields = true, tenant = null } = {})
   }
 
   tableObj.qrCode = tableObj.qrCode
-    ? `${getBaseUrl()}/images/table-qr/${tableObj._id}`
+    ? buildTenantAssetUrl(null, `/images/table-qr/${tableObj._id}`, tenant)
     : null;
   tableObj.qrUrl = buildTableQrUrl(tableObj, tenant);
 
@@ -587,13 +586,13 @@ exports.regenerateQRCode = async (req, res) => {
 
     await table.save();
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = getApiBaseUrl();
 
     res.status(200).json({
       success: true,
       message: "QR code regenerated successfully",
       data: {
-        qrCode: `${baseUrl}/images/table-qr/${table._id}`,
+        qrCode: `${baseUrl}/images/table-qr/${table._id}${buildTenantAssetQuery(req.tenant)}`,
         qrUrl: qrInfo.url,
         tokenExpiry: qrInfo.expiry,
         tokenDaysRemaining: 30,
@@ -631,7 +630,9 @@ exports.refreshQRToken = async (req, res) => {
       success: true,
       message: "QR token refreshed successfully",
       data: {
-        qrCode: table.qrCode ? `${getBaseUrl()}/images/table-qr/${table._id}` : null,
+        qrCode: table.qrCode
+          ? buildTenantAssetUrl(null, `/images/table-qr/${table._id}`, req.tenant)
+          : null,
         tokenExpiry: qrInfo.expiry,
         tokenDaysRemaining: 30,
         qrUrl: qrInfo.url,

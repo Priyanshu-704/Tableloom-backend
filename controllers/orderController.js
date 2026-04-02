@@ -2,11 +2,8 @@ const { logger } = require("./../utils/logger.js");
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const orderManager = require('../utils/orderManager');
+const { buildTenantAssetUrl } = require("../utils/assetUrl");
 require("dotenv").config({ quiet: true });
-
-const getBaseUrl = () => {
-  return process.env.BACKEND_URL;
-};
 
 const shapeOrderHistorySummary = (order) => ({
   _id: order._id,
@@ -32,7 +29,7 @@ const shapeOrderHistorySummary = (order) => ({
 });
 
 
-const transformOrderData = (order) => {
+const transformOrderData = (order, req) => {
   if (!order) return null;
   
   const orderObj = order.toObject ? order.toObject() : order;
@@ -40,7 +37,7 @@ const transformOrderData = (order) => {
   if (orderObj.items && Array.isArray(orderObj.items)) {
     orderObj.items = orderObj.items.map(item => {
       if (item.menuItem && item.menuItem.image) {
-        item.menuItem.image = `${getBaseUrl()}/images/menu-item/${item.menuItem._id}`;
+        item.menuItem.image = buildTenantAssetUrl(req, `/images/menu-item/${item.menuItem._id}`);
       }
       
       if (item.menuItem && item.menuItem.prices && Array.isArray(item.menuItem.prices)) {
@@ -80,7 +77,7 @@ exports.getOrder = async (req, res) => {
       });
     }
 
-    const transformedOrder = transformOrderData(order);
+    const transformedOrder = transformOrderData(order, req);
 
    res.status(200).json({
       success: true,

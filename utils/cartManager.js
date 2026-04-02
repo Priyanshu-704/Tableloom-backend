@@ -4,12 +4,8 @@ const Coupon = require("../models/Coupon");
 const Customer = require("../models/Customer");
 const MenuItem = require("../models/MenuItem");
 const orderManager = require("./orderManager");
+const { buildTenantAssetUrl } = require("./assetUrl");
 require("dotenv").config({ quiet: true });
-
-// Helper function to get base URL
-const getBaseUrl = () => {
-  return process.env.BACKEND_URL;
-};
 
 const normalizeCartDiscount = (cart) => {
   if (cart.discountAmount > cart.subtotal) {
@@ -683,8 +679,6 @@ exports.convertCartToOrder = async (sessionId, orderData = {}) => {
 const transformCartData = (cart) => {
   if (!cart) return null;
 
-  const baseUrl = getBaseUrl();
-
   return {
     table: cart.table
       ? {
@@ -717,7 +711,7 @@ const transformCartData = (cart) => {
       sizeId: item.sizeId,
       name: item.menuItem.name,
       image: item.menuItem.image
-        ? `${baseUrl}/images/menu-item/${item.menuItem._id}`
+        ? buildTenantAssetUrl(null, `/images/menu-item/${item.menuItem._id}`)
         : null,
       size: item.sizeName,
       quantity: item.quantity,
