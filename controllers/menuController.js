@@ -382,6 +382,13 @@ exports.createCategory = async (req, res) => {
   try {
     const { name, description, displayOrder, kitchenStation } = req.body;
 
+    if (!String(name || "").trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Category name is required.",
+      });
+    }
+
     if (!kitchenStation) {
       return res.status(400).json({
         success: false,
@@ -389,16 +396,21 @@ exports.createCategory = async (req, res) => {
       });
     }
     const categoryData = {
-      name,
-      description,
-      displayOrder: displayOrder || 0,
-      createdBy: req.user.id,
+      name: String(name).trim(),
+      description: String(description || "").trim(),
+      displayOrder: Number.isFinite(Number(displayOrder))
+        ? Number(displayOrder)
+        : 0,
+      isActive:
+        req.body?.isActive === undefined
+          ? true
+          : req.body.isActive === true || req.body.isActive === "true",
+      createdBy: req.user._id,
     };
 
     if (kitchenStation) {
-      const stationExists = await require("../models/KitchenStation").findById(
-        kitchenStation,
-      );
+      const KitchenStation = require("../models/KitchenStation");
+      const stationExists = await KitchenStation.findById(kitchenStation);
       if (!stationExists) {
         return res.status(400).json({
           success: false,
@@ -426,11 +438,7 @@ exports.createCategory = async (req, res) => {
     const response = {
       success: true,
       message: "Category created successfully",
-      data: {
-        _id: category._id,
-        name: category.name,
-        kitchenStation: category.kitchenStation,
-      },
+      data: shapeCategoryForResponse(req, category, false),
     };
 
     invalidateMenuReadCaches();

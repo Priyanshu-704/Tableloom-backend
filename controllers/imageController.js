@@ -3,7 +3,33 @@ const MenuItem = require("../models/MenuItem");
 const Category = require("../models/Category");
 const Table = require("../models/Table");
 const Bill = require("../models/Bill");
-const redirectToAsset = (res, url) => res.redirect(url);
+const AppSetting = require("../models/AppSetting");
+
+const proxyRemoteAsset = async (res, url, options = {}) => {
+  if (!url) {
+    return res.status(404).send("Image not found");
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    return res.status(404).send("Image not found");
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const contentType =
+    options.contentType ||
+    response.headers.get("content-type") ||
+    "application/octet-stream";
+
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+
+  if (options.disposition) {
+    res.setHeader("Content-Disposition", options.disposition);
+  }
+
+  return res.send(Buffer.from(arrayBuffer));
+};
 
 exports.getMenuItemImage = async (req, res) => {
   try {
@@ -15,7 +41,7 @@ exports.getMenuItemImage = async (req, res) => {
       return res.status(404).send("Image not found");
     }
 
-    await redirectToAsset(res, menuItem.image);
+    await proxyRemoteAsset(res, menuItem.image);
   } catch (error) {
     logger.error("Menu item image error:", error);
     res.status(404).send("Image not found");
@@ -32,7 +58,7 @@ exports.getCategoryImage = async (req, res) => {
       return res.status(404).send("Image not found");
     }
 
-    await redirectToAsset(res, category.image);
+    await proxyRemoteAsset(res, category.image);
   } catch (error) {
     logger.error("Category image error:", error);
     res.status(404).send("Image not found");
@@ -49,9 +75,28 @@ exports.getTableQRImage = async (req, res) => {
       return res.status(404).send("Image not found");
     }
 
-    await redirectToAsset(res, table.qrCode);
+    await proxyRemoteAsset(res, table.qrCode, { contentType: "image/png" });
   } catch (error) {
     logger.error("Category image error:", error);
+    res.status(404).send("Image not found");
+  }
+};
+
+exports.getRestaurantLogo = async (req, res) => {
+  try {
+    const settings = await AppSetting.findOne({
+      tenantId: req.tenant?._id,
+      key: "app-settings",
+    }).select("restaurant.logo");
+
+    const logoUrl = settings?.restaurant?.logo;
+    if (!logoUrl || String(logoUrl).startsWith("/")) {
+      return res.status(404).send("Image not found");
+    }
+
+    await proxyRemoteAsset(res, logoUrl);
+  } catch (error) {
+    logger.error("Restaurant logo error:", error);
     res.status(404).send("Image not found");
   }
 };
@@ -67,7 +112,10 @@ exports.downloadBillPDF = async (req, res) => {
       });
     }
 
-    return redirectToAsset(res, bill.pdfUrl);
+    return proxyRemoteAsset(res, bill.pdfUrl, {
+      contentType: "application/pdf",
+      disposition: `attachment; filename="bill-${bill.billNumber || bill._id}.pdf"`,
+    });
   } catch (error) {
     res.status(500).json({
       success: false,

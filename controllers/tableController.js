@@ -7,6 +7,7 @@ const {
   buildTenantTableQrUrl,
   deleteQRFile,
 } = require("../utils/qrGenerator");
+const { fetchRemoteBuffer } = require("../utils/cloudinaryStorage");
 require("dotenv").config({ quiet: true });
 
 const getBaseUrl = () => process.env.BACKEND_URL;
@@ -530,7 +531,14 @@ exports.downloadQRCode = async (req, res) => {
     }
 
     if (/^https?:\/\//i.test(String(table.qrCode || ""))) {
-      return res.redirect(table.qrCode);
+      const qrBuffer = await fetchRemoteBuffer(table.qrCode);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="table-${table.tableNumber}-qrcode.png"`,
+      );
+      res.setHeader("Cache-Control", "no-store");
+      return res.send(qrBuffer);
     }
 
     return res.status(404).json({

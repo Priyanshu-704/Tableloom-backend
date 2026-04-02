@@ -66,6 +66,8 @@ const appSettingSchema = new mongoose.Schema(
           "Experience the finest dining with our carefully crafted menu featuring local and international cuisine.",
       },
       logo: { type: String, default: "/logo.png" },
+      logoPublicId: { type: String, default: null },
+      logoProvider: { type: String, default: null },
       theme: { type: String, default: "light" },
     },
     businessHours: {

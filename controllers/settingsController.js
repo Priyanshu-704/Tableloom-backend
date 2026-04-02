@@ -1,5 +1,6 @@
 const { logger } = require("./../utils/logger.js");
 const AppSetting = require("../models/AppSetting");
+const { deleteAsset } = require("../utils/cloudinaryStorage");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const delayMonitor = require("../utils/delayMonitor");
 
@@ -31,6 +32,36 @@ const deepMerge = (target = {}, source = {}) => {
   return output;
 };
 
+const parseSettingsPayload = (payload = {}) =>
+  Object.entries(payload || {}).reduce((accumulator, [key, value]) => {
+    if (typeof value !== "string") {
+      accumulator[key] = value;
+      return accumulator;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      accumulator[key] = value;
+      return accumulator;
+    }
+
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        accumulator[key] = JSON.parse(trimmed);
+        return accumulator;
+      } catch {
+        accumulator[key] = value;
+        return accumulator;
+      }
+    }
+
+    accumulator[key] = value;
+    return accumulator;
+  }, {});
+
 const getOrCreateSettings = async (tenantId) => {
   if (!tenantId) {
     throw new Error("Tenant context is required for settings access");
@@ -45,15 +76,23 @@ const getOrCreateSettings = async (tenantId) => {
   return settings;
 };
 
-const toPublicSettings = (settings) => ({
-  restaurant: settings?.restaurant || {},
+const buildRestaurantSettings = (req, restaurant = {}) => ({
+  ...(restaurant || {}),
+  logo:
+    restaurant?.logo && !String(restaurant.logo).startsWith("/")
+      ? `${process.env.BACKEND_URL || `${req.protocol}://${req.get("host")}/api`}/images/restaurant-logo`
+      : restaurant?.logo || "/tableloom-mark.svg",
+});
+
+const toPublicSettings = (req, settings) => ({
+  restaurant: buildRestaurantSettings(req, settings?.restaurant || {}),
   businessHours: settings?.businessHours || {},
   paymentMethods: settings?.paymentMethods || {},
   taxSettings: settings?.taxSettings || {},
 });
 
-const toAdminSettings = (settings) => ({
-  restaurant: settings?.restaurant || {},
+const toAdminSettings = (req, settings) => ({
+  restaurant: buildRestaurantSettings(req, settings?.restaurant || {}),
   businessHours: settings?.businessHours || {},
   taxSettings: settings?.taxSettings || {},
   paymentMethods: settings?.paymentMethods || {},
@@ -64,7 +103,7 @@ const toAdminSettings = (settings) => ({
 exports.getPublicSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
-    return sendSuccess(res, 200, null, toPublicSettings(settings.toObject()));
+    return sendSuccess(res, 200, null, toPublicSettings(req, settings.toObject()));
   } catch (error) {
     logger.error("Get public settings failed:", error);
     return sendError(res, 500, "Failed to get public settings");
@@ -74,7 +113,7 @@ exports.getPublicSettings = async (req, res) => {
 exports.getAdminSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
-    return sendSuccess(res, 200, null, toAdminSettings(settings.toObject()), {
+    return sendSuccess(res, 200, null, toAdminSettings(req, settings.toObject()), {
       meta: {
         delayMonitorStatus: delayMonitor.getStatus(),
       },
@@ -89,7 +128,27 @@ exports.updateSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
     const currentSettings = settings.toObject();
-    const mergedSettings = deepMerge(currentSettings, req.body || {});
+    const parsedPayload = parseSettingsPayload(req.body || {});
+    const mergedSettings = deepMerge(currentSettings, parsedPayload);
+
+    if (req.file?.url) {
+      if (
+        settings.restaurant?.logo &&
+        !String(settings.restaurant.logo).startsWith("/") &&
+        settings.restaurant?.logoPublicId
+      ) {
+        await deleteAsset(settings.restaurant.logoPublicId, "image").catch((error) => {
+          logger.warn("Failed to delete previous restaurant logo:", error?.message || error);
+        });
+      }
+
+      mergedSettings.restaurant = {
+        ...(mergedSettings.restaurant || {}),
+        logo: req.file.url,
+        logoPublicId: req.file.publicId,
+        logoProvider: req.file.storageProvider || "cloudinary",
+      };
+    }
 
     settings.restaurant = mergedSettings.restaurant || settings.restaurant;
     settings.businessHours =
@@ -110,9 +169,9 @@ exports.updateSettings = async (req, res) => {
       res,
       200,
       "Settings updated successfully",
-      toAdminSettings(settings.toObject()),
+      toAdminSettings(req, settings.toObject()),
       {
-        publicSettings: toPublicSettings(settings.toObject()),
+        publicSettings: toPublicSettings(req, settings.toObject()),
         meta: {
           delayMonitorStatus: delayMonitor.getStatus(),
         },
