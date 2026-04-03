@@ -1,6 +1,34 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 
+const notificationActionSchema = new mongoose.Schema(
+  {
+    label: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    type: {
+      type: String,
+      trim: true,
+      default: "button",
+    },
+    action: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    color: {
+      type: String,
+      trim: true,
+      default: "secondary",
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const notificationSchema = new mongoose.Schema(
   {
     // Basic info
@@ -113,14 +141,10 @@ const notificationSchema = new mongoose.Schema(
       default: false,
     },
 
-    actions: [
-      {
-        label: String,
-        type: String, // 'button', 'link', 'acknowledge'
-        action: String, // API endpoint or function name
-        color: String,
-      },
-    ],
+    actions: {
+      type: [notificationActionSchema],
+      default: [],
+    },
 
     // Status tracking
     status: {

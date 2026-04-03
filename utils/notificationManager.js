@@ -4,6 +4,46 @@ const User = require("../models/User");
 const socketManager = require("./socketManager");
 
 class NotificationManager {
+  normalizeActions(actions = []) {
+    if (!Array.isArray(actions)) {
+      return [];
+    }
+
+    return actions
+      .map((action) => {
+        if (typeof action === "string") {
+          const label = action.trim();
+          if (!label) {
+            return null;
+          }
+
+          return {
+            label,
+            type: "button",
+            action: "",
+            color: "secondary",
+          };
+        }
+
+        if (!action || typeof action !== "object") {
+          return null;
+        }
+
+        const label = String(action.label || "").trim();
+        if (!label) {
+          return null;
+        }
+
+        return {
+          label,
+          type: String(action.type || "button").trim(),
+          action: String(action.action || "").trim(),
+          color: String(action.color || "secondary").trim(),
+        };
+      })
+      .filter(Boolean);
+  }
+
   buildRecipientQuery(userId, role) {
     return {
       $or: [
@@ -63,7 +103,7 @@ class NotificationManager {
         relatedTo: data.relatedTo || null,
         relatedModel: data.relatedModel || null,
         actionRequired: data.actionRequired || false,
-        actions: data.actions || [],
+        actions: this.normalizeActions(data.actions),
         metadata: data.metadata || {},
         expiresAt: data.expiresAt || null,
       });
@@ -839,7 +879,20 @@ class NotificationManager {
           relatedTo: orderData._id,
           relatedModel: "KitchenOrder",
           actionRequired: true,
-          actions: [`Start Preparing`, `View Order Details`],
+          actions: [
+            {
+              label: "Start Preparing",
+              type: "button",
+              action: `/api/kitchen-orders/${orderData._id}/start`,
+              color: "primary",
+            },
+            {
+              label: "View Order Details",
+              type: "link",
+              action: `/dashboard/kitchen/orders/${orderData._id}`,
+              color: "secondary",
+            },
+          ],
           metadata: {
             orderNumber: orderData.orderNumber,
             tableNumber: orderData.tableNumber,
