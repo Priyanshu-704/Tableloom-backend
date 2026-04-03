@@ -89,6 +89,15 @@ const orderSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  taxRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  taxInclusive: {
+    type: Boolean,
+    default: false,
+  },
   discountAmount: {
     type: Number,
     default: 0,
@@ -98,6 +107,19 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0,
+  },
+  serviceChargeRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  currency: {
+    type: String,
+    default: "INR",
+  },
+  currencySymbol: {
+    type: String,
+    default: "₹",
   },
   totalAmount: {
     type: Number,
@@ -237,8 +259,12 @@ orderSchema.pre("save", function () {
     }
 
     // Calculate total amount
-    this.totalAmount =
-      this.subtotal + this.taxAmount + this.serviceCharge - this.discountAmount;
+    this.totalAmount = this.taxInclusive
+      ? this.subtotal + this.serviceCharge - this.discountAmount
+      : this.subtotal +
+        this.taxAmount +
+        this.serviceCharge -
+        this.discountAmount;
   }
 });
 

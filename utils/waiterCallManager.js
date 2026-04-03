@@ -744,6 +744,38 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
       payload,
     );
 
+    try {
+      await notificationManager.createNotification({
+        title: `Waiter Call Assigned - ${call.tableNumber || "Table"}`,
+        message: `You have been assigned to waiter call ${call.callId}.`,
+        type: "waiter_call",
+        priority: call.priority === "critical" ? "urgent" : call.priority || "medium",
+        recipientType: "user",
+        recipients: [staff._id],
+        relatedTo: call._id,
+        relatedModel: "WaiterCall",
+        actionRequired: true,
+        actions: [
+          {
+            label: "View Waiter Calls",
+            type: "link",
+            action: "/dashboard/waiter-calls",
+            color: "primary",
+          },
+        ],
+        metadata: {
+          callId: call.callId,
+          tableNumber: call.tableNumber,
+          tableName: call.tableName,
+          location: call.location,
+          callType: call.callType,
+          customerName: call.customer?.name || "Customer",
+        },
+      });
+    } catch (notificationError) {
+      logger.error("Failed to create waiter assignment notification:", notificationError);
+    }
+
     return call;
   } catch (error) {
     logger.error("Assign call to staff failed:", error);

@@ -4,6 +4,7 @@ const { deleteAsset } = require("../utils/cloudinaryStorage");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const delayMonitor = require("../utils/delayMonitor");
 const { buildTenantAssetUrl } = require("../utils/assetUrl");
+const { invalidateTenantTaxSettings } = require("../utils/taxCalculator");
 
 const deepMerge = (target = {}, source = {}) => {
   const output = { ...(target || {}) };
@@ -164,6 +165,7 @@ exports.updateSettings = async (req, res) => {
     settings.updatedBy = req.user?._id || null;
 
     await settings.save();
+    invalidateTenantTaxSettings(req.tenant?._id);
     await delayMonitor.syncWithSettings();
 
     return sendSuccess(

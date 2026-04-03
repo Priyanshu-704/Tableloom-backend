@@ -13,6 +13,7 @@ const {
   getCacheEntry,
   setCacheEntry,
 } = require("./responseCache");
+const { createTaxSnapshot } = require("./taxCalculator");
 
 const SESSION_TIMEOUT_MINUTES = 60;
 const SESSION_ACTIVITY_WRITE_TTL_MS = 30 * 1000;
@@ -723,7 +724,17 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         });
       });
 
-      const totalAmount = subtotal + taxAmount + serviceCharge - discountAmount;
+      const totalAmount = orders.reduce(
+        (sum, order) => sum + Number(order.totalAmount || 0),
+        0,
+      );
+      const taxSnapshot = createTaxSnapshot({
+        taxRate: orders[0]?.taxRate,
+        serviceCharge: orders[0]?.serviceChargeRate,
+        taxInclusive: orders[0]?.taxInclusive,
+        currency: orders[0]?.currency,
+        currencySymbol: orders[0]?.currencySymbol,
+      });
 
       bill = await Bill.create({
         orderId: orders[0]._id,
@@ -732,9 +743,14 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         tableId: customerForBill.table?._id,
         subtotal,
         taxAmount,
+        taxRate: taxSnapshot.taxRate,
+        taxInclusive: taxSnapshot.taxInclusive,
         serviceCharge,
+        serviceChargeRate: taxSnapshot.serviceChargeRate,
         discountAmount,
         totalAmount,
+        currency: taxSnapshot.currency,
+        currencySymbol: taxSnapshot.currencySymbol,
         items: allItems,
         customerEmail: customerForBill.email,
         customerPhone: customerForBill.phone,
@@ -1440,7 +1456,17 @@ exports.generateBillBeforePayment = async (sessionId) => {
       });
     });
 
-    const totalAmount = subtotal + taxAmount + serviceCharge - discountAmount;
+    const totalAmount = orders.reduce(
+      (sum, order) => sum + Number(order.totalAmount || 0),
+      0,
+    );
+    const taxSnapshot = createTaxSnapshot({
+      taxRate: orders[0]?.taxRate,
+      serviceCharge: orders[0]?.serviceChargeRate,
+      taxInclusive: orders[0]?.taxInclusive,
+      currency: orders[0]?.currency,
+      currencySymbol: orders[0]?.currencySymbol,
+    });
 
     const date = new Date();
     const dateStr =
@@ -1464,9 +1490,14 @@ exports.generateBillBeforePayment = async (sessionId) => {
       tableId: customer.table?._id,
       subtotal,
       taxAmount,
+      taxRate: taxSnapshot.taxRate,
+      taxInclusive: taxSnapshot.taxInclusive,
       serviceCharge,
+      serviceChargeRate: taxSnapshot.serviceChargeRate,
       discountAmount,
       totalAmount,
+      currency: taxSnapshot.currency,
+      currencySymbol: taxSnapshot.currencySymbol,
       items: allItems,
       customerEmail: customer.email,
       customerPhone: customer.phone,

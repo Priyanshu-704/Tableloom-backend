@@ -11,6 +11,10 @@ const { orderStatusColors } = require("../utils/statusColors");
 const User = require("../models/User");
 const Bill = require("../models/Bill");
 const { buildTenantAssetUrl } = require("./assetUrl");
+const {
+  calculatePricingBreakdown,
+  getTenantTaxSettings,
+} = require("./taxCalculator");
 require("dotenv").config({ quiet: true });
 
 const transformMenuItemData = (menuItem) => {
@@ -66,6 +70,33 @@ const notifyCustomerSession = async (sessionId, title, message, orderObj = {}) =
   } catch (error) {
     logger.error("Failed to create order notification:", error);
   }
+};
+
+const getOrderTaxSettings = (order) => ({
+  taxRate: Number(order?.taxRate || 0),
+  serviceCharge: Number(order?.serviceChargeRate || 0),
+  taxInclusive: Boolean(order?.taxInclusive),
+  currency: order?.currency || "INR",
+  currencySymbol: order?.currencySymbol || "₹",
+});
+
+const applyOrderPricing = (order, settings) => {
+  const pricingBreakdown = calculatePricingBreakdown({
+    subtotal: order.subtotal,
+    discountAmount: order.discountAmount,
+    settings,
+  });
+
+  order.taxAmount = pricingBreakdown.taxAmount;
+  order.taxRate = pricingBreakdown.taxRate;
+  order.taxInclusive = pricingBreakdown.taxInclusive;
+  order.serviceCharge = pricingBreakdown.serviceChargeAmount;
+  order.serviceChargeRate = pricingBreakdown.serviceChargeRate;
+  order.currency = pricingBreakdown.currency;
+  order.currencySymbol = pricingBreakdown.currencySymbol;
+  order.totalAmount = pricingBreakdown.totalAmount;
+
+  return pricingBreakdown;
 };
 
 exports.createOrder = async (sessionId, orderData) => {
@@ -136,12 +167,12 @@ exports.createOrder = async (sessionId, orderData) => {
     const subtotal = orderItems.reduce((sum, item) => sum + item.totalPrice, 0);
 
     const discountAmount = Number(orderData.discountAmount || 0);
-    const taxAmount = Number(orderData.taxAmount || 0);
-    const serviceCharge = Number(orderData.serviceCharge || 0);
-
-    let totalAmount = subtotal + taxAmount + serviceCharge - discountAmount;
-
-    if (totalAmount < 0) totalAmount = 0;
+    const tenantTaxSettings = await getTenantTaxSettings();
+    const pricingBreakdown = calculatePricingBreakdown({
+      subtotal,
+      discountAmount,
+      settings: tenantTaxSettings,
+    });
 
     const order = await Order.create({
       orderNumber: `ORD-${Date.now()}-${Math.random()
@@ -152,10 +183,15 @@ exports.createOrder = async (sessionId, orderData) => {
       table: customer.table._id,
       items: orderItems,
       subtotal,
-      taxAmount,
-      serviceCharge,
+      taxAmount: pricingBreakdown.taxAmount,
+      taxRate: pricingBreakdown.taxRate,
+      taxInclusive: pricingBreakdown.taxInclusive,
+      serviceCharge: pricingBreakdown.serviceChargeAmount,
+      serviceChargeRate: pricingBreakdown.serviceChargeRate,
       discountAmount,
-      totalAmount,
+      totalAmount: pricingBreakdown.totalAmount,
+      currency: pricingBreakdown.currency,
+      currencySymbol: pricingBreakdown.currencySymbol,
       specialInstructions: orderData.specialInstructions || "",
       orderType: "dine-in",
       status: "pending",
@@ -197,6 +233,37 @@ exports.createOrder = async (sessionId, orderData) => {
         "Your order has been placed successfully.",
         orderObj,
       );
+    }
+
+    try {
+      await notificationManager.createNotification({
+        title: `New Order - Table ${customer.table?.tableNumber || orderObj.table?.tableNumber || ""}`,
+        message: `Order #${orderObj.orderNumber || ""} has been placed and is ready for review.`,
+        type: "system_alert",
+        priority: "high",
+        recipientType: "role",
+        roles: ["admin"],
+        relatedTo: orderObj._id,
+        relatedModel: "Order",
+        actionRequired: true,
+        actions: [
+          {
+            label: "View Orders",
+            type: "link",
+            action: "/dashboard/orders",
+            color: "primary",
+          },
+        ],
+        metadata: {
+          orderId: orderObj._id,
+          orderNumber: orderObj.orderNumber,
+          tableNumber: customer.table?.tableNumber || orderObj.table?.tableNumber || "",
+          customerName: customer.name || orderObj.customer?.name || "Customer",
+          status: orderObj.status,
+        },
+      });
+    } catch (notificationError) {
+      logger.error("Failed to create admin order placement notification:", notificationError);
     }
 
     const kitchenOrder = await kitchenManager.createKitchenOrder(order._id);
@@ -277,11 +344,7 @@ exports.addItemsToOrder = async (orderId, newItems) => {
       (total, item) => total + item.totalPrice,
       0,
     );
-    order.totalAmount =
-      order.subtotal +
-      order.taxAmount +
-      order.serviceCharge -
-      order.discountAmount;
+    applyOrderPricing(order, getOrderTaxSettings(order));
 
     await order.save();
 
@@ -347,11 +410,7 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
       (total, item) => total + item.totalPrice,
       0,
     );
-    order.totalAmount =
-      order.subtotal +
-      order.taxAmount +
-      order.serviceCharge -
-      order.discountAmount;
+    applyOrderPricing(order, getOrderTaxSettings(order));
 
     await order.save();
 
@@ -407,11 +466,7 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
       (total, item) => total + item.totalPrice,
       0,
     );
-    order.totalAmount =
-      order.subtotal +
-      order.taxAmount +
-      order.serviceCharge -
-      order.discountAmount;
+    applyOrderPricing(order, getOrderTaxSettings(order));
 
     await order.save();
 

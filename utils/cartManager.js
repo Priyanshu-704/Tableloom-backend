@@ -5,6 +5,10 @@ const Customer = require("../models/Customer");
 const MenuItem = require("../models/MenuItem");
 const orderManager = require("./orderManager");
 const { buildTenantAssetUrl } = require("./assetUrl");
+const {
+  calculatePricingBreakdown,
+  getTenantTaxSettings,
+} = require("./taxCalculator");
 require("dotenv").config({ quiet: true });
 
 const normalizeCartDiscount = (cart) => {
@@ -197,6 +201,21 @@ const recalculateCartPricing = async (cart) => {
   cart.itemDiscountAmount = itemDiscountTotal;
   cart.couponDiscountAmount = couponDiscountAmount;
   cart.discountAmount = itemDiscountTotal + couponDiscountAmount;
+
+  const tenantTaxSettings = await getTenantTaxSettings();
+  const pricingBreakdown = calculatePricingBreakdown({
+    subtotal: grossSubtotal,
+    discountAmount: cart.discountAmount,
+    settings: tenantTaxSettings,
+  });
+
+  cart.taxAmount = pricingBreakdown.taxAmount;
+  cart.taxRate = pricingBreakdown.taxRate;
+  cart.taxInclusive = pricingBreakdown.taxInclusive;
+  cart.serviceCharge = pricingBreakdown.serviceChargeAmount;
+  cart.serviceChargeRate = pricingBreakdown.serviceChargeRate;
+  cart.currency = pricingBreakdown.currency;
+  cart.currencySymbol = pricingBreakdown.currencySymbol;
 
   if (coupon) {
     cart.appliedCoupon = {
@@ -498,6 +517,11 @@ exports.clearCart = async (sessionId) => {
     cart.discountAmount = 0;
     cart.itemDiscountAmount = 0;
     cart.couponDiscountAmount = 0;
+    cart.taxAmount = 0;
+    cart.taxRate = cart.taxRate || 0;
+    cart.taxInclusive = Boolean(cart.taxInclusive);
+    cart.serviceCharge = 0;
+    cart.serviceChargeRate = cart.serviceChargeRate || 0;
     cart.appliedCoupon = {
       couponId: null,
       code: "",
@@ -679,6 +703,31 @@ exports.convertCartToOrder = async (sessionId, orderData = {}) => {
 const transformCartData = (cart) => {
   if (!cart) return null;
 
+  const summary = {
+    itemCount: cart.items.reduce((sum, i) => sum + i.quantity, 0),
+    subtotal: cart.subtotal,
+    tax: cart.taxAmount || 0,
+    taxAmount: cart.taxAmount || 0,
+    taxRate: cart.taxRate || 0,
+    taxInclusive: Boolean(cart.taxInclusive),
+    deliveryFee: cart.serviceCharge || 0,
+    serviceCharge: cart.serviceCharge || 0,
+    serviceChargeRate: cart.serviceChargeRate || 0,
+    discount: cart.discountAmount || 0,
+    itemDiscount: cart.itemDiscountAmount || 0,
+    couponDiscount: cart.couponDiscountAmount || 0,
+    currency: cart.currency || "INR",
+    currencySymbol: cart.currencySymbol || "₹",
+    appliedCoupon: cart.appliedCoupon?.code
+      ? {
+          code: cart.appliedCoupon.code,
+          type: cart.appliedCoupon.type,
+          value: cart.appliedCoupon.value,
+        }
+      : null,
+    total: cart.totalAmount,
+  };
+
   return {
     table: cart.table
       ? {
@@ -687,23 +736,7 @@ const transformCartData = (cart) => {
         }
       : null,
 
-    summary: {
-      itemCount: cart.items.reduce((sum, i) => sum + i.quantity, 0),
-      subtotal: cart.subtotal,
-      tax: cart.taxAmount || 0,
-      deliveryFee: cart.serviceCharge || 0,
-      discount: cart.discountAmount || 0,
-      itemDiscount: cart.itemDiscountAmount || 0,
-      couponDiscount: cart.couponDiscountAmount || 0,
-      appliedCoupon: cart.appliedCoupon?.code
-        ? {
-            code: cart.appliedCoupon.code,
-            type: cart.appliedCoupon.type,
-            value: cart.appliedCoupon.value,
-          }
-        : null,
-      total: cart.totalAmount,
-    },
+    summary,
 
     items: cart.items.map((item) => ({
       _id: item._id,

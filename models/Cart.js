@@ -88,10 +88,32 @@ const cartSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  taxRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  taxInclusive: {
+    type: Boolean,
+    default: false,
+  },
   serviceCharge: {
     type: Number,
     default: 0,
     min: 0,
+  },
+  serviceChargeRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  currency: {
+    type: String,
+    default: "INR",
+  },
+  currencySymbol: {
+    type: String,
+    default: "₹",
   },
   discountAmount: {
     type: Number,
@@ -196,8 +218,9 @@ cartSchema.virtual("totalAmount").get(function () {
   const discount = this.discountAmount || 0;
   const tax = this.taxAmount || 0;
   const service = this.serviceCharge || 0;
-
-  const total = subtotal - discount + tax + service;
+  const total = this.taxInclusive
+    ? subtotal - discount + service
+    : subtotal - discount + tax + service;
   return total < 0 ? 0 : total;
 });
 

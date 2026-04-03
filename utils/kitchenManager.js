@@ -349,17 +349,10 @@ exports.markItemReady = async (kitchenOrderId, itemId) => {
     item.colorCode = kitchenItemStatusColors.ready;
     item.readyTime = new Date();
 
-    if (item.station) {
-      await KitchenStation.findByIdAndUpdate(item.station, {
-        $inc: { currentLoad: -item.quantity },
-      });
-    }
-
-    await kitchenOrder.save();
-    await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
-
-    const allItemsReady = kitchenOrder.items.every((item) =>
-      ["ready", "served"].includes(item.status)
+    const allItemsReady = kitchenOrder.items.every((currentItem) =>
+      currentItem._id.equals(item._id)
+        ? true
+        : ["ready", "served"].includes(currentItem.status)
     );
 
     if (allItemsReady && !kitchenOrder.timers.completedCooking) {
@@ -369,31 +362,38 @@ exports.markItemReady = async (kitchenOrderId, itemId) => {
           kitchenOrder.timers.kitchenAccepted) /
           1000
       );
-      await kitchenOrder.save();
     }
+
+    await Promise.all([
+      kitchenOrder.save(),
+      item.station
+        ? KitchenStation.findByIdAndUpdate(item.station, {
+            $inc: { currentLoad: -item.quantity },
+          })
+        : Promise.resolve(null),
+    ]);
+    await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
 
     this.emitKitchenUpdate("item_ready", kitchenOrder);
 
-    try {
-      await notificationManager.createOrderReadyNotification(
-        {
-          _id: kitchenOrder._id,
-          orderNumber: kitchenOrder.orderNumber,
-          tableNumber: kitchenOrder.tableNumber,
-          kitchenStaff: item.assignedTo || null,
-          assignedWaiter: kitchenOrder.assignedWaiter || null,
-        },
-        {
-          _id: item._id,
-          menuItemName: item.menuItemName,
-          quantity: item.quantity,
-          station: item.station,
-          readyTime: item.readyTime,
-        }
-      );
-    } catch (notifError) {
+    notificationManager.createOrderReadyNotification(
+      {
+        _id: kitchenOrder._id,
+        orderNumber: kitchenOrder.orderNumber,
+        tableNumber: kitchenOrder.tableNumber,
+        kitchenStaff: item.assignedTo || null,
+        assignedWaiter: kitchenOrder.assignedWaiter || null,
+      },
+      {
+        _id: item._id,
+        menuItemName: item.menuItemName,
+        quantity: item.quantity,
+        station: item.station,
+        readyTime: item.readyTime,
+      }
+    ).catch((notifError) => {
       logger.error("Failed to create order ready notification:", notifError);
-    }
+    });
 
     this.emitExpediterNotification(kitchenOrder, item);
 

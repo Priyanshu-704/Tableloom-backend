@@ -57,6 +57,12 @@ router.use(
   blockSuperAdminTenantAccess,
   require("./notificationRoutes")
 );
+router.use(
+  "/push-notifications",
+  requireTenant,
+  blockSuperAdminTenantAccess,
+  require("./pushNotificationRoutes")
+);
 router.use("/settings", require("./settingsRoutes"));
 router.use(
   "/dashboard",

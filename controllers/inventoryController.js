@@ -1,5 +1,6 @@
 const InventoryItem = require("../models/InventoryItem");
 const MenuItem = require("../models/MenuItem");
+const notificationManager = require("../utils/notificationManager");
 
 const getRelationsForInventory = (inventoryItem) => {
   const relatedMenuItems = Array.isArray(inventoryItem?.relatedMenuItems)
@@ -50,6 +51,46 @@ const serializeInventory = (item) => {
     stockStatus: buildStatus(inventory),
     linkedMenuItemsCount: getRelationsForInventory(inventory).length,
   };
+};
+
+const notifyInventoryRequirement = async (inventoryItem, previousStatus = null, actorId = null) => {
+  const nextStatus = buildStatus(inventoryItem);
+  if (!["low_stock", "out_of_stock"].includes(nextStatus) || previousStatus === nextStatus) {
+    return;
+  }
+
+  await notificationManager.createNotification({
+    title: nextStatus === "out_of_stock" ? "Inventory Out Of Stock" : "Inventory Running Low",
+    message:
+      nextStatus === "out_of_stock"
+        ? `${inventoryItem.ingredientName} is out of stock and needs replenishment.`
+        : `${inventoryItem.ingredientName} is below minimum stock level.`,
+    type: "inventory_low",
+    priority: nextStatus === "out_of_stock" ? "high" : "medium",
+    recipientType: "role",
+    roles: ["admin", "manager"],
+    sender: actorId || null,
+    senderType: actorId ? "user" : "system",
+    relatedTo: inventoryItem._id,
+    relatedModel: "Inventory",
+    actionRequired: false,
+    actions: [
+      {
+        label: "View Inventory",
+        type: "link",
+        action: "/dashboard/inventory",
+        color: "warning",
+      },
+    ],
+    metadata: {
+      inventoryItemId: inventoryItem._id,
+      ingredientName: inventoryItem.ingredientName,
+      currentStock: Number(inventoryItem.currentStock || 0),
+      minimumStock: Number(inventoryItem.minimumStock || 0),
+      reorderQuantity: Number(inventoryItem.reorderQuantity || 0),
+      stockStatus: nextStatus,
+    },
+  });
 };
 
 const syncMenuAvailability = async (menuItemIds = [], updatedBy = null) => {
@@ -302,6 +343,7 @@ exports.createInventoryItem = async (req, res) => {
       normalizedRelations.map((relation) => relation.menuItem),
       req.user._id,
     );
+    await notifyInventoryRequirement(inventoryItem, null, req.user._id);
 
     res.status(201).json({
       success: true,
@@ -336,6 +378,8 @@ exports.updateInventoryItem = async (req, res) => {
         message: "Inventory item not found",
       });
     }
+
+    const previousStatus = buildStatus(inventoryItem);
 
     const {
       ingredientName,
@@ -390,6 +434,7 @@ exports.updateInventoryItem = async (req, res) => {
       ],
       req.user._id,
     );
+    await notifyInventoryRequirement(inventoryItem, previousStatus, req.user._id);
 
     const populated = await InventoryItem.findById(inventoryItem._id).populate({
       path: "relatedMenuItems.menuItem",
@@ -434,6 +479,8 @@ exports.adjustInventoryStock = async (req, res) => {
       });
     }
 
+    const previousStatus = buildStatus(inventoryItem);
+
     const signedQuantity = adjustmentType === "subtract" ? -amount : amount;
     inventoryItem.currentStock = Math.max(
       Number(inventoryItem.currentStock || 0) + signedQuantity,
@@ -452,6 +499,7 @@ exports.adjustInventoryStock = async (req, res) => {
       getRelationsForInventory(inventoryItem).map((relation) => relation.menuItem),
       req.user._id,
     );
+    await notifyInventoryRequirement(inventoryItem, previousStatus, req.user._id);
 
     const populated = await InventoryItem.findById(inventoryItem._id).populate({
       path: "relatedMenuItems.menuItem",

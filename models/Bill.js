@@ -51,7 +51,21 @@ const billSchema = new mongoose.Schema({
     default: 0,
     min: 0,
   },
+  taxRate: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  taxInclusive: {
+    type: Boolean,
+    default: false,
+  },
   serviceCharge: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  serviceChargeRate: {
     type: Number,
     default: 0,
     min: 0,
@@ -60,6 +74,14 @@ const billSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: 0,
+  },
+  currency: {
+    type: String,
+    default: "INR",
+  },
+  currencySymbol: {
+    type: String,
+    default: "₹",
   },
   totalAmount: {
     type: Number,

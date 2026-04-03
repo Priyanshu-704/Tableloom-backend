@@ -114,6 +114,11 @@ class NotificationManager {
       // Emit real-time notification
       await this.emitNotification(notification);
 
+      const pushNotificationManager = require("./pushNotificationManager");
+      pushNotificationManager.sendNotificationPush(notification).catch((pushError) => {
+        logger.error("Push notification dispatch failed:", pushError);
+      });
+
       return notification;
     } catch (error) {
       logger.error("Create notification failed:", error);

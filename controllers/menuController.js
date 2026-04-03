@@ -4,6 +4,7 @@ const Coupon = require("../models/Coupon");
 const MenuItem = require("../models/MenuItem");
 const Size = require("../models/Size");
 const PriceHistory = require("../models/PriceHistory");
+const notificationManager = require("../utils/notificationManager");
 const {
   parseCSV,
   generateCSVTemplate,
@@ -96,6 +97,55 @@ const shapeMenuItemForResponse = (req, item = {}, view = "customer") => {
         }
       : {}),
   };
+};
+
+const notifyMenuVisibilityChange = async ({
+  menuItem,
+  field,
+  enabled,
+  actorId,
+}) => {
+  if (!menuItem?._id || !field) {
+    return;
+  }
+
+  const normalizedField = field === "isActive" ? "status" : "availability";
+  const nextStateLabel =
+    field === "isActive"
+      ? enabled
+        ? "active"
+        : "inactive"
+      : enabled
+        ? "available"
+        : "unavailable";
+
+  await notificationManager.createNotification({
+    title: `Menu Item ${normalizedField === "status" ? "Status" : "Availability"} Changed`,
+    message: `${menuItem.name} is now ${nextStateLabel}.`,
+    type: "system_alert",
+    priority: enabled ? "medium" : "high",
+    recipientType: "role",
+    roles: ["admin", "manager", "chef"],
+    sender: actorId || null,
+    senderType: "user",
+    relatedTo: menuItem._id,
+    relatedModel: "Inventory",
+    actionRequired: false,
+    actions: [
+      {
+        label: "View Menu Items",
+        type: "link",
+        action: "/dashboard/menu/items",
+        color: "secondary",
+      },
+    ],
+    metadata: {
+      menuItemId: menuItem._id,
+      menuItemName: menuItem.name,
+      field,
+      state: nextStateLabel,
+    },
+  });
 };
 
 const shapeCategoryForResponse = (req, category = {}, includeStation = false) => ({
@@ -1486,7 +1536,7 @@ exports.updateMenuItem = async (req, res) => {
     }
 
     const existingMenuItem = await MenuItem.findById(req.params.id).select(
-      "_id category prices image imagePublicId",
+      "_id name category prices image imagePublicId isAvailable isActive",
     );
 
     if (!existingMenuItem) {
@@ -1714,6 +1764,24 @@ exports.updateMenuItem = async (req, res) => {
 
     invalidateMenuReadCaches();
 
+    if (updateData.isAvailable !== undefined && existingMenuItem.isAvailable !== menuItem.isAvailable) {
+      await notifyMenuVisibilityChange({
+        menuItem,
+        field: "isAvailable",
+        enabled: menuItem.isAvailable,
+        actorId: req.user.id,
+      });
+    }
+
+    if (updateData.isActive !== undefined && existingMenuItem.isActive !== menuItem.isActive) {
+      await notifyMenuVisibilityChange({
+        menuItem,
+        field: "isActive",
+        enabled: menuItem.isActive,
+        actorId: req.user.id,
+      });
+    }
+
     res.status(200).json({
       success: true,
       message: "Menu item updated successfully",
@@ -1769,6 +1837,13 @@ exports.toggleMenuItemAvailability = async (req, res) => {
     await menuItem.populate("updatedBy", "name");
 
     invalidateMenuReadCaches();
+
+    await notifyMenuVisibilityChange({
+      menuItem,
+      field: "isAvailable",
+      enabled: menuItem.isAvailable,
+      actorId: req.user.id,
+    });
 
     res.status(200).json({
       success: true,

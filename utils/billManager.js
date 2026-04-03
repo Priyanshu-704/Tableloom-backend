@@ -9,6 +9,10 @@ const nodemailer = require("nodemailer");
 const notificationManager = require("./notificationManager");
 require("dotenv").config({ quiet: true });
 const { uploadBuffer, fetchRemoteBuffer } = require("./cloudinaryStorage");
+const {
+  createTaxSnapshot,
+  getTenantTaxSettings,
+} = require("./taxCalculator");
 
 const getBaseUrl = () => process.env.BACKEND_URL;
 
@@ -67,9 +71,38 @@ exports.generateBillNumber = async () => {
   return `BILL-${String(count + 1).padStart(6, "0")}`;
 };
 
-const formatMoney = (value = 0, symbol = "INR") => {
+const formatMoney = (value = 0, currency = "INR", currencySymbol = null) => {
   const amount = Number(value || 0).toFixed(2);
-  return symbol === "USD" ? `$${amount}` : `₹${amount}`;
+  if (currencySymbol) {
+    return `${currencySymbol}${amount}`;
+  }
+
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+      minimumFractionDigits: 2,
+    }).format(Number(value || 0));
+  } catch (_error) {
+    return `${currency} ${amount}`;
+  }
+};
+
+const getBillTaxSnapshot = async (orders = []) => {
+  const orderSnapshot = orders.find(Boolean);
+  if (orderSnapshot?.currency || orderSnapshot?.taxRate !== undefined) {
+    return createTaxSnapshot({
+      taxRate: orderSnapshot.taxRate,
+      serviceCharge: orderSnapshot.serviceChargeRate,
+      taxInclusive: orderSnapshot.taxInclusive,
+      currency: orderSnapshot.currency,
+      currencySymbol: orderSnapshot.currencySymbol,
+    });
+  }
+
+  const tenantTaxSettings = await getTenantTaxSettings();
+  return createTaxSnapshot(tenantTaxSettings);
 };
 
 const getPdfBranding = async () => {
@@ -98,6 +131,7 @@ const getPdfBranding = async () => {
 // PDF Generation
 exports.generateBillPDF = async (bill) => {
   const branding = await getPdfBranding();
+  const billCurrency = bill?.currency || branding.currency;
   const items = Array.isArray(bill?.items) ? [...bill.items] : [];
   const unresolvedMenuItemIds = items
     .filter(
@@ -212,11 +246,11 @@ exports.generateBillPDF = async (bill) => {
           width: 40,
           align: "center",
         });
-        doc.text(formatMoney(item.unitPrice, branding.currency), 390, currentY, {
+        doc.text(formatMoney(item.unitPrice, billCurrency), 390, currentY, {
           width: 60,
           align: "right",
         });
-        doc.text(formatMoney(item.totalPrice, branding.currency), 455, currentY, {
+        doc.text(formatMoney(item.totalPrice, billCurrency), 455, currentY, {
           width: 75,
           align: "right",
         });
@@ -232,7 +266,7 @@ exports.generateBillPDF = async (bill) => {
         const fontSize = options.large ? 12 : 10;
         doc.font(fontName).fontSize(fontSize).fillColor("#111827");
         doc.text(label, 350, currentY, { width: 90, align: "right" });
-        doc.text(formatMoney(value, branding.currency), 445, currentY, {
+        doc.text(formatMoney(value, billCurrency), 445, currentY, {
           width: 85,
           align: "right",
         });
@@ -240,7 +274,14 @@ exports.generateBillPDF = async (bill) => {
       };
 
       totalLine("Subtotal", bill.subtotal || 0);
-      if (bill.taxAmount > 0) totalLine("Tax", bill.taxAmount);
+      if (bill.taxAmount > 0) {
+        totalLine(
+          bill.taxInclusive
+            ? `Tax (${Number(bill.taxRate || 0)}% included)`
+            : `Tax (${Number(bill.taxRate || 0)}%)`,
+          bill.taxAmount,
+        );
+      }
       if (bill.serviceCharge > 0) totalLine("Service", bill.serviceCharge);
       if (bill.discountAmount > 0) totalLine("Discount", -Math.abs(bill.discountAmount));
 
@@ -323,11 +364,12 @@ exports.generateAndSavePDF = async (bill) => {
 };
 
 // Bill Data Processing
-const calculateBillTotals = (orders) => {
+const calculateBillTotals = async (orders) => {
   let subtotal = 0;
   let taxAmount = 0;
   let serviceCharge = 0;
   let discountAmount = 0;
+  let totalAmount = 0;
   const allItems = [];
 
   orders.forEach((order) => {
@@ -335,6 +377,7 @@ const calculateBillTotals = (orders) => {
     taxAmount += order.taxAmount || 0;
     serviceCharge += order.serviceCharge || 0;
     discountAmount += order.discountAmount || 0;
+    totalAmount += order.totalAmount || 0;
 
     order.items.forEach((item) => {
       allItems.push({
@@ -348,7 +391,7 @@ const calculateBillTotals = (orders) => {
     });
   });
 
-  const totalAmount = subtotal + taxAmount + serviceCharge - discountAmount;
+  const taxSnapshot = await getBillTaxSnapshot(orders);
 
   return {
     subtotal,
@@ -357,6 +400,7 @@ const calculateBillTotals = (orders) => {
     discountAmount,
     totalAmount,
     items: allItems,
+    ...taxSnapshot,
   };
 };
 
@@ -395,9 +439,14 @@ const createBillDocument = async (
     tableId: customer.table?._id,
     subtotal: totals.subtotal,
     taxAmount: totals.taxAmount,
+    taxRate: totals.taxRate,
+    taxInclusive: totals.taxInclusive,
     serviceCharge: totals.serviceCharge,
+    serviceChargeRate: totals.serviceChargeRate,
     discountAmount: totals.discountAmount,
     totalAmount: totals.totalAmount,
+    currency: totals.currency,
+    currencySymbol: totals.currencySymbol,
     items: totals.items,
     customerEmail: customerEmail || customer.email,
     customerPhone: customer.phone,
@@ -474,11 +523,11 @@ const createBillEmailHtml = (bill) => {
             </table>
             
             <div class="totals">
-                <p><strong>Subtotal:</strong> ₹${bill.subtotal.toFixed(2)}</p>
-                ${bill.taxAmount > 0 ? `<p><strong>Tax:</strong> ₹${bill.taxAmount.toFixed(2)}</p>` : ""}
-                ${bill.serviceCharge > 0 ? `<p><strong>Service Charge:</strong> ₹${bill.serviceCharge.toFixed(2)}</p>` : ""}
-                ${bill.discountAmount > 0 ? `<p><strong>Discount:</strong> -₹${bill.discountAmount.toFixed(2)}</p>` : ""}
-                <h3>Total Amount: ₹${bill.totalAmount.toFixed(2)}</h3>
+                <p><strong>Subtotal:</strong> ${formatMoney(bill.subtotal, bill.currency)}</p>
+                ${bill.taxAmount > 0 ? `<p><strong>${bill.taxInclusive ? "Tax (included)" : "Tax"}:</strong> ${formatMoney(bill.taxAmount, bill.currency)}</p>` : ""}
+                ${bill.serviceCharge > 0 ? `<p><strong>Service Charge:</strong> ${formatMoney(bill.serviceCharge, bill.currency)}</p>` : ""}
+                ${bill.discountAmount > 0 ? `<p><strong>Discount:</strong> -${formatMoney(Math.abs(bill.discountAmount), bill.currency)}</p>` : ""}
+                <h3>Total Amount: ${formatMoney(bill.totalAmount, bill.currency)}</h3>
                 <p><strong>Payment Status:</strong> ${bill.paymentStatus.toUpperCase()}</p>
             </div>
             
@@ -519,7 +568,7 @@ const createPaymentConfirmationEmailHtml = (bill, paymentData) => {
                 <p><strong>Payment Date:</strong> ${new Date(bill.paidAt).toLocaleString()}</p>
                 <p><strong>Payment Method:</strong> ${paymentData.method}</p>
                 <p><strong>Transaction ID:</strong> ${paymentData.transactionId}</p>
-                <p><strong>Amount Paid:</strong> ₹${bill.totalAmount.toFixed(2)}</p>
+                <p><strong>Amount Paid:</strong> ${formatMoney(bill.totalAmount, bill.currency)}</p>
                 
                 <h3 style="color: #28a745;">Payment Status: CONFIRMED ✓</h3>
             </div>
@@ -646,7 +695,7 @@ exports.generateBill = async (sessionId, customerEmail = null, forceNew = false)
     logger.info(`Found ${orders.length} orders`);
 
     // Calculate totals
-    const totals = calculateBillTotals(orders);
+    const totals = await calculateBillTotals(orders);
     logger.info(`Calculated totals - Subtotal: ${totals.subtotal}, Total: ${totals.totalAmount}`);
 
     // Create bill document
