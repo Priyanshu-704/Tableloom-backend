@@ -131,6 +131,7 @@ userSchema.index(
     partialFilterExpression: { email: { $type: "string" } },
   }
 );
+userSchema.index({ email: 1, role: 1, createdAt: 1 });
 
 // ==================== MIDDLEWARE ====================
 

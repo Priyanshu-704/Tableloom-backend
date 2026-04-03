@@ -8,6 +8,78 @@ const notificationManager = require("./notificationManager");
 const { emitDelayedOrderAlert } = require("./socketManager");
 const mongoose = require("mongoose");
 
+const ORDER_STATUS_FLOW = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "served",
+  "completed",
+];
+
+const deriveOrderStatusFromKitchenItems = (items = []) => {
+  const activeItems = items.filter((item) => item?.status !== "cancelled");
+
+  if (activeItems.length === 0) {
+    return null;
+  }
+
+  if (activeItems.every((item) => item.status === "served")) {
+    return "served";
+  }
+
+  if (
+    activeItems.every((item) =>
+      ["ready", "served"].includes(item.status),
+    )
+  ) {
+    return "ready";
+  }
+
+  if (
+    activeItems.some((item) =>
+      ["preparing", "ready", "served"].includes(item.status),
+    )
+  ) {
+    return "preparing";
+  }
+
+  return null;
+};
+
+const syncParentOrderStatusFromKitchenOrder = async (kitchenOrder) => {
+  const targetStatus = deriveOrderStatusFromKitchenItems(kitchenOrder?.items || []);
+  const orderId = kitchenOrder?.order?._id || kitchenOrder?.order || kitchenOrder?._id;
+
+  if (!targetStatus || !orderId) {
+    return;
+  }
+
+  const order = await Order.findById(orderId).select("status").lean();
+
+  if (!order || ["completed", "cancelled"].includes(order.status)) {
+    return;
+  }
+
+  const currentIndex = ORDER_STATUS_FLOW.indexOf(order.status);
+  const targetIndex = ORDER_STATUS_FLOW.indexOf(targetStatus);
+
+  if (currentIndex === -1 || targetIndex === -1 || currentIndex >= targetIndex) {
+    return;
+  }
+
+  const orderManager = require("./orderManager");
+
+  for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
+    await orderManager.updateOrderStatus(
+      orderId,
+      ORDER_STATUS_FLOW[index],
+      null,
+      "Synced from kitchen workflow",
+    );
+  }
+};
+
 exports.createKitchenOrder = async (orderId) => {
   try {
     const order = await Order.findById(orderId)
@@ -284,6 +356,7 @@ exports.markItemReady = async (kitchenOrderId, itemId) => {
     }
 
     await kitchenOrder.save();
+    await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
 
     const allItemsReady = kitchenOrder.items.every((item) =>
       ["ready", "served"].includes(item.status)
@@ -354,6 +427,7 @@ exports.markItemServed = async (kitchenOrderId, itemId) => {
     }
 
     await kitchenOrder.save();
+    await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
 
     this.emitKitchenUpdate("item_served", kitchenOrder);
 
@@ -684,6 +758,7 @@ exports.startPreparingItem = async (kitchenOrderId, itemId) => {
     item.lastDelayCheck = new Date();
 
     await kitchenOrder.save();
+    await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
 
     this.emitKitchenUpdate("item_preparing", kitchenOrder);
 

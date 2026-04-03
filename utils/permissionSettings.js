@@ -1,6 +1,10 @@
 const AppSetting = require("../models/AppSetting");
 const { Permissions, RolePermissions, AllPermissions } = require("../config/permissions");
 const { getCurrentTenantId } = require("./tenantContext");
+const rolePermissionsCache = new Map();
+const ROLE_PERMISSIONS_CACHE_TTL_MS = Number(
+  process.env.ROLE_PERMISSIONS_CACHE_TTL_MS || 30000
+);
 
 const LEGACY_PERMISSION_GROUPS = {
   all: AllPermissions,
@@ -139,7 +143,39 @@ const expandPermissionEntries = (permissions = []) => {
 const getSettingsDocument = async () =>
   AppSetting.findOne({ tenantId: getCurrentTenantId() }).lean();
 
+const getCachedRolePermissionsMap = (tenantId) => {
+  const cacheKey = String(tenantId || "global");
+  const cached = rolePermissionsCache.get(cacheKey);
+
+  if (!cached) {
+    return null;
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    rolePermissionsCache.delete(cacheKey);
+    return null;
+  }
+
+  return cached.value;
+};
+
+const setCachedRolePermissionsMap = (tenantId, value) => {
+  const cacheKey = String(tenantId || "global");
+  rolePermissionsCache.set(cacheKey, {
+    value,
+    expiresAt: Date.now() + ROLE_PERMISSIONS_CACHE_TTL_MS,
+  });
+
+  return value;
+};
+
 const buildRolePermissionsMap = async () => {
+  const tenantId = getCurrentTenantId();
+  const cached = getCachedRolePermissionsMap(tenantId);
+  if (cached) {
+    return cached;
+  }
+
   const settings = await getSettingsDocument();
   const storedRoles = settings?.staff?.roles || [];
   const rolePermissions = {};
@@ -162,7 +198,7 @@ const buildRolePermissionsMap = async () => {
   });
 
   rolePermissions.super_admin = [...AllPermissions];
-  return rolePermissions;
+  return setCachedRolePermissionsMap(tenantId, rolePermissions);
 };
 
 const getDefaultRolePermissions = async (role) => {
@@ -188,6 +224,13 @@ const getEffectivePermissionsForUser = async (user) => {
 
 const hydrateUserPermissions = async (user) => {
   if (!user) {
+    return user;
+  }
+
+  const normalizedRole = normalizeRoleKey(user.role);
+  if (["super_admin", "admin"].includes(normalizedRole)) {
+    user.resolvedRolePermissions = [...AllPermissions];
+    user.resolvedPermissions = [...AllPermissions];
     return user;
   }
 

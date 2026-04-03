@@ -1,5 +1,4 @@
 const csv = require("csv-parser");
-const fs = require("fs");
 const { Readable } = require("stream");
 
 exports.parseCSV = (fileBuffer) => {
@@ -85,19 +84,21 @@ exports.generateCSVTemplate = () => {
   const headers = [
     "name",
     "description",
-    "sizeId",          
+    "category",
+    "size",
     "price",
     "costPrice",
-    "category",      
-    "ingredients",   
-    "allergens",     
+    "ingredients",
+    "allergens",
     "spiceLevel",
     "preparationTime",
     "isVegetarian",
     "isNonVegetarian",
     "isVegan",
     "isGlutenFree",
-    "tags",          
+    "isAvailable",
+    "isActive",
+    "tags",
     "calories",
     "protein",
     "carbs",
@@ -109,10 +110,78 @@ exports.generateCSVTemplate = () => {
     "seasonName",
   ];
 
+  const exampleRows = [
+    {
+      name: "Margherita Pizza",
+      description: "Classic cheese pizza",
+      category: "Pizzas",
+      size: "REG",
+      price: "199",
+      costPrice: "120",
+      ingredients: JSON.stringify(["Pizza Dough", "Mozzarella", "Tomato Sauce"]),
+      allergens: JSON.stringify(["Milk", "Gluten"]),
+      spiceLevel: "0",
+      preparationTime: "15",
+      isVegetarian: "true",
+      isNonVegetarian: "false",
+      isVegan: "false",
+      isGlutenFree: "false",
+      isAvailable: "true",
+      isActive: "true",
+      tags: JSON.stringify(["popular", "classic"]),
+      calories: "320",
+      protein: "12",
+      carbs: "38",
+      fat: "14",
+      displayOrder: "1",
+      isSeasonal: "false",
+      startDate: "",
+      endDate: "",
+      seasonName: "",
+    },
+    {
+      name: "Mango Shake",
+      description: "Seasonal mango shake",
+      category: "Beverages",
+      size: "L",
+      price: "149",
+      costPrice: "85",
+      ingredients: JSON.stringify(["Milk", "Mango Pulp", "Sugar"]),
+      allergens: JSON.stringify(["Milk"]),
+      spiceLevel: "0",
+      preparationTime: "5",
+      isVegetarian: "true",
+      isNonVegetarian: "false",
+      isVegan: "false",
+      isGlutenFree: "true",
+      isAvailable: "true",
+      isActive: "true",
+      tags: JSON.stringify(["seasonal", "summer"]),
+      calories: "240",
+      protein: "6",
+      carbs: "34",
+      fat: "8",
+      displayOrder: "2",
+      isSeasonal: "true",
+      startDate: "2026-04-01",
+      endDate: "2026-06-30",
+      seasonName: "Summer Special",
+    },
+  ];
 
-  const emptyRow = headers.map(() => "").join(",");
+  const escapeCsvValue = (value = "") => {
+    const stringValue = String(value ?? "");
+    if (/[",\n]/.test(stringValue)) {
+      return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+  };
 
-  return `${headers.join(",")}\n${emptyRow}\n`;
+  const rows = exampleRows.map((row) =>
+    headers.map((header) => escapeCsvValue(row[header] || "")).join(","),
+  );
+
+  return `${headers.join(",")}\n${rows.join("\n")}\n`;
 };
 
 

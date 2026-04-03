@@ -4,6 +4,10 @@ const Category = require("../models/Category");
 const Table = require("../models/Table");
 const Bill = require("../models/Bill");
 const AppSetting = require("../models/AppSetting");
+const {
+  buildQRCodeBuffer,
+  buildTenantTableQrUrl,
+} = require("../utils/qrGenerator");
 
 const proxyRemoteAsset = async (res, url, options = {}) => {
   if (!url) {
@@ -60,7 +64,7 @@ exports.getCategoryImage = async (req, res) => {
 
     await proxyRemoteAsset(res, category.image);
   } catch (error) {
-    logger.error("Category image error:", error);
+    logger.error("Table QR image error:", error);
     res.status(404).send("Image not found");
   }
 };
@@ -68,10 +72,32 @@ exports.getCategoryImage = async (req, res) => {
 exports.getTableQRImage = async (req, res) => {
   try {
     const table = await Table.findById(req.params.id).select(
-      "qrCode qrPublicId"
+      "tableNumber qrCode qrPublicId qrToken"
     );
 
-    if (!table?.qrCode) {
+    if (!table) {
+      return res.status(404).send("Image not found");
+    }
+
+    if (!table.qrCode && table.qrToken) {
+      const qrUrl = buildTenantTableQrUrl({
+        tableId: table._id,
+        tableNumber: table.tableNumber,
+        token: table.qrToken,
+        tenant: req.tenant,
+      });
+
+      if (!qrUrl) {
+        return res.status(404).send("Image not found");
+      }
+
+      const qrBuffer = await buildQRCodeBuffer(qrUrl);
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(qrBuffer);
+    }
+
+    if (!table.qrCode) {
       return res.status(404).send("Image not found");
     }
 

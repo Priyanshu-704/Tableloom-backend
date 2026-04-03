@@ -2,6 +2,7 @@ const { logger } = require("./../utils/logger.js");
 const waiterCallManager = require("../utils/waiterCallManager");
 const WaiterCall = require("../models/WaiterCall");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
+const { getOrSetCache } = require("../utils/responseCache");
 
 const parsePagination = (page, limit) => {
   const pageNum = Math.max(parseInt(page || 1, 10), 1);
@@ -182,49 +183,60 @@ exports.getAllCalls = async (req, res) => {
       if (endDate) query.createdAt.$lte = new Date(endDate);
     }
 
-    let callsQuery = WaiterCall.find(query)
-      .populate("table", "tableNumber tableName location coordinates")
-      .populate("customer", "name phone")
-      .populate("acknowledgedBy", "name role profileImage")
-      .populate("assignedTo", "name role")
-      .populate("startedBy", "name role")
-      .populate("completedBy", "name role")
-      .populate("assignedBy", "name role")
-      .sort({ createdAt: -1 });
+    const cacheKey = `waiter-call:list:${req.tenantId || "default"}:${req.originalUrl}`;
+    const payload = await getOrSetCache(cacheKey, 8000, async () => {
+      let callsQuery = WaiterCall.find(query)
+        .populate("table", "tableNumber tableName location coordinates")
+        .populate("customer", "name phone")
+        .populate("acknowledgedBy", "name role profileImage")
+        .populate("assignedTo", "name role")
+        .populate("startedBy", "name role")
+        .populate("completedBy", "name role")
+        .populate("assignedBy", "name role")
+        .sort({ createdAt: -1 })
+        .lean();
 
-    if (!search) {
-      callsQuery = callsQuery.skip(skip).limit(limitNum);
-    }
+      if (!search) {
+        callsQuery = callsQuery.skip(skip).limit(limitNum);
+      }
 
-    let calls = await callsQuery;
+      let calls = await callsQuery;
 
-    if (search) {
-      const keyword = search.trim().toLowerCase();
-      calls = calls.filter((call) => (
-        String(call.callId || "").toLowerCase().includes(keyword) ||
-        String(call.table?.tableNumber || call.tableNumber || "")
-          .toLowerCase()
-          .includes(keyword) ||
-        String(call.customer?.name || call.customerName || "")
-          .toLowerCase()
-          .includes(keyword) ||
-        String(call.message || "").toLowerCase().includes(keyword) ||
-        String(call.location || call.table?.location || "")
-          .toLowerCase()
-          .includes(keyword)
-      ));
-    }
+      if (search) {
+        const keyword = search.trim().toLowerCase();
+        calls = calls.filter((call) => (
+          String(call.callId || "").toLowerCase().includes(keyword) ||
+          String(call.table?.tableNumber || call.tableNumber || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(call.customer?.name || call.customerName || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(call.message || "").toLowerCase().includes(keyword) ||
+          String(call.location || call.table?.location || "")
+            .toLowerCase()
+            .includes(keyword)
+        ));
+      }
 
-    const total = search ? calls.length : await WaiterCall.countDocuments(query);
-    const paginatedCalls = search ? calls.slice(skip, skip + limitNum) : calls;
+      const total = search ? calls.length : await WaiterCall.countDocuments(query);
+      const paginatedCalls = search ? calls.slice(skip, skip + limitNum) : calls;
 
-    return sendSuccess(res, 200, null, paginatedCalls, {
-      count: paginatedCalls.length,
-      total,
-      pagination: {
-        page: pageNum,
-        pages: Math.ceil(total / limitNum),
-      },
+      return {
+        data: paginatedCalls,
+        count: paginatedCalls.length,
+        total,
+        pagination: {
+          page: pageNum,
+          pages: Math.ceil(total / limitNum),
+        },
+      };
+    });
+
+    return sendSuccess(res, 200, null, payload.data, {
+      count: payload.count,
+      total: payload.total,
+      pagination: payload.pagination,
     });
   } catch (error) {
     return handleCallError(res, error, "Failed to get calls");

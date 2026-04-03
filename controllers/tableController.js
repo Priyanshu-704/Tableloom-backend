@@ -1,13 +1,14 @@
 const { logger } = require("./../utils/logger.js");
+const mongoose = require("mongoose");
 const Table = require("../models/Table");
 const Customer = require("../models/Customer");
 const {
+  buildQRCodeBuffer,
   generateQRCode,
   generateQRData,
   buildTenantTableQrUrl,
   deleteQRFile,
 } = require("../utils/qrGenerator");
-const { fetchRemoteBuffer } = require("../utils/cloudinaryStorage");
 const { buildTenantAssetQuery, buildTenantAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
 require("dotenv").config({ quiet: true });
 
@@ -86,7 +87,9 @@ exports.createTable = async (req, res) => {
   try {
     const { tableNumber, tableName, capacity, location, notes } = req.body;
 
-    const existingTable = await Table.findOne({ tableNumber });
+    const existingTable = await Table.findOne({ tableNumber })
+      .select("_id")
+      .lean();
     if (existingTable) {
       return res.status(400).json({
         success: false,
@@ -94,31 +97,25 @@ exports.createTable = async (req, res) => {
       });
     }
 
+    const tableId = new mongoose.Types.ObjectId();
+    const qrInfo = generateQRData(tableId, tableNumber, req.tenant);
+
     const table = await Table.create({
+      _id: tableId,
       tableNumber,
       tableName,
       capacity,
       location,
       notes,
       createdBy: req.user.id,
+      qrToken: qrInfo.token,
+      qrTokenExpiry: qrInfo.expiry,
     });
-
-    const qrInfo = generateQRData(table._id, tableNumber, req.tenant);
-
-    const qrUpload = await generateQRCode(qrInfo.url, tableNumber);
-
-    table.qrToken = qrInfo.token;
-    table.qrTokenExpiry = qrInfo.expiry;
-    table.qrCode = qrUpload.url;
-    table.qrPublicId = qrUpload.publicId;
-    table.qrProvider = qrUpload.provider;
-
-    await table.save();
     await table.populate("createdBy", "name");
 
     res.status(201).json({
       success: true,
-      message: "Table created successfully with QR code",
+      message: "Table created successfully",
       data: sanitizeTable(table, { tenant: req.tenant }),
     });
   } catch (error) {
@@ -522,28 +519,36 @@ exports.downloadQRCode = async (req, res) => {
   try {
     const table = await Table.findById(req.params.id);
 
-    if (!table || !table.qrCode) {
+    if (!table) {
+      return res.status(404).json({
+        success: false,
+        message: "Table not found",
+      });
+    }
+
+    const qrUrl = buildTenantTableQrUrl({
+      tableId: table._id,
+      tableNumber: table.tableNumber,
+      token: table.qrToken,
+      tenant: req.tenant,
+    });
+
+    if (!qrUrl) {
       return res.status(404).json({
         success: false,
         message: "QR code not found",
       });
     }
 
-    if (/^https?:\/\//i.test(String(table.qrCode || ""))) {
-      const qrBuffer = await fetchRemoteBuffer(table.qrCode);
-      res.setHeader("Content-Type", "image/png");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="table-${table.tableNumber}-qrcode.png"`,
-      );
-      res.setHeader("Cache-Control", "no-store");
-      return res.send(qrBuffer);
-    }
+    const qrBuffer = await buildQRCodeBuffer(qrUrl);
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="table-${table.tableNumber}-qrcode.png"`,
+    );
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(qrBuffer);
 
-    return res.status(404).json({
-      success: false,
-      message: "QR code not found",
-    });
   } catch (error) {
     logger.error(error);
     res.status(500).json({

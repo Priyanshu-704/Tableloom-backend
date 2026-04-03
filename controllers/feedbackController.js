@@ -184,7 +184,7 @@ exports.deleteSessionFeedback = async (req, res) => {
   try {
     const { sessionId, id } = req.params;
 
-    const feedback = await Feedback.findOne({ _id: id, sessionId });
+    const feedback = await Feedback.findOneAndDelete({ _id: id, sessionId });
 
     if (!feedback) {
       return res.status(404).json({
@@ -192,8 +192,6 @@ exports.deleteSessionFeedback = async (req, res) => {
         message: "Feedback not found for this session",
       });
     }
-
-    await Feedback.deleteOne({ _id: id });
 
     return res.status(200).json({
       success: true,

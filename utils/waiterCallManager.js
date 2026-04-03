@@ -4,7 +4,7 @@ const Customer = require("../models/Customer");
 const User = require("../models/User");
 const notificationManager = require("./notificationManager");
 const socketManager = require("./socketManager");
-const { getOrSetCache } = require("./responseCache");
+const { getOrSetCache, clearCache } = require("./responseCache");
 const { getCurrentTenantId } = require("./tenantContext");
 
 const ACTIVE_SESSION_STATUSES = ["active", "payment_pending"];
@@ -140,6 +140,10 @@ const buildCallPayload = (call) => ({
 const getWaiterCallCacheKey = (suffix = "") =>
   `${WAITER_CALL_CACHE_PREFIX}${getCurrentTenantId() || "default"}:${suffix}`;
 
+const invalidateWaiterCallCaches = () => {
+  clearCache(getWaiterCallCacheKey(""));
+};
+
 exports.calculateUrgencyLevel = (callType = "waiter", priority = "medium") => {
   const callTypeWeight = toCallTypeWeight[callType] || 2;
   const priorityWeight = toPriorityWeight[priority] || 2;
@@ -153,9 +157,18 @@ exports.calculateUrgencyLevel = (callType = "waiter", priority = "medium") => {
 
 exports.getAvailableStaff = async () => {
   try {
-    return await User.find({
+    const tenantId = getCurrentTenantId();
+    const query = {
       isActive: true,
       role: { $in: ["waiter", "manager", "admin"] },
+    };
+
+    if (tenantId) {
+      query.tenantId = tenantId;
+    }
+
+    return await User.find({
+      ...query,
     })
       .select("name role isActive")
       .lean();
@@ -194,6 +207,7 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
         existingActiveCall.priority
       );
       await existingActiveCall.save();
+      invalidateWaiterCallCaches();
 
       const payload = {
         ...buildCallPayload(existingActiveCall),
@@ -231,6 +245,7 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
 
     await waiterCall.populate("table", "tableNumber tableName location coordinates");
     await waiterCall.populate("customer", "name phone");
+    invalidateWaiterCallCaches();
 
     const payload = {
       ...buildCallPayload(waiterCall),
@@ -301,6 +316,7 @@ exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
     }
 
     await waiterCall.save();
+    invalidateWaiterCallCaches();
     await waiterCall.populate("acknowledgedBy", "name role profileImage");
     await waiterCall.populate("table", "tableNumber tableName location coordinates");
 
@@ -349,6 +365,7 @@ exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
     }
 
     await waiterCall.save();
+    invalidateWaiterCallCaches();
     await waiterCall.populate("completedBy", "name role profileImage");
     await waiterCall.populate("table", "tableNumber tableName location");
 
@@ -406,6 +423,7 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
     }
 
     await waiterCall.save();
+    invalidateWaiterCallCaches();
     await waiterCall.populate("acknowledgedBy", "name role profileImage");
     await waiterCall.populate("startedBy", "name role");
     await waiterCall.populate("table", "tableNumber tableName location");
@@ -688,7 +706,13 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
       throw new Error(`Cannot assign call that is ${call.status}`);
     }
 
-    const staff = await User.findById(staffId).select("name role");
+    const tenantId = getCurrentTenantId();
+    const staffQuery = { _id: staffId };
+    if (tenantId) {
+      staffQuery.tenantId = tenantId;
+    }
+
+    const staff = await User.findOne(staffQuery).select("name role tenantId");
     if (!staff) throw new Error("Staff member not found");
 
     const assigner = assignerId ? await User.findById(assignerId).select("name") : null;
@@ -698,6 +722,7 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
     call.assignedAt = new Date();
     call.status = "assigned";
     await call.save();
+    invalidateWaiterCallCaches();
 
     await call.populate("assignedTo", "name role");
 
@@ -751,6 +776,7 @@ exports.cancelCall = async (callId, sessionId, reason = "") => {
     waiterCall.cancelledAt = new Date();
     waiterCall.cancellationReason = reason;
     await waiterCall.save();
+    invalidateWaiterCallCaches();
 
     const payload = {
       ...buildCallPayload(waiterCall),

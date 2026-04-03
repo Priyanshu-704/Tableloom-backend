@@ -192,6 +192,8 @@ const menuItemSchema = new mongoose.Schema({
   },
 });
 
+menuItemSchema.index({ tenantId: 1, category: 1 });
+
 // Middleware to auto-update station from category
 menuItemSchema.pre("save", async function () {
   this.updatedAt = Date.now();
@@ -200,7 +202,7 @@ menuItemSchema.pre("save", async function () {
   if (this.prices?.length > 0) {
     const unique = new Map();
     for (let i = this.prices.length - 1; i >= 0; i--) {
-      const sizeId = String(this.prices[i].size);
+      const sizeId = String(this.prices[i].sizeId);
       if (!unique.has(sizeId)) {
         unique.set(sizeId, this.prices[i]);
       }
@@ -209,6 +211,10 @@ menuItemSchema.pre("save", async function () {
   }
 
   // Auto-update station from category (on create or category change)
+  if (this.isNew && this.station) {
+    return;
+  }
+
   if (this.isNew || this.isModified("category")) {
     await this.updateStationFromCategory();
   }

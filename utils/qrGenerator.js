@@ -8,19 +8,22 @@ const {
 const Table = require('../models/Table');
 require("dotenv").config({ quiet: true });
 
+const buildQRCodeBuffer = async (data) => {
+  return QRCode.toBuffer(data, {
+    color: {
+      dark: "#000000",
+      light: "#FFFFFF",
+    },
+    width: 300,
+    margin: 2,
+    errorCorrectionLevel: "H",
+  });
+};
+
 const generateQRCode = async (data, tableNumber) => {
   try {
     const filename = `table-${tableNumber}-${Date.now()}.png`;
-
-    const qrBuffer = await QRCode.toBuffer(data, {
-      color: {
-        dark: "#000000",
-        light: "#FFFFFF",
-      },
-      width: 300,
-      margin: 2,
-      errorCorrectionLevel: "H",
-    });
+    const qrBuffer = await buildQRCodeBuffer(data);
 
     const uploaded = await uploadBuffer({
       buffer: qrBuffer,
@@ -168,6 +171,7 @@ const deleteQRFile = async (publicId) => {
 };
 
 module.exports = {
+  buildQRCodeBuffer,
   generateQRCode,
   generateQRData,
   buildTenantTableQrUrl,

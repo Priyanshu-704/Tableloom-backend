@@ -158,6 +158,8 @@ const customerSchema = new mongoose.Schema({
 });
 
 customerSchema.plugin(tenantScoped);
+customerSchema.index({ tenantId: 1, sessionStart: -1, isActive: 1, sessionStatus: 1 });
+customerSchema.index({ tenantId: 1, sessionEnd: -1, sessionStatus: 1, isActive: 1 });
 customerSchema.pre('save', function() {
   this.updatedAt = Date.now();
 });

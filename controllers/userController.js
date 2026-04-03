@@ -253,6 +253,7 @@ exports.loginStaff = async (req, res) => {
         email: normalizedEmail,
       })
         .sort({ role: 1, createdAt: 1 })
+        .limit(2)
         .select("+password");
 
       if (matchingUsers.length > 1) {
@@ -288,15 +289,14 @@ exports.loginStaff = async (req, res) => {
 
       // Generate and store refresh token
       const refreshToken = user.generateRefreshToken();
-      await user.save();
-
-      // Set tokens in cookies
-      setTokensInCookies(res, refreshToken);
 
       // Update last login
       user.lastLogin = Date.now();
       user.loginCount = (user.loginCount || 0) + 1;
       await user.save({ validateBeforeSave: false });
+
+      // Set tokens in cookies after persistence succeeds
+      setTokensInCookies(res, refreshToken);
 
       res.status(200).json({
         success: true,

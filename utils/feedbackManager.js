@@ -150,7 +150,10 @@ exports.getFeedbackBySession = async (sessionId) => {
     }
 
 
-    const feedback = await Feedback.find({ customer: customer._id })
+    const feedback = await Feedback.find({
+      customer: customer._id,
+      sessionId
+    })
       .populate('customer', 'name email phone')
       .populate('order', 'orderNumber orderPlacedAt totalAmount')
       .populate('table', 'tableNumber')

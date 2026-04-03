@@ -442,96 +442,136 @@ exports.getSessionAnalytics = async (req, res) => {
         startDate.setHours(0, 0, 0, 0);
     }
 
-    const [
-      totalSessions,
-      activeSessions,
-      completedSessions,
-      averageSessionTime,
-      revenue,
-      sessionsByHour,
-    ] = await Promise.all([
-      Customer.countDocuments({
-        sessionStart: { $gte: startDate },
-        isActive: true,
-      }),
-
-      Customer.countDocuments({
-        sessionStatus: { $in: ["active", "payment_pending"] },
-        sessionStart: { $gte: startDate },
-        isActive: true,
-      }),
-
-      Customer.countDocuments({
-        sessionStatus: "completed",
-        sessionEnd: { $gte: startDate },
-        isActive: true,
-      }),
-
-      Customer.aggregate([
-        {
-          $match: {
-            sessionStatus: "completed",
-            sessionStart: { $gte: startDate },
-            sessionEnd: { $exists: true },
-          },
+    const analytics = await Customer.aggregate([
+      {
+        $match: {
+          $or: [
+            { sessionStart: { $gte: startDate } },
+            { sessionEnd: { $gte: startDate } },
+          ],
         },
-        {
-          $addFields: {
-            duration: {
-              $divide: [{ $subtract: ["$sessionEnd", "$sessionStart"] }, 60000],
+      },
+      {
+        $group: {
+          _id: null,
+          totalSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionStart", startDate] },
+                    { $eq: ["$isActive", true] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          activeSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionStart", startDate] },
+                    { $eq: ["$isActive", true] },
+                    {
+                      $in: [
+                        "$sessionStatus",
+                        ["active", "payment_pending"],
+                      ],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          completedSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionEnd", startDate] },
+                    { $eq: ["$isActive", true] },
+                    { $eq: ["$sessionStatus", "completed"] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          revenue: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionEnd", startDate] },
+                    { $eq: ["$sessionStatus", "completed"] },
+                  ],
+                },
+                { $ifNull: ["$totalSpent", 0] },
+                0,
+              ],
+            },
+          },
+          averageSessionMinutesTotal: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionStart", startDate] },
+                    { $eq: ["$sessionStatus", "completed"] },
+                    { $ne: ["$sessionEnd", null] },
+                  ],
+                },
+                {
+                  $divide: [
+                    { $subtract: ["$sessionEnd", "$sessionStart"] },
+                    60000,
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+          averageSessionMinutesCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$sessionStart", startDate] },
+                    { $eq: ["$sessionStatus", "completed"] },
+                    { $ne: ["$sessionEnd", null] },
+                  ],
+                },
+                1,
+                0,
+              ],
             },
           },
         },
-        {
-          $group: {
-            _id: null,
-            average: { $avg: "$duration" },
-          },
-        },
-      ]),
-
-      Customer.aggregate([
-        {
-          $match: {
-            sessionStatus: "completed",
-            sessionEnd: { $gte: startDate },
-          },
-        },
-        {
-          $group: {
-            _id: null,
-            total: { $sum: "$totalSpent" },
-          },
-        },
-      ]),
-
-      Customer.aggregate([
-        {
-          $match: {
-            sessionStart: { $gte: startDate },
-          },
-        },
-        {
-          $group: {
-            _id: { $hour: "$sessionStart" },
-            count: { $sum: 1 },
-          },
-        },
-        {
-          $sort: { _id: 1 },
-        },
-      ]),
+      },
     ]);
+
+    const summary = analytics[0] || {};
+    const averageSessionTime =
+      summary.averageSessionMinutesCount > 0
+        ? summary.averageSessionMinutesTotal /
+          summary.averageSessionMinutesCount
+        : 0;
 
     res.status(200).json({
       success: true,
       data: {
         period,
-        totalSessions,
-        activeSessions,
-        completedSessions,
-        averageSessionTime: averageSessionTime[0]?.average || 0,
-        revenue: revenue[0]?.total || 0,
+        totalSessions: summary.totalSessions || 0,
+        activeSessions: summary.activeSessions || 0,
+        completedSessions: summary.completedSessions || 0,
+        averageSessionTime,
+        revenue: summary.revenue || 0,
       },
     });
   } catch (error) {
