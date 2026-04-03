@@ -118,6 +118,16 @@ const shapeCategoryForResponse = (req, category = {}, includeStation = false) =>
     : {}),
 });
 
+const getCategoryWithStation = async (categoryId) => {
+  if (!categoryId) {
+    return null;
+  }
+
+  return Category.findById(categoryId)
+    .select("_id kitchenStation")
+    .lean();
+};
+
 const normalizeSeasonalData = (value) => {
   if (value === undefined || value === null || value === "") {
     return { isSeasonal: false };
@@ -726,6 +736,8 @@ exports.createMenuItem = async (req, res) => {
       updatedBy: req.user.id,
     };
 
+    delete menuData.station;
+
     const safeParseArray = (value, fieldName) => {
       if (value === undefined || value === null || value === "") {
         return [];
@@ -849,6 +861,23 @@ exports.createMenuItem = async (req, res) => {
         message: "Category is required",
       });
     }
+
+    const category = await getCategoryWithStation(menuData.category);
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    if (!category.kitchenStation) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected category does not have a kitchen station",
+      });
+    }
+
+    menuData.station = category.kitchenStation;
 
     if (
       !menuData.prices ||
@@ -1339,6 +1368,8 @@ exports.updateMenuItem = async (req, res) => {
   try {
     let updateData = { ...req.body, updatedBy: req.user.id };
 
+    delete updateData.station;
+
     const safeParseArray = (value) => {
       if (value === undefined || value === null || value === "") {
         return [];
@@ -1429,6 +1460,36 @@ exports.updateMenuItem = async (req, res) => {
       });
     }
 
+    const existingMenuItem = await MenuItem.findById(req.params.id).select(
+      "_id category prices image imagePublicId",
+    );
+
+    if (!existingMenuItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Menu item not found",
+      });
+    }
+
+    const categoryId = updateData.category || existingMenuItem.category;
+    const category = await getCategoryWithStation(categoryId);
+
+    if (!category) {
+      return res.status(400).json({
+        success: false,
+        message: "Category not found",
+      });
+    }
+
+    if (!category.kitchenStation) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected category does not have a kitchen station",
+      });
+    }
+
+    updateData.station = category.kitchenStation;
+
     if (updateData.isVegetarian !== undefined) {
       updateData.isVegetarian =
         updateData.isVegetarian === "true" || updateData.isVegetarian === true;
@@ -1490,10 +1551,9 @@ exports.updateMenuItem = async (req, res) => {
         }
       }
 
-      const currentItem = await MenuItem.findById(req.params.id);
-      if (currentItem) {
+      if (existingMenuItem) {
         for (const newPrice of updateData.prices) {
-          const oldPriceObj = currentItem.prices.find(
+          const oldPriceObj = existingMenuItem.prices.find(
             (p) => p.sizeId.toString() === newPrice.sizeId.toString(),
           );
 
@@ -1543,11 +1603,10 @@ exports.updateMenuItem = async (req, res) => {
       updateData.imagePublicId = req.file.publicId;
       updateData.imageProvider = req.file.storageProvider || "cloudinary";
 
-      const oldMenuItem = await MenuItem.findById(req.params.id);
-      if (oldMenuItem?.imagePublicId) {
+      if (existingMenuItem?.imagePublicId) {
         try {
-          await deleteAsset(oldMenuItem.imagePublicId, "image");
-          logger.info("Deleted old Cloudinary image:", oldMenuItem.image);
+          await deleteAsset(existingMenuItem.imagePublicId, "image");
+          logger.info("Deleted old Cloudinary image:", existingMenuItem.image);
         } catch (err) {
           logger.error("Failed to delete old Cloudinary image:", err);
         }

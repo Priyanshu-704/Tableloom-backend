@@ -2,6 +2,16 @@ const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 
+const resolveStationFromCategory = async (categoryId) => {
+  if (!categoryId) {
+    return null;
+  }
+
+  const Category = mongoose.model("Category");
+  const category = await Category.findById(categoryId).select("kitchenStation");
+  return category?.kitchenStation || null;
+};
+
 const menuItemSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -207,24 +217,34 @@ menuItemSchema.pre("save", async function () {
 // Middleware for findOneAndUpdate operations
 menuItemSchema.pre("findOneAndUpdate", async function () {
   const update = this.getUpdate();
+  const hasDirectStationUpdate = update?.station !== undefined;
+  const hasSetStationUpdate = update?.$set?.station !== undefined;
 
   // Update updatedAt timestamp
   this.set({ updatedAt: Date.now() });
 
-  // If category is being updated, update station as well
-  if (update.category || update.$set?.category) {
-    const categoryId = update.category || update.$set?.category;
-    const Category = mongoose.model("Category");
+  if (hasDirectStationUpdate) {
+    delete update.station;
+  }
 
+  if (hasSetStationUpdate) {
+    delete update.$set.station;
+  }
+
+  // If category or station is being updated, derive station from category only
+  if (
+    update.category ||
+    update.$set?.category ||
+    hasDirectStationUpdate ||
+    hasSetStationUpdate
+  ) {
     try {
-      const category = await Category.findById(categoryId).select(
-        "kitchenStation"
-      );
-      if (category && category.kitchenStation) {
-        this.set({ station: category.kitchenStation });
-      } else {
-        this.set({ station: null });
-      }
+      const currentItem = await this.model.findOne(this.getQuery()).select("category");
+      const categoryId =
+        update.category || update.$set?.category || currentItem?.category;
+      const stationId = await resolveStationFromCategory(categoryId);
+
+      this.set({ station: stationId });
     } catch (error) {
       logger.error("Error updating menu item station:", error);
     }
@@ -234,16 +254,7 @@ menuItemSchema.pre("findOneAndUpdate", async function () {
 // Instance method to update station from category
 menuItemSchema.methods.updateStationFromCategory = async function () {
   try {
-    const Category = mongoose.model("Category");
-    const category = await Category.findById(this.category).select(
-      "kitchenStation"
-    );
-
-    if (category && category.kitchenStation) {
-      this.station = category.kitchenStation;
-    } else {
-      this.station = null;
-    }
+    this.station = await resolveStationFromCategory(this.category);
   } catch (error) {
     logger.error("Error updating station from category:", error);
     this.station = null;
