@@ -1,4 +1,5 @@
 const { logger } = require("./logger.js");
+const crypto = require("crypto");
 const Bill = require("../models/Bill");
 const Order = require("../models/Order");
 const Customer = require("../models/Customer");
@@ -103,6 +104,195 @@ const getBillTaxSnapshot = async (orders = []) => {
 
   const tenantTaxSettings = await getTenantTaxSettings();
   return createTaxSnapshot(tenantTaxSettings);
+};
+
+const toMetadataObject = (metadata = {}) => {
+  if (!metadata) {
+    return {};
+  }
+
+  if (metadata instanceof Map) {
+    return Object.fromEntries(metadata.entries());
+  }
+
+  if (typeof metadata.toObject === "function") {
+    return metadata.toObject();
+  }
+
+  return { ...metadata };
+};
+
+const getMetadataValue = (metadata = {}, key = "") => {
+  if (!metadata || !key) {
+    return undefined;
+  }
+
+  if (typeof metadata.get === "function") {
+    return metadata.get(key);
+  }
+
+  return metadata[key];
+};
+
+const toComparableItems = (items = []) =>
+  (Array.isArray(items) ? items : []).map((item = {}) => ({
+    menuItem: String(item.menuItem?._id || item.menuItem || ""),
+    name: item.name || "Unknown Item",
+    size: item.size || "",
+    quantity: Number(item.quantity || 0),
+    unitPrice: Number(item.unitPrice || 0),
+    totalPrice: Number(item.totalPrice || 0),
+  }));
+
+const buildBillContentFingerprint = (orders = [], totals = {}, customer = null) => {
+  const payload = {
+    orderIds: orders.map((order) => String(order?._id || "")),
+    orderNumbers: orders.map((order) => order?.orderNumber || ""),
+    orders: orders.map((order) => ({
+      id: String(order?._id || ""),
+      number: order?.orderNumber || "",
+      updatedAt: order?.updatedAt ? new Date(order.updatedAt).toISOString() : "",
+      status: order?.status || "",
+      paymentStatus: order?.paymentStatus || "",
+      subtotal: Number(order?.subtotal || 0),
+      taxAmount: Number(order?.taxAmount || 0),
+      serviceCharge: Number(order?.serviceCharge || 0),
+      discountAmount: Number(order?.discountAmount || 0),
+      totalAmount: Number(order?.totalAmount || 0),
+      items: toComparableItems(
+        (order?.items || []).map((item = {}) => ({
+          menuItem: item.menuItem?._id || item.menuItem,
+          name: item.menuItem?.name || item.name || "Unknown Item",
+          size: item.sizeName || item.size?.name || "Regular",
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+        })),
+      ),
+    })),
+    totals: {
+      subtotal: Number(totals?.subtotal || 0),
+      taxAmount: Number(totals?.taxAmount || 0),
+      taxRate: Number(totals?.taxRate || 0),
+      taxInclusive: Boolean(totals?.taxInclusive),
+      serviceCharge: Number(totals?.serviceCharge || 0),
+      serviceChargeRate: Number(totals?.serviceChargeRate || 0),
+      discountAmount: Number(totals?.discountAmount || 0),
+      totalAmount: Number(totals?.totalAmount || 0),
+      currency: totals?.currency || "INR",
+      currencySymbol: totals?.currencySymbol || "₹",
+      items: toComparableItems(totals?.items),
+    },
+    customer: {
+      id: String(customer?._id || ""),
+      tableId: String(customer?.table?._id || customer?.table || ""),
+      sessionId: customer?.sessionId || "",
+    },
+  };
+
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+};
+
+const buildBillMetadata = ({ orders = [], customer = null, contentFingerprint = "" }) => ({
+  orderCount: orders.length,
+  orderIds: orders.map((order) => String(order?._id || "")),
+  orderNumbers: orders.map((order) => order?.orderNumber || ""),
+  customerSessionStart: customer?.sessionStart || null,
+  tableNumber: customer?.table?.tableNumber || null,
+  generatedAt: new Date(),
+  lastSyncedAt: new Date(),
+  contentFingerprint,
+});
+
+const resetBillGeneratedAssets = (bill, { resetEmail = true, resetView = true } = {}) => {
+  bill.pdfMinioPath = undefined;
+  bill.pdfBucket = undefined;
+  bill.pdfPublicId = undefined;
+  bill.pdfProvider = undefined;
+  bill.pdfUrl = undefined;
+  bill.pdfGenerated = false;
+  bill.pdfError = undefined;
+
+  if (resetEmail) {
+    bill.emailSent = false;
+    bill.emailSentAt = undefined;
+    bill.emailError = undefined;
+    bill.emailRecipient = undefined;
+  }
+
+  if (resetView) {
+    bill.billViewed = false;
+    bill.lastViewedAt = undefined;
+  }
+};
+
+const hasBillContentChanged = (existingBill, totals, orders, contentFingerprint) => {
+  const storedFingerprint = getMetadataValue(existingBill?.metadata, "contentFingerprint");
+  if (storedFingerprint) {
+    return storedFingerprint !== contentFingerprint;
+  }
+
+  const existingOrderNumbers = Array.isArray(getMetadataValue(existingBill?.metadata, "orderNumbers"))
+    ? getMetadataValue(existingBill?.metadata, "orderNumbers")
+    : [];
+
+  const nextOrderNumbers = orders.map((order) => order?.orderNumber || "");
+
+  return (
+    Number(existingBill?.subtotal || 0) !== Number(totals?.subtotal || 0) ||
+    Number(existingBill?.taxAmount || 0) !== Number(totals?.taxAmount || 0) ||
+    Number(existingBill?.serviceCharge || 0) !== Number(totals?.serviceCharge || 0) ||
+    Number(existingBill?.discountAmount || 0) !== Number(totals?.discountAmount || 0) ||
+    Number(existingBill?.totalAmount || 0) !== Number(totals?.totalAmount || 0) ||
+    JSON.stringify(toComparableItems(existingBill?.items)) !== JSON.stringify(toComparableItems(totals?.items)) ||
+    JSON.stringify(existingOrderNumbers) !== JSON.stringify(nextOrderNumbers)
+  );
+};
+
+const syncExistingBill = async (
+  existingBill,
+  customer,
+  orders,
+  totals,
+  customerEmail,
+  contentFingerprint,
+) => {
+  existingBill.orderId = orders[0]?._id || existingBill.orderId;
+  existingBill.customerId = customer?._id || existingBill.customerId;
+  existingBill.tableId = customer?.table?._id || existingBill.tableId;
+  existingBill.subtotal = totals.subtotal;
+  existingBill.taxAmount = totals.taxAmount;
+  existingBill.taxRate = totals.taxRate;
+  existingBill.taxInclusive = totals.taxInclusive;
+  existingBill.serviceCharge = totals.serviceCharge;
+  existingBill.serviceChargeRate = totals.serviceChargeRate;
+  existingBill.discountAmount = totals.discountAmount;
+  existingBill.totalAmount = totals.totalAmount;
+  existingBill.currency = totals.currency;
+  existingBill.currencySymbol = totals.currencySymbol;
+  existingBill.items = totals.items;
+  existingBill.customerEmail = customerEmail || existingBill.customerEmail || customer?.email;
+  existingBill.customerPhone = customer?.phone || existingBill.customerPhone;
+  existingBill.customerName = customer?.name || existingBill.customerName;
+  existingBill.requestedAt = new Date();
+  existingBill.metadata = {
+    ...toMetadataObject(existingBill.metadata),
+    ...buildBillMetadata({
+      orders,
+      customer,
+      contentFingerprint,
+    }),
+  };
+  existingBill.version = Number(existingBill.version || 1) + 1;
+  existingBill.billStatus = customerEmail ? "sent" : "draft";
+
+  resetBillGeneratedAssets(existingBill);
+  await existingBill.save();
+
+  return existingBill;
 };
 
 const getPdfBranding = async () => {
@@ -413,6 +603,8 @@ const createBillDocument = async (
   customerEmail,
   forceNew = false
 ) => {
+  const contentFingerprint = buildBillContentFingerprint(orders, totals, customer);
+
   // Check existing bill
   if (!forceNew) {
     const existingBill = await Bill.findOne({
@@ -422,8 +614,61 @@ const createBillDocument = async (
     }).sort({ createdAt: -1 });
 
     if (existingBill) {
-      logger.info(`Existing bill found: ${existingBill.billNumber}`);
-      return existingBill;
+      const contentChanged = hasBillContentChanged(
+        existingBill,
+        totals,
+        orders,
+        contentFingerprint,
+      );
+
+      if (!contentChanged) {
+        let requiresSave = false;
+        const storedMetadata = toMetadataObject(existingBill.metadata);
+
+        if (customerEmail && customerEmail !== existingBill.customerEmail) {
+          existingBill.customerEmail = customerEmail;
+          requiresSave = true;
+        }
+
+        if (!storedMetadata.contentFingerprint) {
+          existingBill.metadata = {
+            ...storedMetadata,
+            ...buildBillMetadata({
+              orders,
+              customer,
+              contentFingerprint,
+            }),
+          };
+          requiresSave = true;
+        }
+
+        if (requiresSave) {
+          await existingBill.save();
+        }
+
+        logger.info(`Reusing existing bill without changes: ${existingBill.billNumber}`);
+        return {
+          bill: existingBill,
+          action: "unchanged",
+          contentFingerprint,
+        };
+      }
+
+      const updatedBill = await syncExistingBill(
+        existingBill,
+        customer,
+        orders,
+        totals,
+        customerEmail,
+        contentFingerprint,
+      );
+
+      logger.info(`Updated existing bill: ${updatedBill.billNumber}`);
+      return {
+        bill: updatedBill,
+        action: "updated",
+        contentFingerprint,
+      };
     }
   }
 
@@ -455,17 +700,19 @@ const createBillDocument = async (
     requestedAt: new Date(),
     paymentStatus: "pending",
     billStatus: customerEmail ? "sent" : "draft",
-    metadata: {
-      orderCount: orders.length,
-      orderNumbers: orders.map((o) => o.orderNumber),
-      customerSessionStart: customer.sessionStart,
-      tableNumber: customer.table?.tableNumber,
-      generatedAt: new Date(),
-    },
+    metadata: buildBillMetadata({
+      orders,
+      customer,
+      contentFingerprint,
+    }),
   });
 
   logger.info(`Bill created in database: ${bill.billNumber}`);
-  return bill;
+  return {
+    bill,
+    action: "created",
+    contentFingerprint,
+  };
 };
 
 // Email Functions
@@ -699,34 +946,61 @@ exports.generateBill = async (sessionId, customerEmail = null, forceNew = false)
     logger.info(`Calculated totals - Subtotal: ${totals.subtotal}, Total: ${totals.totalAmount}`);
 
     // Create bill document
-    const bill = await createBillDocument(sessionId, customer, orders, totals, customerEmail, forceNew);
+    const {
+      bill,
+      action,
+    } = await createBillDocument(
+      sessionId,
+      customer,
+      orders,
+      totals,
+      customerEmail,
+      forceNew,
+    );
 
-    // Generate and save PDF - FIX: Use exports.
-    await exports.generateAndSavePDF(bill);
+    const shouldGeneratePdf =
+      action === "created" || action === "updated" || !bill.pdfUrl;
+    if (shouldGeneratePdf) {
+      await exports.generateAndSavePDF(bill);
+    }
 
-    // Send email if provided - FIX: Use the function directly
-    if (customerEmail) {
+    const shouldSendEmail = Boolean(customerEmail) && (
+      action !== "unchanged" ||
+      !bill.emailSent ||
+      bill.customerEmail !== customerEmail ||
+      bill.emailRecipient !== customerEmail
+    );
+
+    if (shouldSendEmail) {
+      if (bill.customerEmail !== customerEmail) {
+        bill.customerEmail = customerEmail;
+        await bill.save();
+      }
       await exports.sendBillEmail(bill);
     }
 
-    try {
-      await notificationManager.createPaymentNotification(
-        {
-          _id: bill._id,
-          billNumber: bill.billNumber,
-          tableNumber: customer.table?.tableNumber,
-          totalAmount: bill.totalAmount,
-          paymentMethod: bill.paymentMethod,
-          customerName: bill.customerName,
-          customerId: customer._id,
-        },
-        "request"
-      );
-    } catch (notifError) {
-      logger.error("Failed to create payment notification:", notifError);
+    if (action !== "unchanged") {
+      try {
+        await notificationManager.createPaymentNotification(
+          {
+            _id: bill._id,
+            billNumber: bill.billNumber,
+            tableNumber: customer.table?.tableNumber,
+            totalAmount: bill.totalAmount,
+            paymentMethod: bill.paymentMethod,
+            customerName: bill.customerName,
+            customerId: customer._id,
+          },
+          "request"
+        );
+      } catch (notifError) {
+        logger.error("Failed to create payment notification:", notifError);
+      }
     }
 
-    return await enrichBillData(bill);
+    const enrichedBill = await enrichBillData(bill);
+    enrichedBill.generationAction = action;
+    return enrichedBill;
   } catch (error) {
     logger.error("Bill generation failed:", error);
     throw error;

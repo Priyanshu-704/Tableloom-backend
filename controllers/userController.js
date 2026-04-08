@@ -52,8 +52,8 @@ const setTokensInCookies = (res, refreshToken) => {
 
   res.cookie("refreshToken", refreshToken, {
     httpOnly: true,
-    secure: isProd, // ❗ prod = true, local = false
-    sameSite: isProd ? "none" : "lax", // ❗ KEY FIX
+    secure: isProd, 
+    sameSite: isProd ? "none" : "lax", 
     maxAge: 7 * 24 * 60 * 60 * 1000,
     path: "/",
   });

@@ -424,30 +424,57 @@ exports.extendSession = async (req, res) => {
 
 exports.getSessionAnalytics = async (req, res) => {
   try {
-    const { period = "today" } = req.query;
+    const { period = "today", startDate, endDate } = req.query;
 
-    let startDate = new Date();
+    let rangeStart = null;
+    let rangeEnd = null;
 
-    switch (period) {
-      case "today":
-        startDate.setHours(0, 0, 0, 0);
-        break;
-      case "week":
-        startDate.setDate(startDate.getDate() - 7);
-        break;
-      case "month":
-        startDate.setMonth(startDate.getMonth() - 1);
-        break;
-      default:
-        startDate.setHours(0, 0, 0, 0);
+    if (startDate || endDate) {
+      if (startDate) {
+        rangeStart = new Date(startDate);
+      }
+
+      if (endDate) {
+        rangeEnd = new Date(endDate);
+        rangeEnd.setHours(23, 59, 59, 999);
+      }
+    } else {
+      rangeStart = new Date();
+
+      switch (period) {
+        case "today":
+          rangeStart.setHours(0, 0, 0, 0);
+          break;
+        case "week":
+          rangeStart.setDate(rangeStart.getDate() - 7);
+          break;
+        case "month":
+          rangeStart.setMonth(rangeStart.getMonth() - 1);
+          break;
+        default:
+          rangeStart.setHours(0, 0, 0, 0);
+      }
+    }
+
+    const sessionStartMatch = {};
+    const sessionEndMatch = {};
+
+    if (rangeStart) {
+      sessionStartMatch.$gte = rangeStart;
+      sessionEndMatch.$gte = rangeStart;
+    }
+
+    if (rangeEnd) {
+      sessionStartMatch.$lte = rangeEnd;
+      sessionEndMatch.$lte = rangeEnd;
     }
 
     const analytics = await Customer.aggregate([
       {
         $match: {
           $or: [
-            { sessionStart: { $gte: startDate } },
-            { sessionEnd: { $gte: startDate } },
+            { sessionStart: sessionStartMatch },
+            { sessionEnd: sessionEndMatch },
           ],
         },
       },
@@ -459,7 +486,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionStart", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionStart", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionStart", rangeEnd] }] : []),
                     { $eq: ["$isActive", true] },
                   ],
                 },
@@ -473,7 +501,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionStart", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionStart", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionStart", rangeEnd] }] : []),
                     { $eq: ["$isActive", true] },
                     {
                       $in: [
@@ -493,7 +522,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionEnd", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionEnd", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionEnd", rangeEnd] }] : []),
                     { $eq: ["$isActive", true] },
                     { $eq: ["$sessionStatus", "completed"] },
                   ],
@@ -508,7 +538,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionEnd", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionEnd", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionEnd", rangeEnd] }] : []),
                     { $eq: ["$sessionStatus", "completed"] },
                   ],
                 },
@@ -522,7 +553,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionStart", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionStart", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionStart", rangeEnd] }] : []),
                     { $eq: ["$sessionStatus", "completed"] },
                     { $ne: ["$sessionEnd", null] },
                   ],
@@ -542,7 +574,8 @@ exports.getSessionAnalytics = async (req, res) => {
               $cond: [
                 {
                   $and: [
-                    { $gte: ["$sessionStart", startDate] },
+                    ...(rangeStart ? [{ $gte: ["$sessionStart", rangeStart] }] : []),
+                    ...(rangeEnd ? [{ $lte: ["$sessionStart", rangeEnd] }] : []),
                     { $eq: ["$sessionStatus", "completed"] },
                     { $ne: ["$sessionEnd", null] },
                   ],
@@ -566,12 +599,16 @@ exports.getSessionAnalytics = async (req, res) => {
     res.status(200).json({
       success: true,
       data: {
-        period,
+        period: startDate || endDate ? "custom" : period,
         totalSessions: summary.totalSessions || 0,
         activeSessions: summary.activeSessions || 0,
         completedSessions: summary.completedSessions || 0,
         averageSessionTime,
         revenue: summary.revenue || 0,
+        dateRange: {
+          startDate: rangeStart || null,
+          endDate: rangeEnd || null,
+        },
       },
     });
   } catch (error) {

@@ -14,7 +14,26 @@ const WAITER_CALL_LIST_CACHE_TTL_MS = 8 * 1000;
 const WAITER_CALL_STATS_CACHE_TTL_MS = 10 * 1000;
 const WAITER_CALL_DASHBOARD_CACHE_TTL_MS = 8 * 1000;
 
-const getDateRange = (period) => {
+const getDateRange = (options = "today") => {
+  const normalizedOptions =
+    typeof options === "string" ? { period: options } : options || {};
+  const { period = "today", startDate, endDate } = normalizedOptions;
+  const range = {};
+
+  if (startDate) {
+    range.$gte = new Date(startDate);
+  }
+
+  if (endDate) {
+    const inclusiveEndDate = new Date(endDate);
+    inclusiveEndDate.setHours(23, 59, 59, 999);
+    range.$lte = inclusiveEndDate;
+  }
+
+  if (range.$gte || range.$lte) {
+    return range;
+  }
+
   const now = new Date();
   const start = new Date(now);
 
@@ -544,12 +563,18 @@ exports.getCallsByStaff = async (staffId, period = "today") => {
   }
 };
 
-exports.getCallStatistics = async (period = "today") => {
+exports.getCallStatistics = async (options = "today") => {
   try {
-    const dateFilter = { createdAt: getDateRange(period) };
+    const normalizedOptions =
+      typeof options === "string" ? { period: options } : options || {};
+    const periodLabel =
+      normalizedOptions.startDate || normalizedOptions.endDate
+        ? "custom"
+        : normalizedOptions.period || "today";
+    const dateFilter = { createdAt: getDateRange(normalizedOptions) };
 
     return await getOrSetCache(
-      getWaiterCallCacheKey(`stats:${period}`),
+      getWaiterCallCacheKey(`stats:${periodLabel}:${dateFilter.createdAt.$gte?.toISOString?.() || "na"}:${dateFilter.createdAt.$lte?.toISOString?.() || "na"}`),
       WAITER_CALL_STATS_CACHE_TTL_MS,
       async () => {
         const [grouped, byType, pendingCalls, activeCalls] = await Promise.all([
@@ -599,7 +624,7 @@ exports.getCallStatistics = async (period = "today") => {
           byType,
           avgResponseTime,
           avgResolutionTime,
-          period,
+          period: periodLabel,
         };
       },
     );

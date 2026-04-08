@@ -36,6 +36,33 @@ const toBillAdminItem = (bill = {}) => ({
   itemCount: Array.isArray(bill?.items) ? bill.items.length : 0,
 });
 
+const getBillRequestResponse = (bill = {}, email = "") => {
+  const action = bill?.generationAction || "created";
+
+  if (action === "unchanged") {
+    return {
+      statusCode: 200,
+      message: "Existing bill reused. No new changes found for this session",
+    };
+  }
+
+  if (action === "updated") {
+    return {
+      statusCode: 200,
+      message: sentViaEmail
+        ? "Existing bill updated and sent via email"
+        : "Existing bill updated successfully",
+    };
+  }
+
+  return {
+    statusCode: 201,
+    message: sentViaEmail
+      ? "Bill generated and sent via email"
+      : "Bill generated successfully",
+  };
+};
+
 exports.requestBill = async (req, res) => {
   try {
     const { sessionId, email, forceNew = false } = req.body;
@@ -51,15 +78,18 @@ exports.requestBill = async (req, res) => {
 
     const bill = await billManager.generateBill(sessionId, email, forceNew);
 
+    const responseMeta = getBillRequestResponse(bill, email);
+
     return sendSuccess(
       res,
-      201,
-      email ? "Bill generated and sent via email" : "Bill generated successfully",
+      responseMeta.statusCode,
+      responseMeta.message,
       {
         bill: {
           _id: bill?._id,
           billNumber: bill?.billNumber || "",
           pdfUrl: bill?.pdfUrl || "",
+          generationAction: bill?.generationAction || "created",
         },
       }
     );

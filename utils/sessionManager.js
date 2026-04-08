@@ -1284,6 +1284,7 @@ exports.requestBillForSession = async (
     }
 
     const bill = await billManager.generateBill(sessionId, email, forceNew);
+    const action = bill?.generationAction || "created";
 
     if (email && !customer.email) {
       customer.email = email;
@@ -1293,8 +1294,16 @@ exports.requestBillForSession = async (
     return {
       success: true,
       message: email
-        ? "Bill generated and sent via email"
-        : "Bill generated successfully",
+        ? action === "unchanged"
+          ? "Existing bill reused successfully"
+          : action === "updated"
+            ? "Existing bill updated and sent via email"
+            : "Bill generated and sent via email"
+        : action === "unchanged"
+          ? "Existing bill reused. No new changes found for this session"
+          : action === "updated"
+            ? "Existing bill updated successfully"
+            : "Bill generated successfully",
       data: {
         bill,
         session: customer,

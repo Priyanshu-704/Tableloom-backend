@@ -308,26 +308,59 @@ exports.canSubmitFeedback = async (sessionId) => {
   }
 };
 
-exports.getFeedbackStatistics = async (period = '30days') => {
-  try {
-    let dateFilter = {};
-    const now = new Date();
+const resolveFeedbackDateFilter = (options = {}) => {
+  const normalizedOptions =
+    typeof options === "string" ? { period: options } : options || {};
+  const { period = "30days", startDate, endDate } = normalizedOptions;
 
-    switch (period) {
-      case 'today':
-        dateFilter = { createdAt: { $gte: new Date(now.setHours(0, 0, 0, 0)) } };
-        break;
-      case '7days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 7)) } };
-        break;
-      case '30days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 30)) } };
-        break;
-      case '90days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 90)) } };
-        break;
-     
+  if (startDate || endDate) {
+    const createdAt = {};
+
+    if (startDate) {
+      createdAt.$gte = new Date(startDate);
     }
+
+    if (endDate) {
+      const inclusiveEndDate = new Date(endDate);
+      inclusiveEndDate.setHours(23, 59, 59, 999);
+      createdAt.$lte = inclusiveEndDate;
+    }
+
+    return {
+      dateFilter: { createdAt },
+      period: "custom",
+    };
+  }
+
+  let dateFilter = {};
+  const now = new Date();
+
+  switch (period) {
+    case 'today':
+      dateFilter = { createdAt: { $gte: new Date(now.setHours(0, 0, 0, 0)) } };
+      break;
+    case '7days':
+      dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 7)) } };
+      break;
+    case '30days':
+      dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 30)) } };
+      break;
+    case '90days':
+      dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 90)) } };
+      break;
+    default:
+      dateFilter = {};
+  }
+
+  return {
+    dateFilter,
+    period,
+  };
+};
+
+exports.getFeedbackStatistics = async (options = {}) => {
+  try {
+    const { dateFilter, period } = resolveFeedbackDateFilter(options);
 
     const stats = await Feedback.aggregate([
       { $match: dateFilter },
@@ -558,22 +591,9 @@ exports.getStaffPerformance = async (startDate, endDate) => {
 };
 
 
-exports.getNPS = async (period = '30days') => {
+exports.getNPS = async (options = {}) => {
   try {
-    let dateFilter = {};
-    const now = new Date();
-
-    switch (period) {
-      case '7days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 7)) } };
-        break;
-      case '30days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 30)) } };
-        break;
-      case '90days':
-        dateFilter = { createdAt: { $gte: new Date(now.setDate(now.getDate() - 90)) } };
-        break;
-    }
+    const { dateFilter, period } = resolveFeedbackDateFilter(options);
 
     const npsData = await Feedback.aggregate([
       { $match: { ...dateFilter, wouldRecommend: { $exists: true } } },

@@ -245,8 +245,7 @@ exports.getAllCalls = async (req, res) => {
 
 exports.getCallStatistics = async (req, res) => {
   try {
-    const { period = "today" } = req.query;
-    const stats = await waiterCallManager.getCallStatistics(period);
+    const stats = await waiterCallManager.getCallStatistics(req.query || {});
     return sendSuccess(res, 200, null, stats);
   } catch (error) {
     return handleCallError(res, error, "Failed to get call statistics");

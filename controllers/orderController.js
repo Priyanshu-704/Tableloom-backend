@@ -61,6 +61,30 @@ const transformOrderData = (order, req) => {
   return orderObj;
 };
 
+const resolveOrderStatisticsDateRange = (query = {}) => {
+  const { startDate, endDate } = query || {};
+
+  if (startDate || endDate) {
+    const range = {};
+
+    if (startDate) {
+      range.$gte = new Date(startDate);
+    }
+
+    if (endDate) {
+      const inclusiveEndDate = new Date(endDate);
+      inclusiveEndDate.setHours(23, 59, 59, 999);
+      range.$lte = inclusiveEndDate;
+    }
+
+    return range;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return { $gte: today };
+};
+
 exports.getOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
@@ -582,8 +606,7 @@ exports.getAllOrders = async (req, res) => {
 
 exports.getOrderStatistics = async (req, res) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const orderPlacedAt = resolveOrderStatisticsDateRange(req.query);
     const baseStatusCounts = {
       pending: 0,
       confirmed: 0,
@@ -604,18 +627,18 @@ exports.getOrderStatistics = async (req, res) => {
       groupedStatusCounts
     ] = await Promise.all([
  
-      Order.countDocuments(),
+      Order.countDocuments({ orderPlacedAt }),
 
-      Order.countDocuments({ status: { $in: ['pending', 'confirmed'] } }),
+      Order.countDocuments({ orderPlacedAt, status: { $in: ['pending', 'confirmed'] } }),
 
-      Order.countDocuments({ status: 'preparing' }),
+      Order.countDocuments({ orderPlacedAt, status: 'preparing' }),
 
-      Order.countDocuments({ orderPlacedAt: { $gte: today } }),
+      Order.countDocuments({ orderPlacedAt }),
     
       Order.aggregate([
         {
           $match: {
-            orderPlacedAt: { $gte: today },
+            orderPlacedAt,
             paymentStatus: 'paid'
           }
         },
@@ -628,6 +651,11 @@ exports.getOrderStatistics = async (req, res) => {
       ]),
       
       Order.aggregate([
+        {
+          $match: {
+            orderPlacedAt
+          }
+        },
         { $unwind: '$items' },
         {
           $group: {
@@ -671,6 +699,11 @@ exports.getOrderStatistics = async (req, res) => {
 
       Order.aggregate([
         {
+          $match: {
+            orderPlacedAt
+          }
+        },
+        {
           $group: {
             _id: '$status',
             count: { $sum: 1 }
@@ -695,7 +728,11 @@ exports.getOrderStatistics = async (req, res) => {
         todayOrders,
         todayRevenue: todayRevenue[0]?.total || 0,
         statusCounts,
-        popularItems
+        popularItems,
+        dateRange: {
+          startDate: orderPlacedAt?.$gte || null,
+          endDate: orderPlacedAt?.$lte || null,
+        },
       }
     });
   } catch (error) {

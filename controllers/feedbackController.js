@@ -338,9 +338,7 @@ exports.getAllFeedback = async (req, res) => {
 
 exports.getFeedbackStatistics = async (req, res) => {
   try {
-    const { period = '30days' } = req.query;
-
-    const stats = await feedbackManager.getFeedbackStatistics(period);
+    const stats = await feedbackManager.getFeedbackStatistics(req.query || {});
 
    res.status(200).json({
       success: true,
@@ -490,9 +488,7 @@ exports.getStaffPerformance = async (req, res) => {
 
 exports.getNPS = async (req, res) => {
   try {
-    const { period = '30days' } = req.query;
-
-    const nps = await feedbackManager.getNPS(period);
+    const nps = await feedbackManager.getNPS(req.query || {});
 
    res.status(200).json({
       success: true,
