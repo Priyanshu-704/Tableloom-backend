@@ -16,19 +16,12 @@ const generatePassword = require("../utils/passwordGenerator");
 const { sendStaffCredentials } = require("../utils/emailService");
 const { hydrateUserPermissions } = require("../utils/permissionSettings");
 const { sendError, sendSuccess, pickFields } = require("../utils/httpResponse");
-
-const normalizeSlug = (value = "") =>
-  String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-
-const normalizeKey = (value = "") =>
-  String(value)
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+const {
+  isTenantKeyValid,
+  isTenantSlugValid,
+  normalizeTenantKey,
+  normalizeTenantSlug,
+} = require("../utils/tenantWorkspace");
 
 const ensureTenantUniqueness = async ({ slug, key, email, excludeTenantId = null }) => {
   const tenantFilter = {
@@ -357,6 +350,7 @@ exports.createTenant = async (req, res) => {
     key,
     adminName,
     adminEmail,
+    phone = "",
     subscriptionPlan = "starter",
   } = req.body || {};
 
@@ -368,9 +362,25 @@ exports.createTenant = async (req, res) => {
     });
   }
 
-  const normalizedSlug = normalizeSlug(slug);
-  const normalizedKey = normalizeKey(key);
+  const normalizedSlug = normalizeTenantSlug(slug);
+  const normalizedKey = normalizeTenantKey(key);
   const normalizedAdminEmail = String(adminEmail).trim().toLowerCase();
+
+  if (!normalizedSlug || !isTenantSlugValid(normalizedSlug)) {
+    return sendError(
+      res,
+      400,
+      "Tenant slug must contain lowercase letters, numbers, and optional hyphens"
+    );
+  }
+
+  if (!normalizedKey || !isTenantKeyValid(normalizedKey)) {
+    return sendError(
+      res,
+      400,
+      "Tenant key must contain lowercase letters and numbers only"
+    );
+  }
 
   const { existingTenant, existingAdmin } = await ensureTenantUniqueness({
     slug: normalizedSlug,
@@ -402,10 +412,12 @@ exports.createTenant = async (req, res) => {
       status: "active",
       contact: {
         email: normalizedAdminEmail,
+        phone: String(phone || "").trim(),
       },
       requestedAdmin: {
         name: adminName,
         email: normalizedAdminEmail,
+        phone: String(phone || "").trim(),
       },
       subscription: {
         plan: subscriptionPlan,
@@ -468,9 +480,25 @@ exports.registerTenant = async (req, res) => {
     });
   }
 
-  const normalizedSlug = normalizeSlug(slug);
-  const normalizedKey = normalizeKey(key);
+  const normalizedSlug = normalizeTenantSlug(slug);
+  const normalizedKey = normalizeTenantKey(key);
   const normalizedAdminEmail = String(adminEmail).trim().toLowerCase();
+
+  if (!normalizedSlug || !isTenantSlugValid(normalizedSlug)) {
+    return sendError(
+      res,
+      400,
+      "Tenant slug must contain lowercase letters, numbers, and optional hyphens"
+    );
+  }
+
+  if (!normalizedKey || !isTenantKeyValid(normalizedKey)) {
+    return sendError(
+      res,
+      400,
+      "Tenant key must contain lowercase letters and numbers only"
+    );
+  }
 
   const { existingTenant, existingAdmin } = await ensureTenantUniqueness({
     slug: normalizedSlug,

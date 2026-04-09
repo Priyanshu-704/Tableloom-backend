@@ -5,7 +5,7 @@ const supportRequestSchema = new mongoose.Schema(
   {
     category: {
       type: String,
-      enum: ["tenant", "billing", "technical", "account", "other"],
+      enum: ["access", "tenant", "billing", "technical", "account", "other"],
       default: "other",
       required: true,
     },
@@ -36,6 +36,21 @@ const supportRequestSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    responseMessage: {
+      type: String,
+      trim: true,
+      maxlength: 2500,
+      default: "",
+    },
+    respondedAt: {
+      type: Date,
+      default: null,
+    },
+    respondedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     resolvedAt: {
       type: Date,
       default: null,
@@ -49,5 +64,6 @@ const supportRequestSchema = new mongoose.Schema(
 supportRequestSchema.plugin(tenantScoped);
 supportRequestSchema.index({ tenantId: 1, status: 1, createdAt: -1 });
 supportRequestSchema.index({ tenantId: 1, createdBy: 1, createdAt: -1 });
+supportRequestSchema.index({ tenantId: 1, respondedAt: -1 });
 
 module.exports = mongoose.model("SupportRequest", supportRequestSchema);

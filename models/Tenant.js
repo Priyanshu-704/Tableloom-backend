@@ -1,4 +1,8 @@
 const mongoose = require("mongoose");
+const {
+  TENANT_KEY_PATTERN,
+  TENANT_SLUG_PATTERN,
+} = require("../utils/tenantWorkspace");
 
 const tenantSchema = new mongoose.Schema(
   {
@@ -13,6 +17,7 @@ const tenantSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       unique: true,
+      match: [TENANT_SLUG_PATTERN, "Tenant slug can include lowercase letters, numbers, and hyphens only"],
     },
     key: {
       type: String,
@@ -20,6 +25,7 @@ const tenantSchema = new mongoose.Schema(
       trim: true,
       lowercase: true,
       unique: true,
+      match: [TENANT_KEY_PATTERN, "Tenant key can include lowercase letters and numbers only"],
     },
     status: {
       type: String,

@@ -2,6 +2,16 @@ const SupportRequest = require("../models/SupportRequest");
 const { sendError, sendSuccess } = require("../utils/httpResponse");
 const { normalizeTenantId } = require("../utils/tenantContext");
 
+const shapeUser = (user = null) =>
+  user
+    ? {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      }
+    : null;
+
 const shapeSupportRequest = (request = {}) => ({
   _id: request?._id,
   tenantId: request?.tenantId?._id || request?.tenantId || null,
@@ -22,22 +32,11 @@ const shapeSupportRequest = (request = {}) => ({
   createdAt: request?.createdAt || null,
   updatedAt: request?.updatedAt || null,
   resolvedAt: request?.resolvedAt || null,
-  createdBy: request?.createdBy
-    ? {
-        _id: request.createdBy._id,
-        name: request.createdBy.name,
-        email: request.createdBy.email,
-        role: request.createdBy.role,
-      }
-    : null,
-  updatedBy: request?.updatedBy
-    ? {
-        _id: request.updatedBy._id,
-        name: request.updatedBy.name,
-        email: request.updatedBy.email,
-        role: request.updatedBy.role,
-      }
-    : null,
+  responseMessage: request?.responseMessage || "",
+  respondedAt: request?.respondedAt || null,
+  createdBy: shapeUser(request?.createdBy),
+  updatedBy: shapeUser(request?.updatedBy),
+  respondedBy: shapeUser(request?.respondedBy),
 });
 
 exports.createSupportRequest = async (req, res) => {
@@ -68,6 +67,7 @@ exports.createSupportRequest = async (req, res) => {
   await request.populate([
     { path: "createdBy", select: "name email role" },
     { path: "updatedBy", select: "name email role" },
+    { path: "respondedBy", select: "name email role" },
     { path: "tenantId", select: "name slug key status" },
   ]);
 
@@ -99,6 +99,7 @@ exports.getSupportRequests = async (req, res) => {
     .populate("tenantId", "name slug key status")
     .populate("createdBy", "name email role")
     .populate("updatedBy", "name email role")
+    .populate("respondedBy", "name email role")
     .sort({ createdAt: -1 })
     .lean();
 
@@ -114,11 +115,12 @@ exports.getSupportRequests = async (req, res) => {
 };
 
 exports.updateSupportRequestStatus = async (req, res) => {
-  const { status } = req.body || {};
-
-  if (!["open", "in_progress", "resolved"].includes(String(status || ""))) {
-    return sendError(res, 400, "Valid status is required");
-  }
+  const { status, responseMessage } = req.body || {};
+  const hasStatus = typeof status === "string" && String(status).trim().length > 0;
+  const hasResponseMessageField = Object.prototype.hasOwnProperty.call(
+    req.body || {},
+    "responseMessage"
+  );
 
   const request = await SupportRequest.findById(req.params.id);
 
@@ -126,20 +128,40 @@ exports.updateSupportRequestStatus = async (req, res) => {
     return sendError(res, 404, "Support request not found");
   }
 
-  request.status = status;
+  if (hasStatus) {
+    if (!["open", "in_progress", "resolved"].includes(String(status || ""))) {
+      return sendError(res, 400, "Valid status is required");
+    }
+    request.status = status;
+    request.resolvedAt = status === "resolved" ? new Date() : null;
+  }
+
+  if (hasResponseMessageField) {
+    const normalizedResponse = String(responseMessage || "").trim();
+    request.responseMessage = normalizedResponse;
+    request.respondedAt = normalizedResponse ? new Date() : null;
+    request.respondedBy = normalizedResponse ? req.user._id : null;
+  }
+
+  if (!hasStatus && !hasResponseMessageField) {
+    return sendError(res, 400, "Status or response message is required");
+  }
+
   request.updatedBy = req.user._id;
-  request.resolvedAt = status === "resolved" ? new Date() : null;
   await request.save();
   await request.populate([
     { path: "tenantId", select: "name slug key status" },
     { path: "createdBy", select: "name email role" },
     { path: "updatedBy", select: "name email role" },
+    { path: "respondedBy", select: "name email role" },
   ]);
 
   return sendSuccess(
     res,
     200,
-    `Support request marked as ${String(status).replace(/_/g, " ")}`,
+    hasResponseMessageField
+      ? "Support request updated successfully"
+      : `Support request marked as ${String(status).replace(/_/g, " ")}`,
     shapeSupportRequest(request)
   );
 };
