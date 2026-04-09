@@ -971,16 +971,14 @@ exports.createMenuItem = async (req, res) => {
       menuData.spiceLevel = spiceLevel;
     }
 
-    if (menuData.preparationTime !== undefined) {
-      const prepTime = parseInt(menuData.preparationTime);
-      if (isNaN(prepTime) || prepTime < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Preparation time must be a positive number",
-        });
-      }
-      menuData.preparationTime = prepTime;
+    const prepTime = parseInt(menuData.preparationTime, 10);
+    if (isNaN(prepTime) || prepTime < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Preparation time is required and must be at least 1 minute",
+      });
     }
+    menuData.preparationTime = prepTime;
 
     const requestedSizeIds = [];
 
@@ -1600,8 +1598,15 @@ exports.updateMenuItem = async (req, res) => {
       updateData.spiceLevel = parseInt(updateData.spiceLevel);
     }
 
-    if (updateData.preparationTime) {
-      updateData.preparationTime = parseInt(updateData.preparationTime);
+    if (updateData.preparationTime !== undefined) {
+      const preparationTime = parseInt(updateData.preparationTime, 10);
+      if (isNaN(preparationTime) || preparationTime < 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Preparation time must be at least 1 minute",
+        });
+      }
+      updateData.preparationTime = preparationTime;
     }
 
     if (updateData.displayOrder) {
@@ -3003,7 +3008,10 @@ exports.bulkImportMenuItems = async (req, res) => {
           };
           menuItem.displayOrder = Number(row.displayOrder) || 0;
           menuItem.spiceLevel = Number(row.spiceLevel) || 0;
-          menuItem.preparationTime = Number(row.preparationTime) || 15;
+          menuItem.preparationTime = Math.max(
+            1,
+            Number(row.preparationTime) || 15,
+          );
           menuItem.isVegetarian = parseBoolean(
             getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"]),
           );
@@ -3062,7 +3070,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             },
             displayOrder: Number(row.displayOrder) || 0,
             spiceLevel: Number(row.spiceLevel) || 0,
-            preparationTime: Number(row.preparationTime) || 15,
+            preparationTime: Math.max(
+              1,
+              Number(row.preparationTime) || 15,
+            ),
             isVegetarian: parseBoolean(
               getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"]),
             ),

@@ -8,6 +8,7 @@ const {
 router.use("/tenants", require("./tenantRoutes"));
 router.use("/users", require("./userRoutes"));
 router.use("/permissions", require("./permissionRoutes"));
+router.use("/support", require("./supportRoutes"));
 
 router.use("/menu", requireTenant, blockSuperAdminTenantAccess, require("./menuRoutes"));
 router.use(
@@ -69,6 +70,12 @@ router.use(
   requireTenant,
   blockSuperAdminTenantAccess,
   require("./dashboardRoutes")
+);
+router.use(
+  "/reports",
+  requireTenant,
+  blockSuperAdminTenantAccess,
+  require("./reportRoutes")
 );
 router.use(
   "/backups",

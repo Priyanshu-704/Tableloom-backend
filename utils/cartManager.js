@@ -384,6 +384,14 @@ exports.addItemToCart = async (sessionId, itemData) => {
     await recalculateCartPricing(cart);
     normalizeCartDiscount(cart);
     await cart.save();
+
+    await cart.populate(
+      "items.menuItem",
+      "name description prices image isAvailable isActive",
+    );
+    await cart.populate("table", "tableNumber tableName");
+
+    return transformCartData(cart);
   } catch (error) {
     throw error;
   }
@@ -507,7 +515,12 @@ exports.removeItemFromCart = async (sessionId, menuItemId, sizeId = null) => {
 // Clear cart (remove all items)
 exports.clearCart = async (sessionId) => {
   try {
-    const cart = await Cart.findOne({ sessionId });
+    const cart = await Cart.findOne({ sessionId })
+      .populate(
+        "items.menuItem",
+        "name description prices image isAvailable isActive",
+      )
+      .populate("table", "tableNumber tableName");
 
     if (!cart) {
       throw new Error("Cart not found");
@@ -530,6 +543,8 @@ exports.clearCart = async (sessionId) => {
     };
     normalizeCartDiscount(cart);
     await cart.save();
+
+    return transformCartData(cart);
   } catch (error) {
     logger.error("Clear cart failed:", error);
     throw error;
@@ -549,6 +564,7 @@ exports.applyDiscount = async (sessionId, _discountAmount, discountCode = "") =>
       throw new Error("Coupon code is required");
     }
 
+    const previousCouponCode = String(cart.appliedCoupon?.code || "").trim().toUpperCase();
     await recalculateCartPricing(cart);
     const normalizedCode = String(discountCode).trim().toUpperCase();
     const subtotalAfterItemDiscounts = Math.max(
@@ -565,6 +581,17 @@ exports.applyDiscount = async (sessionId, _discountAmount, discountCode = "") =>
     await recalculateCartPricing(cart);
     normalizeCartDiscount(cart);
     await cart.save();
+
+    return {
+      previousCouponCode,
+      appliedCoupon: cart.appliedCoupon?.code
+        ? {
+            code: cart.appliedCoupon.code,
+            type: cart.appliedCoupon.type,
+            value: cart.appliedCoupon.value,
+          }
+        : null,
+    };
   } catch (error) {
     logger.error("Apply discount failed:", error);
     throw error;
@@ -585,7 +612,7 @@ exports.convertCartToOrder = async (sessionId, orderData = {}) => {
       throw new Error("Cart is empty");
     }
 
-    const menuItemIds = cart.items.map((item) => item.menuItem);
+    const menuItemIds = [...new Set(cart.items.map((item) => String(item.menuItem)))];
     const availableItems = await MenuItem.find({
       _id: { $in: menuItemIds },
       isActive: true,

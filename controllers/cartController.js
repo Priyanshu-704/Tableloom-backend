@@ -50,7 +50,7 @@ exports.addItemToCart = async (req, res) => {
       });
     }
 
-    await cartManager.addItemToCart(sessionId, {
+    const cart = await cartManager.addItemToCart(sessionId, {
       menuItem,
       quantity: quantity || 1,
       specialInstructions: specialInstructions || "",
@@ -60,6 +60,7 @@ exports.addItemToCart = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Item added to cart successfully",
+      data: cart,
     });
   } catch (error) {
     logger.error(error);
@@ -105,26 +106,30 @@ exports.updateItemQuantity = async (req, res) => {
     }
 
     if (normalizedDelta === 1) {
-      await cartManager.incrementItemQuantity(
+      const cart = await cartManager.incrementItemQuantity(
         sessionId,
         menuItemId,
         normalizedSizeId
       );
-    } else {
-      await cartManager.decrementItemQuantity(
-        sessionId,
-        menuItemId,
-        normalizedSizeId
-      );
-    }
 
-    return res.status(200).json({
-      success: true,
-      message:
-        normalizedDelta === 1
-          ? "Item quantity incremented successfully"
-          : "Item quantity decremented successfully",
-    });
+      return res.status(200).json({
+        success: true,
+        message: "Item quantity incremented successfully",
+        data: cart,
+      });
+    } else {
+      const cart = await cartManager.decrementItemQuantity(
+        sessionId,
+        menuItemId,
+        normalizedSizeId
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Item quantity decremented successfully",
+        data: cart,
+      });
+    }
   } catch (error) {
     logger.error(error);
 
@@ -159,7 +164,7 @@ exports.removeItemFromCart = async (req, res) => {
       });
     }
 
-     await cartManager.removeItemFromCart(
+    const cart = await cartManager.removeItemFromCart(
       sessionId,
       menuItemId,
       normalizedSizeId
@@ -168,6 +173,7 @@ exports.removeItemFromCart = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Item removed from cart successfully",
+      data: cart,
     });
   } catch (error) {
     logger.error(error);
@@ -198,12 +204,12 @@ exports.clearCart = async (req, res) => {
       });
     }
 
- await cartManager.clearCart(sessionId);
+    const cart = await cartManager.clearCart(sessionId);
 
     res.status(200).json({
       success: true,
       message: "Cart cleared successfully",
-      
+      data: cart,
     });
   } catch (error) {
     logger.error(error);
@@ -234,11 +240,22 @@ exports.applyDiscount = async (req, res) => {
       });
     }
 
-     await cartManager.applyDiscount(sessionId, parseFloat(discountAmount || 0), discountCode);
+    const result = await cartManager.applyDiscount(
+      sessionId,
+      parseFloat(discountAmount || 0),
+      discountCode
+    );
+    const replacedCoupon =
+      result?.previousCouponCode &&
+      result?.appliedCoupon?.code &&
+      result.previousCouponCode !== result.appliedCoupon.code;
 
     res.status(200).json({
       success: true,
-      message: "Coupon applied successfully",
+      message: replacedCoupon
+        ? "Coupon replaced successfully"
+        : "Coupon applied successfully",
+      data: result || null,
     });
   } catch (error) {
     logger.error(error);

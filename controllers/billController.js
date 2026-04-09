@@ -2,6 +2,7 @@ const { logger } = require("./../utils/logger.js");
 const billManager = require("../utils/billManager");
 const sessionManager = require("../utils/sessionManager");
 const Bill = require("../models/Bill");
+const Order = require("../models/Order");
 const { sendError, sendPaginated, sendSuccess } = require("../utils/httpResponse");
 const { getOrSetCache } = require("../utils/responseCache");
 require("dotenv").config({ quiet: true });
@@ -38,6 +39,7 @@ const toBillAdminItem = (bill = {}) => ({
 
 const getBillRequestResponse = (bill = {}, email = "") => {
   const action = bill?.generationAction || "created";
+  const sentViaEmail = Boolean(email);
 
   if (action === "unchanged") {
     return {
@@ -60,6 +62,40 @@ const getBillRequestResponse = (bill = {}, email = "") => {
     message: sentViaEmail
       ? "Bill generated and sent via email"
       : "Bill generated successfully",
+  };
+};
+
+const buildLiveBillAdminItem = async (bill = {}) => {
+  const baseItem = toBillAdminItem(bill);
+
+  if (
+    bill?.paymentStatus !== "pending" ||
+    !bill?.customerId
+  ) {
+    return baseItem;
+  }
+
+  const liveOrders = await Order.find({
+    customer: bill.customerId,
+    paymentStatus: { $ne: "paid" },
+  })
+    .select("totalAmount items")
+    .lean();
+
+  if (liveOrders.length === 0) {
+    return baseItem;
+  }
+
+  return {
+    ...baseItem,
+    totalAmount: liveOrders.reduce(
+      (sum, order) => sum + Number(order?.totalAmount || 0),
+      0,
+    ),
+    itemCount: liveOrders.reduce(
+      (sum, order) => sum + (Array.isArray(order?.items) ? order.items.length : 0),
+      0,
+    ),
   };
 };
 
@@ -441,7 +477,7 @@ exports.getBillsAdmin = async (req, res) => {
     const cached = await getOrSetCache(cacheKey, BILL_LIST_CACHE_TTL_MS, async () => {
       const [bills, total] = await Promise.all([
         Bill.find(query)
-          .select("billNumber sessionId customerName customerEmail customerPhone paymentStatus billStatus paymentMethod paidAt totalAmount createdAt tableId items metadata")
+          .select("billNumber sessionId customerId customerName customerEmail customerPhone paymentStatus billStatus paymentMethod paidAt totalAmount createdAt tableId items metadata")
           .sort({ createdAt: -1 })
           .skip(skip)
           .limit(limitNum)
@@ -451,7 +487,7 @@ exports.getBillsAdmin = async (req, res) => {
       ]);
 
       return {
-        data: bills.map(toBillAdminItem),
+        data: await Promise.all(bills.map(buildLiveBillAdminItem)),
         pagination: {
           page: pageNum,
           pages: Math.ceil(total / limitNum),

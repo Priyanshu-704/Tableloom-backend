@@ -284,6 +284,13 @@ exports.customerLogout = async (req, res) => {
       });
     }
 
+    if (error.message.includes("Please complete payment before logging out")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
     res.status(500).json({
       success: false,
       message: "Failed to logout",
@@ -679,12 +686,13 @@ exports.getSessionWithBill = async (req, res) => {
 exports.requestBillForSession = async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { email, forceNew = false } = req.body;
+    const { email, forceNew = false, paymentMethod = "" } = req.body;
 
     const result = await sessionManager.requestBillForSession(
       sessionId,
       email,
       forceNew,
+      paymentMethod,
     );
 
     res.json(result);

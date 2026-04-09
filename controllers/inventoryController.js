@@ -1,6 +1,66 @@
+const csvParser = require("csv-parser");
+const { Readable } = require("stream");
 const InventoryItem = require("../models/InventoryItem");
 const MenuItem = require("../models/MenuItem");
 const notificationManager = require("../utils/notificationManager");
+
+const INVENTORY_UNITS = ["kg", "pieces", "gram", "milligram", "liter", "ton"];
+const INVENTORY_UNIT_ALIASES = {
+  pcs: "pieces",
+  piece: "pieces",
+  pieces: "pieces",
+  kg: "kg",
+  kgs: "kg",
+  gram: "gram",
+  grams: "gram",
+  g: "gram",
+  gm: "gram",
+  milligram: "milligram",
+  milligrams: "milligram",
+  mg: "milligram",
+  liter: "liter",
+  litres: "liter",
+  litre: "liter",
+  l: "liter",
+  ton: "ton",
+  tons: "ton",
+  tonne: "ton",
+  tonnes: "ton",
+};
+
+const normalizeInventoryUnit = (value = "pieces") => {
+  const normalized = String(value || "pieces").trim().toLowerCase();
+  return INVENTORY_UNIT_ALIASES[normalized] || normalized;
+};
+
+const isSupportedInventoryUnit = (value = "") =>
+  INVENTORY_UNITS.includes(normalizeInventoryUnit(value));
+
+const parseCsvBuffer = (buffer) =>
+  new Promise((resolve, reject) => {
+    const rows = [];
+    Readable.from(buffer.toString("utf8"))
+      .pipe(csvParser())
+      .on("data", (row) => rows.push(row))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
+  });
+
+const readCsvField = (row = {}, keys = []) => {
+  const normalizedRow = Object.entries(row || {}).reduce((accumulator, [key, value]) => {
+    accumulator[String(key || "").trim().toLowerCase()] = value;
+    return accumulator;
+  }, {});
+
+  for (const key of keys) {
+    const value = normalizedRow[String(key || "").trim().toLowerCase()];
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      return value;
+    }
+  }
+
+  return "";
+};
 
 const getRelationsForInventory = (inventoryItem) => {
   const relatedMenuItems = Array.isArray(inventoryItem?.relatedMenuItems)
@@ -46,8 +106,10 @@ const buildStatus = (item) => {
 
 const serializeInventory = (item) => {
   const inventory = item.toObject ? item.toObject() : item;
+  const normalizedUnit = normalizeInventoryUnit(inventory.unit);
   return {
     ...inventory,
+    unit: normalizedUnit,
     stockStatus: buildStatus(inventory),
     linkedMenuItemsCount: getRelationsForInventory(inventory).length,
   };
@@ -322,11 +384,19 @@ exports.createInventoryItem = async (req, res) => {
     const normalizedRelations = await validateAndNormalizeRelatedMenuItems(
       relatedMenuItems,
     );
+    const normalizedUnit = normalizeInventoryUnit(unit);
+
+    if (!isSupportedInventoryUnit(normalizedUnit)) {
+      return res.status(400).json({
+        success: false,
+        message: `Unit must be one of: ${INVENTORY_UNITS.join(", ")}`,
+      });
+    }
 
     const inventoryItem = await InventoryItem.create({
       ingredientName,
       sku,
-      unit,
+      unit: normalizedUnit,
       currentStock: Number(currentStock || 0),
       minimumStock: Number(minimumStock || 0),
       reorderQuantity: Number(reorderQuantity || 0),
@@ -396,10 +466,18 @@ exports.updateInventoryItem = async (req, res) => {
     const previousMenuItemIds = getRelationsForInventory(inventoryItem).map(
       (relation) => relation.menuItem,
     );
+    const normalizedUnit = unit !== undefined ? normalizeInventoryUnit(unit) : normalizeInventoryUnit(inventoryItem.unit);
+
+    if (!isSupportedInventoryUnit(normalizedUnit)) {
+      return res.status(400).json({
+        success: false,
+        message: `Unit must be one of: ${INVENTORY_UNITS.join(", ")}`,
+      });
+    }
 
     if (ingredientName !== undefined) inventoryItem.ingredientName = ingredientName;
     if (sku !== undefined) inventoryItem.sku = sku;
-    if (unit !== undefined) inventoryItem.unit = unit;
+    inventoryItem.unit = normalizedUnit;
     if (currentStock !== undefined) {
       inventoryItem.currentStock = Math.max(Number(currentStock || 0), 0);
       if (inventoryItem.currentStock > 0) {
@@ -480,6 +558,7 @@ exports.adjustInventoryStock = async (req, res) => {
     }
 
     const previousStatus = buildStatus(inventoryItem);
+    inventoryItem.unit = normalizeInventoryUnit(inventoryItem.unit);
 
     const signedQuantity = adjustmentType === "subtract" ? -amount : amount;
     inventoryItem.currentStock = Math.max(
@@ -516,6 +595,137 @@ exports.adjustInventoryStock = async (req, res) => {
     res.status(400).json({
       success: false,
       message: "Failed to adjust stock",
+      error: error.message,
+    });
+  }
+};
+
+exports.bulkUploadInventory = async (req, res) => {
+  if (!req.file?.buffer) {
+    return res.status(400).json({
+      success: false,
+      message: "CSV file is required",
+    });
+  }
+
+  try {
+    const rows = await parseCsvBuffer(req.file.buffer);
+    const stats = {
+      total: rows.length,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+    };
+    const affectedMenuItemIds = new Set();
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const lineNumber = index + 2;
+
+      try {
+        const ingredientName = String(
+          readCsvField(row, ["ingredientName", "ingredient", "name"])
+        ).trim();
+        const sku = String(readCsvField(row, ["sku", "stockCode"])).trim().toUpperCase();
+        const unit = normalizeInventoryUnit(readCsvField(row, ["unit"]));
+        const currentStock = Math.max(
+          Number(readCsvField(row, ["currentStock", "current_stock", "stock"]) || 0),
+          0
+        );
+        const minimumStock = Math.max(
+          Number(readCsvField(row, ["minimumStock", "minimum_stock", "minThreshold"]) || 0),
+          0
+        );
+        const reorderQuantity = Math.max(
+          Number(readCsvField(row, ["reorderQuantity", "reorder_quantity", "reorder"]) || 0),
+          0
+        );
+        const notes = String(readCsvField(row, ["notes", "note"])).trim();
+        const isActiveValue = String(readCsvField(row, ["isActive", "active"])).trim().toLowerCase();
+        const isActive =
+          isActiveValue === ""
+            ? true
+            : !["false", "0", "no", "inactive"].includes(isActiveValue);
+
+        if (!ingredientName) {
+          throw new Error("Ingredient name is required");
+        }
+
+        if (!isSupportedInventoryUnit(unit)) {
+          throw new Error(`Unsupported unit "${unit}"`);
+        }
+
+        const existingItem = await InventoryItem.findOne(
+          sku
+            ? {
+                $or: [{ sku }, { ingredientName }],
+              }
+            : { ingredientName }
+        );
+
+        if (existingItem) {
+          existingItem.ingredientName = ingredientName;
+          existingItem.sku = sku || undefined;
+          existingItem.unit = unit;
+          existingItem.currentStock = currentStock;
+          existingItem.minimumStock = minimumStock;
+          existingItem.reorderQuantity = reorderQuantity;
+          existingItem.notes = notes || existingItem.notes;
+          existingItem.isActive = isActive;
+          existingItem.lastAdjustedAt = new Date();
+          existingItem.updatedBy = req.user._id;
+          if (currentStock > 0) {
+            existingItem.lastRestockedAt = new Date();
+          }
+          await existingItem.save();
+          getRelationsForInventory(existingItem).forEach((relation) =>
+            affectedMenuItemIds.add(String(relation.menuItem))
+          );
+          stats.updated += 1;
+        } else {
+          const createdItem = await InventoryItem.create({
+            ingredientName,
+            sku: sku || undefined,
+            unit,
+            currentStock,
+            minimumStock,
+            reorderQuantity,
+            notes,
+            isActive,
+            relatedMenuItems: [],
+            lastRestockedAt: currentStock > 0 ? new Date() : null,
+            lastAdjustedAt: new Date(),
+            createdBy: req.user._id,
+            updatedBy: req.user._id,
+          });
+          getRelationsForInventory(createdItem).forEach((relation) =>
+            affectedMenuItemIds.add(String(relation.menuItem))
+          );
+          stats.created += 1;
+        }
+      } catch (error) {
+        stats.failed += 1;
+        stats.errors.push({
+          line: lineNumber,
+          message: error.message,
+        });
+      }
+    }
+
+    if (affectedMenuItemIds.size > 0) {
+      await syncMenuAvailability(Array.from(affectedMenuItemIds), req.user._id);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Inventory bulk upload completed",
+      data: stats,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: "Failed to process inventory CSV upload",
       error: error.message,
     });
   }

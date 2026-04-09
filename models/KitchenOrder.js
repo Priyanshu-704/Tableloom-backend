@@ -54,13 +54,29 @@ const kitchenOrderSchema = new mongoose.Schema({
       type: mongoose.Schema.ObjectId,
       ref: 'User'
     },
+    stationName: String,
     startTime: Date,
     readyTime: Date,
     timer: Number, // in seconds
+    preparationTime: {
+      type: Number,
+      min: 1,
+    },
     estimatedCompletion: Date,
     allergens: [String],
     modifications: [String],
-    colorCode: String
+    colorCode: String,
+    delayStatus: {
+      type: String,
+      default: "on_time",
+    },
+    delayColor: String,
+    delayMinutes: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    lastDelayCheck: Date,
   }],
   overallStatus: {
     type: String,

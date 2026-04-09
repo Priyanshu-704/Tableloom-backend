@@ -52,32 +52,7 @@ exports.submitFeedback = async (feedbackData) => {
     
     if (existingFeedback) {
       logger.info(`Feedback already exists for session: ${sessionId}`);
-      
-      existingFeedback.ratings = ratings;
-      existingFeedback.comments = comments;
-      existingFeedback.categories = categories;
-      existingFeedback.wouldRecommend = wouldRecommend;
-      existingFeedback.visitPurpose = visitPurpose;
-      existingFeedback.waitTime = waitTime;
-      existingFeedback.menuItemRatings = menuItemRatings;
-      existingFeedback.isAnonymous = isAnonymous;
-      existingFeedback.source = source;
-      existingFeedback.updatedAt = new Date();
-      
-      await existingFeedback.save();
-      
-      await existingFeedback.populate('customer', 'name email phone');
-      await existingFeedback.populate('order', 'orderNumber totalAmount');
-      if (order.table) {
-        await existingFeedback.populate('table', 'tableNumber');
-      }
-      
-      return {
-        success: true,
-        message: 'Feedback updated successfully',
-        isUpdated: true,
-        data: existingFeedback
-      };
+      throw new Error("Feedback already submitted for this session");
     }
 
 
@@ -115,7 +90,6 @@ exports.submitFeedback = async (feedbackData) => {
     return {
       success: true,
       message: 'Thank you for your feedback!',
-      isUpdated: false,
       data: feedback
     };
   } catch (error) {
@@ -273,8 +247,9 @@ exports.canSubmitFeedback = async (sessionId) => {
     if (existingFeedback) {
       return {
         canSubmit: false,
-        reason: 'Feedback already submitted',
-        existingFeedback: existingFeedback._id
+        reason: 'You have already submitted feedback for this session',
+        existingFeedback: existingFeedback._id,
+        alreadySubmitted: true
       };
     }
 

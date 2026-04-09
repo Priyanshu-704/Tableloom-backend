@@ -1,6 +1,6 @@
 const { logger } = require("./../utils/logger.js");
+const Feedback = require("../models/Feedback");
 const feedbackManager = require('../utils/feedbackManager');
-const Feedback = require('../models/Feedback');
 
 
 exports.submitFeedback = async (req, res) => {
@@ -120,91 +120,17 @@ exports.getFeedbackForActiveSession = async (req, res) => {
 };
 
 exports.updateSessionFeedback = async (req, res) => {
-  try {
-    const { sessionId, id } = req.params;
-
-    const feedback = await Feedback.findOne({ _id: id, sessionId });
-
-    if (!feedback) {
-      return res.status(404).json({
-        success: false,
-        message: "Feedback not found for this session",
-      });
-    }
-
-    if (["resolved", "archived"].includes(feedback.status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Resolved feedback cannot be edited",
-      });
-    }
-
-    const nextRatings = req.body.ratings || {};
-    feedback.ratings = {
-      ...feedback.ratings,
-      ...nextRatings,
-    };
-    feedback.comments =
-      req.body.comments !== undefined ? req.body.comments : feedback.comments;
-    feedback.categories = Array.isArray(req.body.categories)
-      ? req.body.categories
-      : feedback.categories;
-    feedback.highlights = Array.isArray(req.body.highlights)
-      ? req.body.highlights
-      : feedback.highlights;
-    feedback.issues = Array.isArray(req.body.issues)
-      ? req.body.issues
-      : feedback.issues;
-    feedback.wouldRecommend =
-      req.body.wouldRecommend !== undefined
-        ? req.body.wouldRecommend
-        : feedback.wouldRecommend;
-    feedback.visitPurpose = req.body.visitPurpose || feedback.visitPurpose;
-    feedback.waitTime =
-      req.body.waitTime !== undefined ? req.body.waitTime : feedback.waitTime;
-
-    await feedback.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Feedback updated successfully",
-      data: feedback,
-    });
-  } catch (error) {
-    logger.error("Update session feedback failed:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update feedback",
-      error: error.message,
-    });
-  }
+  return res.status(403).json({
+    success: false,
+    message: "Submitted feedback cannot be edited",
+  });
 };
 
 exports.deleteSessionFeedback = async (req, res) => {
-  try {
-    const { sessionId, id } = req.params;
-
-    const feedback = await Feedback.findOneAndDelete({ _id: id, sessionId });
-
-    if (!feedback) {
-      return res.status(404).json({
-        success: false,
-        message: "Feedback not found for this session",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Feedback deleted successfully",
-    });
-  } catch (error) {
-    logger.error("Delete session feedback failed:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to delete feedback",
-      error: error.message,
-    });
-  }
+  return res.status(403).json({
+    success: false,
+    message: "Submitted feedback cannot be deleted",
+  });
 };
 
 exports.getFeedbackBySession = async (req, res) => {

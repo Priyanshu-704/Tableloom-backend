@@ -1,6 +1,8 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 
+const INVENTORY_UNITS = ["kg", "pieces", "gram", "milligram", "liter", "ton"];
+
 const inventoryItemSchema = new mongoose.Schema({
   ingredientName: {
     type: String,
@@ -35,7 +37,8 @@ const inventoryItemSchema = new mongoose.Schema({
   unit: {
     type: String,
     trim: true,
-    default: "pcs",
+    enum: INVENTORY_UNITS,
+    default: "pieces",
     maxlength: 20,
   },
   currentStock: {

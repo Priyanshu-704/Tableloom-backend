@@ -590,3 +590,44 @@ exports.verifyTenant = async (req, res) => {
     credentials: toTenantCredentials(adminUser, tempPassword, emailSent),
   });
 };
+
+exports.updateTenantStatus = async (req, res) => {
+  const { status } = req.body || {};
+
+  if (!["active", "suspended"].includes(String(status || ""))) {
+    return sendError(res, 400, "Tenant status must be active or suspended");
+  }
+
+  const tenant = await Tenant.findById(req.params.id).populate(
+    "adminUser",
+    "name email role isActive"
+  );
+
+  if (!tenant) {
+    return sendError(res, 404, "Tenant not found");
+  }
+
+  if (
+    status === "active" &&
+    tenant.onboarding?.verificationStatus !== "verified"
+  ) {
+    return sendError(
+      res,
+      400,
+      "Verify the tenant before activating the workspace"
+    );
+  }
+
+  tenant.status = status;
+  tenant.updatedBy = req.user?._id || null;
+  await tenant.save();
+
+  return sendSuccess(
+    res,
+    200,
+    `Tenant ${status === "active" ? "activated" : "deactivated"} successfully`,
+    {
+      tenant: toTenantListItem(tenant.toObject ? tenant.toObject() : tenant),
+    }
+  );
+};

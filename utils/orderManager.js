@@ -99,6 +99,79 @@ const applyOrderPricing = (order, settings) => {
   return pricingBreakdown;
 };
 
+const getPreparationBaselineTime = (order) =>
+  order?.preparationStartedAt ||
+  order?.orderConfirmedAt ||
+  order?.orderPlacedAt ||
+  order?.createdAt ||
+  new Date();
+
+const recalculateOrderTiming = async (order) => {
+  const menuItemIds = [
+    ...new Set(
+      (order?.items || [])
+        .map((item) => String(item?.menuItem || ""))
+        .filter(Boolean),
+    ),
+  ];
+
+  if (menuItemIds.length === 0) {
+    order.preparationTime = 0;
+    order.estimatedReadyTime = undefined;
+    return;
+  }
+
+  const menuItems = await MenuItem.find({
+    _id: { $in: menuItemIds },
+  })
+    .select("_id preparationTime")
+    .lean();
+
+  const preparationTimeById = new Map(
+    menuItems.map((item) => [
+      String(item._id),
+      Math.max(1, Number(item.preparationTime || 0)),
+    ]),
+  );
+
+  const maxPreparationTime = Math.max(
+    ...order.items.map((item) =>
+      preparationTimeById.get(String(item.menuItem)) || 15,
+    ),
+  );
+
+  const baselineTime = new Date(getPreparationBaselineTime(order));
+  order.preparationTime = maxPreparationTime;
+  order.estimatedReadyTime = new Date(
+    baselineTime.getTime() + maxPreparationTime * 60000,
+  );
+};
+
+const syncPendingSessionBillIfNeeded = async (sessionId) => {
+  if (!sessionId) {
+    return;
+  }
+
+  const existingPendingBill = await Bill.findOne({
+    sessionId,
+    paymentStatus: "pending",
+    billStatus: { $in: ["draft", "sent", "viewed"] },
+  })
+    .select("_id")
+    .lean();
+
+  if (!existingPendingBill) {
+    return;
+  }
+
+  try {
+    const billManager = require("./billManager");
+    await billManager.generateBill(sessionId, null, false);
+  } catch (error) {
+    logger.error("Failed to sync pending session bill:", error);
+  }
+};
+
 exports.createOrder = async (sessionId, orderData) => {
   try {
     const customer = await Customer.findOne({
@@ -180,6 +253,7 @@ exports.createOrder = async (sessionId, orderData) => {
         .substr(2, 6)
         .toUpperCase()}`,
       customer: customer._id,
+      sessionId: customer.sessionId,
       table: customer.table._id,
       items: orderItems,
       subtotal,
@@ -196,6 +270,9 @@ exports.createOrder = async (sessionId, orderData) => {
       orderType: "dine-in",
       status: "pending",
     });
+
+    await recalculateOrderTiming(order);
+    await order.save();
 
     customer.currentOrder = order._id;
     customer.totalOrders = (customer.totalOrders || 0) + 1;
@@ -271,6 +348,7 @@ exports.createOrder = async (sessionId, orderData) => {
       ...orderObj,
       kitchenOrderId: kitchenOrder._id,
     };
+    await syncPendingSessionBillIfNeeded(customer.sessionId);
     return response;
   } catch (error) {
     throw error;
@@ -345,6 +423,7 @@ exports.addItemsToOrder = async (orderId, newItems) => {
       0,
     );
     applyOrderPricing(order, getOrderTaxSettings(order));
+    await recalculateOrderTiming(order);
 
     await order.save();
 
@@ -354,13 +433,13 @@ exports.addItemsToOrder = async (orderId, newItems) => {
     socketManager.emitOrderUpdateToKitchen(orderObj);
     socketManager.emitOrderStatusUpdate(orderObj);
 
-    if (order.customer && order.customer.sessionId) {
+    if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(
-        order.customer.sessionId,
+        order.sessionId,
         orderObj,
       );
       await notifyCustomerSession(
-        order.customer.sessionId,
+        order.sessionId,
         `Order #${orderObj.orderNumber || ""} updated`,
         "Your order has been updated.",
         orderObj,
@@ -375,6 +454,7 @@ exports.addItemsToOrder = async (orderId, newItems) => {
       });
     }
 
+    await syncPendingSessionBillIfNeeded(order.sessionId);
     return orderObj;
   } catch (error) {
     logger.error("Add items to order failed:", error);
@@ -411,6 +491,7 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
       0,
     );
     applyOrderPricing(order, getOrderTaxSettings(order));
+    await recalculateOrderTiming(order);
 
     await order.save();
 
@@ -419,13 +500,13 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
     socketManager.emitOrderUpdateToKitchen(orderObj);
     socketManager.emitOrderStatusUpdate(orderObj);
 
-    if (order.customer && order.customer.sessionId) {
+    if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(
-        order.customer.sessionId,
+        order.sessionId,
         orderObj,
       );
       await notifyCustomerSession(
-        order.customer.sessionId,
+        order.sessionId,
         `Order #${orderObj.orderNumber || ""} updated`,
         "Your order has been updated.",
         orderObj,
@@ -441,6 +522,7 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
       });
     }
 
+    await syncPendingSessionBillIfNeeded(order.sessionId);
     return orderObj;
   } catch (error) {
     logger.error("Update order item quantity failed:", error);
@@ -467,6 +549,7 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
       0,
     );
     applyOrderPricing(order, getOrderTaxSettings(order));
+    await recalculateOrderTiming(order);
 
     await order.save();
 
@@ -475,13 +558,13 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
     socketManager.emitOrderUpdateToKitchen(orderObj);
     socketManager.emitOrderStatusUpdate(orderObj);
 
-    if (order.customer && order.customer.sessionId) {
+    if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(
-        order.customer.sessionId,
+        order.sessionId,
         orderObj,
       );
       await notifyCustomerSession(
-        order.customer.sessionId,
+        order.sessionId,
         `Order #${orderObj.orderNumber || ""} updated`,
         "An item has been removed from your order.",
         orderObj,
@@ -497,6 +580,7 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
       });
     }
 
+    await syncPendingSessionBillIfNeeded(order.sessionId);
     return orderObj;
   } catch (error) {
     logger.error("Remove item from order failed:", error);
@@ -610,6 +694,14 @@ exports.updateOrderStatus = async (
         break;
     }
 
+    if (["confirmed", "preparing"].includes(newStatus) || !order.preparationTime) {
+      await recalculateOrderTiming(order);
+    }
+
+    if (["ready", "served", "completed"].includes(newStatus)) {
+      order.estimatedReadyTime = new Date();
+    }
+
     await order.save();
 
     await order.populate("customer", "sessionId name");
@@ -649,13 +741,13 @@ exports.updateOrderStatus = async (
       socketManager.emitOrderUpdateToKitchen(orderObj);
     }
 
-    if (order.customer && order.customer.sessionId) {
+    if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(
-        order.customer.sessionId,
+        order.sessionId,
         orderObj,
       );
       await notifyCustomerSession(
-        order.customer.sessionId,
+        order.sessionId,
         `Order #${orderObj.orderNumber || ""} status`,
         `Your order is now ${String(newStatus || "").replace(/_/g, " ")}.`,
         orderObj,

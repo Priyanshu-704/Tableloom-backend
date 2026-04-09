@@ -12,6 +12,10 @@ const orderSchema = new mongoose.Schema({
     ref: "Customer",
     required: true,
   },
+  sessionId: {
+    type: String,
+    index: true,
+  },
   table: {
     type: mongoose.Schema.ObjectId,
     ref: "Table",
@@ -273,6 +277,7 @@ orderSchema.index({ customer: 1 });
 orderSchema.index({ table: 1 });
 orderSchema.index({ status: 1 });
 orderSchema.index({ paymentStatus: 1 });
+orderSchema.index({ sessionId: 1, orderPlacedAt: -1 });
 orderSchema.index({ orderPlacedAt: -1 });
 orderSchema.index({ createdAt: -1 });
 

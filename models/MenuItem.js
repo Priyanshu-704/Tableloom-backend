@@ -83,7 +83,8 @@ const menuItemSchema = new mongoose.Schema({
   },
   preparationTime: {
     type: Number,
-    default: 15,
+    required: [true, "Preparation time is required"],
+    min: [1, "Preparation time must be at least 1 minute"],
   },
   isVegetarian: {
     type: Boolean,

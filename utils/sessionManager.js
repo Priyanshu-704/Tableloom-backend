@@ -198,7 +198,7 @@ exports.customerLogout = async (sessionId) => {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
-      sessionStatus: "active",
+      sessionStatus: { $in: ["active", "payment_pending"] },
     }).populate("table");
 
     if (!customer) {
@@ -218,9 +218,28 @@ exports.customerLogout = async (sessionId) => {
       }
     }
 
+    const pendingBill = await Bill.findOne({
+      sessionId,
+      paymentStatus: "pending",
+      billStatus: { $in: ["draft", "sent", "viewed"] },
+    }).sort({ createdAt: -1 });
+
+    const selectedCashPayment =
+      customer.paymentMethod === "cash" ||
+      pendingBill?.paymentMethod === "cash";
+
+    if (pendingBill && pendingBill.paymentStatus === "pending" && !selectedCashPayment) {
+      throw new Error("Please complete payment before logging out.");
+    }
+
     customer.sessionStatus = "completed";
     customer.sessionEnd = new Date();
-    customer.notes = "Customer logged out";
+    customer.retainSessionData = true;
+    customer.retainUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    customer.isAccessibleForBilling = true;
+    customer.notes = selectedCashPayment
+      ? "Customer logged out after selecting cash payment"
+      : "Customer logged out";
 
     await customer.save();
     if (customer.table) {
@@ -230,7 +249,17 @@ exports.customerLogout = async (sessionId) => {
       await customer.table.save();
     }
 
-    return customer;
+    return {
+      sessionId: customer.sessionId,
+      sessionStatus: customer.sessionStatus,
+      sessionEnd: customer.sessionEnd,
+      paymentMethod: customer.paymentMethod || pendingBill?.paymentMethod || "",
+      paymentStatus: customer.paymentStatus || pendingBill?.paymentStatus || "pending",
+      redirectToThankYou: selectedCashPayment,
+      thankYouMessage: selectedCashPayment
+        ? "Cash payment selected. Our staff has been notified."
+        : "",
+    };
   } catch (error) {
     throw error;
   }
@@ -1271,6 +1300,7 @@ exports.requestBillForSession = async (
   sessionId,
   email = null,
   forceNew = false,
+  paymentMethod = "",
 ) => {
   try {
     const customer = await Customer.findOne({
@@ -1285,10 +1315,28 @@ exports.requestBillForSession = async (
 
     const bill = await billManager.generateBill(sessionId, email, forceNew);
     const action = bill?.generationAction || "created";
+    const normalizedPaymentMethod = String(paymentMethod || "").trim().toLowerCase();
+
+    if (normalizedPaymentMethod) {
+      customer.paymentMethod = normalizedPaymentMethod;
+    }
 
     if (email && !customer.email) {
       customer.email = email;
-      await customer.save();
+    }
+
+    await customer.save();
+
+    if (
+      normalizedPaymentMethod &&
+      bill &&
+      bill.paymentStatus === "pending" &&
+      bill.paymentMethod !== normalizedPaymentMethod
+    ) {
+      await Bill.findByIdAndUpdate(bill._id, {
+        paymentMethod: normalizedPaymentMethod,
+      });
+      bill.paymentMethod = normalizedPaymentMethod;
     }
 
     return {
