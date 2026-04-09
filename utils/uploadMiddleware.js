@@ -1,16 +1,15 @@
 const { logger } = require("./logger.js");
 const multer = require("multer");
 require("dotenv").config({ quiet: true });
-const AppError = require("./appError");
 const {
-  isCloudinaryConfigured,
-  uploadBuffer,
-} = require("./cloudinaryStorage");
+  ALLOWED_IMAGE_MIME_TYPES,
+  MAX_IMAGE_FILE_SIZE,
+  saveImageVariants,
+} = require("./imageStorage");
 
 const imageFilter = (req, file, cb) => {
-  const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-  if (allowed.includes(file.mimetype)) return cb(null, true);
-  cb(new Error("Only jpeg, png, gif, webp images are allowed"));
+  if (ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) return cb(null, true);
+  cb(new Error("Only JPG, JPEG, and PNG images are allowed"));
 };
 
 const csvFilter = (req, file, cb) => {
@@ -18,20 +17,12 @@ const csvFilter = (req, file, cb) => {
   cb(new Error("Only CSV files are allowed"));
 };
 
-const createImageUploader = () => {
-  if (!isCloudinaryConfigured) {
-    throw new AppError(
-      "Image upload is not available because Cloudinary is not configured on the server.",
-      503,
-    );
-  }
-
-  return multer({
+const createImageUploader = () =>
+  multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 },
+    limits: { fileSize: MAX_IMAGE_FILE_SIZE },
     fileFilter: imageFilter,
   }).single("image");
-};
 
 const uploadCSV = multer({
   storage: multer.memoryStorage(),
@@ -39,49 +30,54 @@ const uploadCSV = multer({
   fileFilter: csvFilter,
 }).single("file");
 
-const handleImageUpload = async (req, res, next) => {
-  let uploadImage;
+const createImageUploadHandler = ({ folder = "images" } = {}) => {
+  const uploadImage = createImageUploader();
 
-  try {
-    uploadImage = createImageUploader();
-  } catch (error) {
-    return next(error);
-  }
+  return async (req, res, next) => {
+    uploadImage(req, res, async function (err) {
+      if (err) {
+        return next(err);
+      }
 
-  uploadImage(req, res, async function (err) {
-    if (err) {
-      return next(err);
-    }
+      if (!req.file) {
+        return next();
+      }
 
-    if (!req.file) {
-      return next();
-    }
+      try {
+        const uploaded = await saveImageVariants({
+          buffer: req.file.buffer,
+          originalname: req.file.originalname,
+          mimetype: req.file.mimetype,
+          folder,
+        });
 
-    try {
-      const uploaded = await uploadBuffer({
-        buffer: req.file.buffer,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        folder: "images",
-        resourceType: "image",
-      });
+        req.file.url = uploaded.image;
+        req.file.thumbnailUrl = uploaded.thumbnail;
+        req.file.publicId = uploaded.imagePublicId;
+        req.file.thumbnailPublicId = uploaded.thumbnailPublicId;
+        req.file.image = uploaded.image;
+        req.file.thumbnail = uploaded.thumbnail;
+        req.file.storageProvider = uploaded.provider;
+        req.file.resourceType = "image";
 
-      req.file.url = uploaded.url;
-      req.file.publicId = uploaded.publicId;
-      req.file.storageProvider = "cloudinary";
-      req.file.resourceType = uploaded.resourceType;
-
-      logger.info("File uploaded to Cloudinary:", uploaded.publicId);
-      next();
-    } catch (uploadError) {
-      logger.error("Error processing uploaded file:", uploadError);
-      return res.status(500).json({
-        success: false,
-        message: "Failed to process image. Please try again.",
-      });
-    }
-  });
+        logger.info("Image processed successfully", {
+          provider: uploaded.provider,
+          original: uploaded.imagePublicId,
+          thumbnail: uploaded.thumbnailPublicId,
+        });
+        next();
+      } catch (uploadError) {
+        logger.error("Error processing uploaded file:", uploadError);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to process image. Please try again.",
+        });
+      }
+    });
+  };
 };
+
+const handleImageUpload = createImageUploadHandler();
 
 const handleCSVUpload = (req, res, next) => {
   uploadCSV(req, res, function (err) {
@@ -111,7 +107,7 @@ const handleUploadErrors = (err, req, res, next) => {
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(400).json({
         success: false,
-        message: "File too large",
+        message: "File too large. Maximum size is 2MB.",
       });
     }
     return res.status(400).json({
@@ -131,6 +127,7 @@ const handleUploadErrors = (err, req, res, next) => {
 };
 
 module.exports = {
+  createImageUploadHandler,
   handleImageUpload,
   handleCSVUpload,
   handleUploadErrors,

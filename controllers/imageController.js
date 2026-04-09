@@ -4,48 +4,30 @@ const Category = require("../models/Category");
 const Table = require("../models/Table");
 const Bill = require("../models/Bill");
 const AppSetting = require("../models/AppSetting");
+const { getStoredAssetReference, serveStoredAsset } = require("../utils/imageStorage");
 const {
   buildQRCodeBuffer,
   buildTenantTableQrUrl,
 } = require("../utils/qrGenerator");
 
-const proxyRemoteAsset = async (res, url, options = {}) => {
-  if (!url) {
-    return res.status(404).send("Image not found");
-  }
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    return res.status(404).send("Image not found");
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const contentType =
-    options.contentType ||
-    response.headers.get("content-type") ||
-    "application/octet-stream";
-
-  res.setHeader("Content-Type", contentType);
-  res.setHeader("Cache-Control", "public, max-age=86400");
-
-  if (options.disposition) {
-    res.setHeader("Content-Disposition", options.disposition);
-  }
-
-  return res.send(Buffer.from(arrayBuffer));
-};
+const getRequestedVariant = (req) =>
+  req.query?.variant === "thumbnail" ? "thumbnail" : "image";
 
 exports.getMenuItemImage = async (req, res) => {
   try {
     const menuItem = await MenuItem.findById(req.params.id).select(
-      "image imagePublicId"
+      "image thumbnail imagePublicId thumbnailPublicId"
     );
 
-    if (!menuItem?.image) {
+    const storedReference = getStoredAssetReference(menuItem, {
+      variant: getRequestedVariant(req),
+    });
+
+    if (!storedReference) {
       return res.status(404).send("Image not found");
     }
 
-    await proxyRemoteAsset(res, menuItem.image);
+    await serveStoredAsset(res, storedReference);
   } catch (error) {
     logger.error("Menu item image error:", error);
     res.status(404).send("Image not found");
@@ -55,14 +37,18 @@ exports.getMenuItemImage = async (req, res) => {
 exports.getCategoryImage = async (req, res) => {
   try {
     const category = await Category.findById(req.params.id).select(
-      "image imagePublicId"
+      "image thumbnail imagePublicId thumbnailPublicId"
     );
 
-    if (!category?.image) {
+    const storedReference = getStoredAssetReference(category, {
+      variant: getRequestedVariant(req),
+    });
+
+    if (!storedReference) {
       return res.status(404).send("Image not found");
     }
 
-    await proxyRemoteAsset(res, category.image);
+    await serveStoredAsset(res, storedReference);
   } catch (error) {
     logger.error("Table QR image error:", error);
     res.status(404).send("Image not found");
@@ -101,7 +87,7 @@ exports.getTableQRImage = async (req, res) => {
       return res.status(404).send("Image not found");
     }
 
-    await proxyRemoteAsset(res, table.qrCode, { contentType: "image/png" });
+    await serveStoredAsset(res, table.qrCode, { contentType: "image/png" });
   } catch (error) {
     logger.error("Category image error:", error);
     res.status(404).send("Image not found");
@@ -113,14 +99,18 @@ exports.getRestaurantLogo = async (req, res) => {
     const settings = await AppSetting.findOne({
       tenantId: req.tenant?._id,
       key: "app-settings",
-    }).select("restaurant.logo");
+    }).select("restaurant.logo restaurant.logoThumbnail");
 
-    const logoUrl = settings?.restaurant?.logo;
-    if (!logoUrl || String(logoUrl).startsWith("/")) {
+    const logoUrl = getStoredAssetReference(settings?.restaurant, {
+      variant: getRequestedVariant(req),
+      originalField: "logo",
+      thumbnailField: "logoThumbnail",
+    });
+    if (!logoUrl || String(settings?.restaurant?.logo || "").startsWith("/")) {
       return res.status(404).send("Image not found");
     }
 
-    await proxyRemoteAsset(res, logoUrl);
+    await serveStoredAsset(res, logoUrl);
   } catch (error) {
     logger.error("Restaurant logo error:", error);
     res.status(404).send("Image not found");
@@ -138,7 +128,7 @@ exports.downloadBillPDF = async (req, res) => {
       });
     }
 
-    return proxyRemoteAsset(res, bill.pdfUrl, {
+    return serveStoredAsset(res, bill.pdfUrl, {
       contentType: "application/pdf",
       disposition: `attachment; filename="bill-${bill.billNumber || bill._id}.pdf"`,
     });

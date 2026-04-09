@@ -33,7 +33,7 @@ const {
 } = require("../controllers/menuController");
 const { protect, hasPermission, optionalAuth } = require("../middleware/auth");
 const {
-  handleImageUpload,
+  createImageUploadHandler,
   handleCSVUpload,
   handleUploadErrors,
 } = require("../utils/uploadMiddleware");
@@ -72,7 +72,7 @@ router.patch(
 router.post(
   "/categories",
   hasPermission("MENU_CREATE"),
-  handleImageUpload,
+  createImageUploadHandler({ folder: "images/categories" }),
   handleUploadErrors,
   createCategory
 );
@@ -80,7 +80,7 @@ router.post(
 router.put(
   "/categories/:id",
   hasPermission("MENU_EDIT"),
-  handleImageUpload,
+  createImageUploadHandler({ folder: "images/categories" }),
   handleUploadErrors,
   updateCategory
 );
@@ -96,7 +96,7 @@ router.delete("/categories/:id", hasPermission("MENU_DELETE"), deleteCategory);
 router.post(
   "/items",
   hasPermission("MENU_CREATE"),
-  handleImageUpload,
+  createImageUploadHandler({ folder: "images/menu-items" }),
   handleUploadErrors,
   createMenuItem
 );
@@ -104,7 +104,7 @@ router.post(
 router.put(
   "/items/:id",
   hasPermission("MENU_EDIT"),
-  handleImageUpload,
+  createImageUploadHandler({ folder: "images/menu-items" }),
   handleUploadErrors,
   updateMenuItem
 );

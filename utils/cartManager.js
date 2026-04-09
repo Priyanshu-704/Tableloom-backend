@@ -4,7 +4,7 @@ const Coupon = require("../models/Coupon");
 const Customer = require("../models/Customer");
 const MenuItem = require("../models/MenuItem");
 const orderManager = require("./orderManager");
-const { buildTenantAssetUrl } = require("./assetUrl");
+const { buildTenantImageAssetUrl } = require("./assetUrl");
 const {
   calculatePricingBreakdown,
   getTenantTaxSettings,
@@ -243,7 +243,7 @@ exports.getOrCreateCart = async (sessionId) => {
     let cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       )
       .populate("table", "tableNumber tableName");
 
@@ -267,7 +267,7 @@ exports.getOrCreateCart = async (sessionId) => {
 
       await cart.populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       );
       await cart.populate("table", "tableNumber tableName");
     }
@@ -387,7 +387,7 @@ exports.addItemToCart = async (sessionId, itemData) => {
 
     await cart.populate(
       "items.menuItem",
-      "name description prices image isAvailable isActive",
+      "name description prices image thumbnail isAvailable isActive",
     );
     await cart.populate("table", "tableNumber tableName");
 
@@ -406,7 +406,7 @@ exports.incrementItemQuantity = async (
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       )
       .populate("table", "tableNumber tableName");
 
@@ -445,7 +445,7 @@ exports.decrementItemQuantity = async (
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       )
       .populate("table", "tableNumber tableName");
 
@@ -486,7 +486,7 @@ exports.removeItemFromCart = async (sessionId, menuItemId, sizeId = null) => {
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       )
       .populate("table", "tableNumber tableName");
 
@@ -518,7 +518,7 @@ exports.clearCart = async (sessionId) => {
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image isAvailable isActive",
+        "name description prices image thumbnail isAvailable isActive",
       )
       .populate("table", "tableNumber tableName");
 
@@ -770,9 +770,16 @@ const transformCartData = (cart) => {
       menuItemId: item.menuItem._id,
       sizeId: item.sizeId,
       name: item.menuItem.name,
-      image: item.menuItem.image
-        ? buildTenantAssetUrl(null, `/images/menu-item/${item.menuItem._id}`)
-        : null,
+      image:
+        item.menuItem.image || item.menuItem.thumbnail
+          ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem._id}`)
+          : null,
+      thumbnail:
+        item.menuItem.image || item.menuItem.thumbnail
+          ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem._id}`, {
+              variant: "thumbnail",
+            })
+          : null,
       size: item.sizeName,
       quantity: item.quantity,
       unitPrice: item.unitPrice,

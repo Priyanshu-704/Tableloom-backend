@@ -597,7 +597,7 @@ exports.regenerateQRCode = async (req, res) => {
       success: true,
       message: "QR code regenerated successfully",
       data: {
-        qrCode: `${baseUrl}/images/table-qr/${table._id}${buildTenantAssetQuery(req.tenant)}`,
+        qrCode: `${baseUrl}/images/table-qr/${table._id}?${buildTenantAssetQuery(req.tenant)}`,
         qrUrl: qrInfo.url,
         tokenExpiry: qrInfo.expiry,
         tokenDaysRemaining: 30,

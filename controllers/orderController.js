@@ -2,7 +2,7 @@ const { logger } = require("./../utils/logger.js");
 const Order = require('../models/Order');
 const Customer = require('../models/Customer');
 const orderManager = require('../utils/orderManager');
-const { buildTenantAssetUrl } = require("../utils/assetUrl");
+const { buildTenantImageAssetUrl } = require("../utils/assetUrl");
 require("dotenv").config({ quiet: true });
 
 const shapeOrderHistorySummary = (order) => ({
@@ -36,8 +36,11 @@ const transformOrderData = (order, req) => {
   
   if (orderObj.items && Array.isArray(orderObj.items)) {
     orderObj.items = orderObj.items.map(item => {
-      if (item.menuItem && item.menuItem.image) {
-        item.menuItem.image = buildTenantAssetUrl(req, `/images/menu-item/${item.menuItem._id}`);
+      if (item.menuItem && (item.menuItem.image || item.menuItem.thumbnail)) {
+        item.menuItem.image = buildTenantImageAssetUrl(req, `/images/menu-item/${item.menuItem._id}`);
+        item.menuItem.thumbnail = buildTenantImageAssetUrl(req, `/images/menu-item/${item.menuItem._id}`, {
+          variant: "thumbnail"
+        });
       }
       
       if (item.menuItem && item.menuItem.prices && Array.isArray(item.menuItem.prices)) {
@@ -90,7 +93,7 @@ exports.getOrder = async (req, res) => {
     const order = await Order.findById(req.params.id)
       .populate('customer', 'sessionId name phone email')
       .populate('table', 'tableNumber tableName capacity location')
-      .populate('items.menuItem', 'name description image category tags nutritionalInfo allergens ingredients')
+      .populate('items.menuItem', 'name description image thumbnail category tags nutritionalInfo allergens ingredients')
       .populate('cancelledBy', 'name')
       .populate('items.sizeId', 'name code'); 
 
@@ -137,7 +140,7 @@ exports.getOrderBySession = async (req, res) => {
     const order = await Order.findOne({ customer: customer._id })
       .populate('customer', 'sessionId name phone email')
       .populate('table', 'tableNumber tableName capacity location')
-      .populate('items.menuItem', 'name description image category tags nutritionalInfo allergens ingredients')
+      .populate('items.menuItem', 'name description image thumbnail category tags nutritionalInfo allergens ingredients')
       .populate('items.sizeId', 'name code')
       .sort({ createdAt: -1 });
 
@@ -197,7 +200,7 @@ exports.getOrderHistoryBySession = async (req, res) => {
         "items.menuItem",
         summaryOnly
           ? "name"
-          : "name description image category tags nutritionalInfo allergens ingredients",
+          : "name description image thumbnail category tags nutritionalInfo allergens ingredients",
       )
       .populate("items.sizeId", summaryOnly ? "name" : "name code")
       .sort({ orderPlacedAt: -1, createdAt: -1 })
@@ -523,7 +526,7 @@ exports.getAllOrders = async (req, res) => {
     let ordersQuery = Order.find(query)
       .populate('customer', 'name phone email')
       .populate('table', 'tableNumber tableName')
-      .populate('items.menuItem', 'name image')
+      .populate('items.menuItem', 'name image thumbnail')
       .populate('items.sizeId', 'name code')
       .sort({ orderPlacedAt: -1 });
 

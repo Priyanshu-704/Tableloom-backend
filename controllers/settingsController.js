@@ -1,9 +1,9 @@
 const { logger } = require("./../utils/logger.js");
 const AppSetting = require("../models/AppSetting");
-const { deleteAsset } = require("../utils/cloudinaryStorage");
+const { deleteImageVariants } = require("../utils/imageStorage");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const delayMonitor = require("../utils/delayMonitor");
-const { buildTenantAssetUrl } = require("../utils/assetUrl");
+const { buildTenantImageAssetUrl } = require("../utils/assetUrl");
 const { invalidateTenantTaxSettings } = require("../utils/taxCalculator");
 
 const formatFieldName = (field = "") =>
@@ -134,8 +134,16 @@ const buildRestaurantSettings = (req, restaurant = {}) => ({
   ...(restaurant || {}),
   logo:
     restaurant?.logo && !String(restaurant.logo).startsWith("/")
-      ? buildTenantAssetUrl(req, "/images/restaurant-logo")
+      ? buildTenantImageAssetUrl(req, "/images/restaurant-logo")
       : restaurant?.logo || "/tableloom-mark.svg",
+  logoThumbnail:
+    restaurant?.logo && !String(restaurant.logo).startsWith("/")
+      ? buildTenantImageAssetUrl(req, "/images/restaurant-logo", {
+          variant: "thumbnail",
+        })
+      : restaurant?.logoThumbnail ||
+        restaurant?.logo ||
+        "/tableloom-mark.svg",
 });
 
 const toPublicSettings = (req, settings) => ({
@@ -189,9 +197,15 @@ exports.updateSettings = async (req, res) => {
       if (
         settings.restaurant?.logo &&
         !String(settings.restaurant.logo).startsWith("/") &&
-        settings.restaurant?.logoPublicId
+        (settings.restaurant?.logoPublicId || settings.restaurant?.logoThumbnailPublicId)
       ) {
-        await deleteAsset(settings.restaurant.logoPublicId, "image").catch((error) => {
+        await deleteImageVariants({
+          image: settings.restaurant.logo,
+          thumbnail: settings.restaurant.logoThumbnail,
+          imagePublicId: settings.restaurant.logoPublicId,
+          thumbnailPublicId: settings.restaurant.logoThumbnailPublicId,
+          provider: settings.restaurant.logoProvider,
+        }).catch((error) => {
           logger.warn("Failed to delete previous restaurant logo:", error?.message || error);
         });
       }
@@ -199,7 +213,9 @@ exports.updateSettings = async (req, res) => {
       mergedSettings.restaurant = {
         ...(mergedSettings.restaurant || {}),
         logo: req.file.url,
+        logoThumbnail: req.file.thumbnailUrl,
         logoPublicId: req.file.publicId,
+        logoThumbnailPublicId: req.file.thumbnailPublicId,
         logoProvider: req.file.storageProvider || "cloudinary",
       };
     }

@@ -10,7 +10,7 @@ const kitchenManager = require("./kitchenManager");
 const { orderStatusColors } = require("../utils/statusColors");
 const User = require("../models/User");
 const Bill = require("../models/Bill");
-const { buildTenantAssetUrl } = require("./assetUrl");
+const { buildTenantImageAssetUrl } = require("./assetUrl");
 const {
   calculatePricingBreakdown,
   getTenantTaxSettings,
@@ -22,10 +22,15 @@ const transformMenuItemData = (menuItem) => {
 
   const menuItemObj = menuItem.toObject ? menuItem.toObject() : menuItem;
 
-  if (menuItemObj.image) {
-    menuItemObj.image = buildTenantAssetUrl(
+  if (menuItemObj.image || menuItemObj.thumbnail) {
+    menuItemObj.image = buildTenantImageAssetUrl(
       null,
       `/images/menu-item/${menuItemObj._id}`,
+    );
+    menuItemObj.thumbnail = buildTenantImageAssetUrl(
+      null,
+      `/images/menu-item/${menuItemObj._id}`,
+      { variant: "thumbnail" },
     );
   }
 
@@ -285,7 +290,7 @@ exports.createOrder = async (sessionId, orderData) => {
     await order.populate("table", "tableNumber tableName capacity location");
     await order.populate(
       "items.menuItem",
-      "name description image category tags nutritionalInfo",
+      "name description image thumbnail category tags nutritionalInfo",
     );
 
     const orderObj = order.toObject();
@@ -427,7 +432,7 @@ exports.addItemsToOrder = async (orderId, newItems) => {
 
     await order.save();
 
-    await order.populate("items.menuItem", "name description image");
+    await order.populate("items.menuItem", "name description image thumbnail");
     const orderObj = order.toObject();
 
     socketManager.emitOrderUpdateToKitchen(orderObj);
@@ -495,7 +500,7 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
 
     await order.save();
 
-    await order.populate("items.menuItem", "name description image");
+    await order.populate("items.menuItem", "name description image thumbnail");
     const orderObj = order.toObject();
     socketManager.emitOrderUpdateToKitchen(orderObj);
     socketManager.emitOrderStatusUpdate(orderObj);
@@ -553,7 +558,7 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
 
     await order.save();
 
-    await order.populate("items.menuItem", "name description image");
+    await order.populate("items.menuItem", "name description image thumbnail");
     const orderObj = order.toObject();
     socketManager.emitOrderUpdateToKitchen(orderObj);
     socketManager.emitOrderStatusUpdate(orderObj);
@@ -705,7 +710,7 @@ exports.updateOrderStatus = async (
     await order.save();
 
     await order.populate("customer", "sessionId name");
-    await order.populate("items.menuItem", "name description image");
+    await order.populate("items.menuItem", "name description image thumbnail");
     await order.populate("table", "tableNumber tableName");
 
     if (userId) {
@@ -815,7 +820,7 @@ exports.getOrdersByStatus = async (status, page = 1, limit = 20) => {
     const orders = await Order.find({ status })
       .populate("customer", "name sessionId")
       .populate("table", "tableNumber tableName")
-      .populate("items.menuItem", "name description image preparationTime")
+      .populate("items.menuItem", "name description image thumbnail preparationTime")
       .sort({ orderPlacedAt: 1 })
       .skip(skip)
       .limit(limitNum)
@@ -859,7 +864,7 @@ exports.getOrdersByTable = async (tableId, status = null) => {
     const orders = await Order.find(query)
       .populate("customer", "name sessionId")
       .populate("table", "tableNumber tableName")
-      .populate("items.menuItem", "name description image")
+      .populate("items.menuItem", "name description image thumbnail")
       .sort({ orderPlacedAt: -1 })
       .lean();
 

@@ -16,7 +16,15 @@ const categorySchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  thumbnail: {
+    type: String,
+    default: null,
+  },
   imagePublicId: {
+    type: String,
+    default: null,
+  },
+  thumbnailPublicId: {
     type: String,
     default: null,
   },

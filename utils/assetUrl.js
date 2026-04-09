@@ -9,17 +9,41 @@ const buildTenantAssetQuery = (tenant = getCurrentTenant()) => {
     return "";
   }
 
-  return `?tenantSlug=${encodeURIComponent(tenant.slug)}&tenantKey=${encodeURIComponent(tenant.key)}`;
+  return `tenantSlug=${encodeURIComponent(tenant.slug)}&tenantKey=${encodeURIComponent(tenant.key)}`;
+};
+
+const appendQuery = (path = "", query = "") => {
+  if (!query) {
+    return path;
+  }
+
+  return `${path}${String(path).includes("?") ? "&" : "?"}${query}`;
 };
 
 const buildTenantAssetUrl = (
   req = null,
   path = "",
   tenant = req?.tenant || getCurrentTenant(),
-) => `${getApiBaseUrl(req)}${path}${buildTenantAssetQuery(tenant)}`;
+) => `${getApiBaseUrl(req)}${appendQuery(path, buildTenantAssetQuery(tenant))}`;
+
+const buildTenantImageAssetUrl = (
+  req = null,
+  path = "",
+  { variant = "image", tenant = req?.tenant || getCurrentTenant() } = {}
+) =>
+  buildTenantAssetUrl(
+    req,
+    appendQuery(
+      path,
+      variant === "thumbnail" ? "variant=thumbnail" : ""
+    ),
+    tenant
+  );
 
 module.exports = {
+  appendQuery,
   buildTenantAssetQuery,
   buildTenantAssetUrl,
+  buildTenantImageAssetUrl,
   getApiBaseUrl,
 };

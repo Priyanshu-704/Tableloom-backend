@@ -13,8 +13,8 @@ const {
 const { getOrSetCache, clearCache } = require("../utils/responseCache");
 require("dotenv").config({ quiet: true });
 
-const { deleteAsset } = require("../utils/cloudinaryStorage");
-const { buildTenantAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
+const { buildTenantImageAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
+const { deleteImageVariants } = require("../utils/imageStorage");
 
 const MENU_CACHE_PREFIX = "menu:";
 const MENU_ITEMS_CACHE_TTL_MS = 15 * 1000;
@@ -43,10 +43,23 @@ const getMenuResponseView = (req) => {
   return isAdminMenuRequest(req) ? "admin" : "customer";
 };
 
-const buildImageUrl = (req, type, id, hasImage) =>
-  hasImage
-    ? buildTenantAssetUrl(req, `/images/${type}/${id}`)
-    : null;
+const buildImageAssets = (req, type, id, entity = {}) => {
+  const hasAsset = Boolean(entity?.image || entity?.thumbnail);
+
+  if (!hasAsset) {
+    return {
+      image: null,
+      thumbnail: null,
+    };
+  }
+
+  return {
+    image: buildTenantImageAssetUrl(req, `/images/${type}/${id}`),
+    thumbnail: buildTenantImageAssetUrl(req, `/images/${type}/${id}`, {
+      variant: "thumbnail",
+    }),
+  };
+};
 
 const shapeMenuPrice = (price = {}, includeCostPrice = false) => ({
   price: price.price,
@@ -61,7 +74,7 @@ const shapeMenuItemForResponse = (req, item = {}, view = "customer") => {
     _id: item._id,
     name: item.name,
     description: item.description || "",
-    image: buildImageUrl(req, "menu-item", item._id, item.image),
+    ...buildImageAssets(req, "menu-item", item._id, item),
     category: item.category
       ? {
           _id: item.category._id,
@@ -152,7 +165,7 @@ const shapeCategoryForResponse = (req, category = {}, includeStation = false) =>
   _id: category._id,
   name: category.name,
   description: category.description || "",
-  image: buildImageUrl(req, "category", category._id, category.image),
+  ...buildImageAssets(req, "category", category._id, category),
   displayOrder: Number(category.displayOrder || 0),
   isActive: Boolean(category.isActive),
   ...(includeStation
@@ -491,7 +504,9 @@ exports.createCategory = async (req, res) => {
       }
 
       categoryData.image = req.file.url;
+      categoryData.thumbnail = req.file.thumbnailUrl;
       categoryData.imagePublicId = req.file.publicId;
+      categoryData.thumbnailPublicId = req.file.thumbnailPublicId;
       categoryData.imageProvider = req.file.storageProvider || "cloudinary";
     }
 
@@ -561,7 +576,9 @@ exports.getCategories = async (req, res) => {
       MENU_CATEGORIES_CACHE_TTL_MS,
       async () => {
         const categoryRows = await Category.find(query)
-          .select("name description image displayOrder isActive kitchenStation")
+          .select(
+            "name description image thumbnail displayOrder isActive kitchenStation"
+          )
           .populate("kitchenStation", "name stationType status")
           .sort({ displayOrder: 1, name: 1 })
           .lean();
@@ -601,9 +618,11 @@ exports.getCategoryById = async (req, res) => {
       });
     }
 
-    category.image = buildImageUrl(req, "category", category._id, category.image);
+    const imageAssets = buildImageAssets(req, "category", category._id, category);
+    category.image = imageAssets.image;
+    category.thumbnail = imageAssets.thumbnail;
 
-    category.storageType = category.image ? "cloudinary" : "none";
+    category.storageType = category.image ? "asset" : "none";
 
     res.status(200).json({
       success: true,
@@ -660,9 +679,15 @@ exports.updateCategory = async (req, res) => {
         });
       }
 
-      if (oldCategory.imagePublicId) {
+      if (oldCategory.image || oldCategory.thumbnail) {
         try {
-          await deleteAsset(oldCategory.imagePublicId, "image");
+          await deleteImageVariants({
+            image: oldCategory.image,
+            thumbnail: oldCategory.thumbnail,
+            imagePublicId: oldCategory.imagePublicId,
+            thumbnailPublicId: oldCategory.thumbnailPublicId,
+            provider: oldCategory.imageProvider,
+          });
           logger.info("Deleted old category image:", oldCategory.image);
         } catch (err) {
           logger.error("Cloudinary delete failed:", err);
@@ -670,7 +695,9 @@ exports.updateCategory = async (req, res) => {
       }
 
       updateData.image = req.file.url;
+      updateData.thumbnail = req.file.thumbnailUrl;
       updateData.imagePublicId = req.file.publicId;
+      updateData.thumbnailPublicId = req.file.thumbnailPublicId;
       updateData.imageProvider = req.file.storageProvider || "cloudinary";
     }
 
@@ -683,11 +710,7 @@ exports.updateCategory = async (req, res) => {
     const response = {
       success: true,
       message: "Category updated successfully",
-      data: {
-        _id: updatedCategory._id,
-        name: updatedCategory.name,
-        kitchenStation: updatedCategory.kitchenStation,
-      },
+      data: shapeCategoryForResponse(req, updatedCategory.toObject(), true),
     };
 
     invalidateMenuReadCaches();
@@ -743,7 +766,9 @@ exports.deleteCategory = async (req, res) => {
   try {
     const categoryId = req.params.id;
     const [category, linkedMenuItem] = await Promise.all([
-      Category.findById(categoryId).select("imagePublicId"),
+      Category.findById(categoryId).select(
+        "image thumbnail imagePublicId thumbnailPublicId imageProvider"
+      ),
       MenuItem.exists({ category: categoryId }),
     ]);
 
@@ -770,9 +795,15 @@ exports.deleteCategory = async (req, res) => {
     });
     invalidateMenuReadCaches();
 
-    if (category.imagePublicId) {
+    if (category.image || category.thumbnail) {
       setImmediate(() => {
-        deleteAsset(category.imagePublicId, "image").catch((error) => {
+        deleteImageVariants({
+          image: category.image,
+          thumbnail: category.thumbnail,
+          imagePublicId: category.imagePublicId,
+          thumbnailPublicId: category.thumbnailPublicId,
+          provider: category.imageProvider,
+        }).catch((error) => {
           logger.warn("Failed to delete category image asset", {
             categoryId,
             imagePublicId: category.imagePublicId,
@@ -1044,7 +1075,9 @@ exports.createMenuItem = async (req, res) => {
     if (req.file) {
       if (req.file.url) {
         menuData.image = req.file.url;
+        menuData.thumbnail = req.file.thumbnailUrl;
         menuData.imagePublicId = req.file.publicId;
+        menuData.thumbnailPublicId = req.file.thumbnailPublicId;
         menuData.imageProvider = req.file.storageProvider || "cloudinary";
         logger.info("Image uploaded successfully. Cloudinary URL:", menuData.image);
       } else {
@@ -1065,13 +1098,19 @@ exports.createMenuItem = async (req, res) => {
         ? menuData.isActive === "true" || menuData.isActive === true
         : true;
 
-    await MenuItem.create(menuData);
+    const createdMenuItem = await MenuItem.create(menuData);
+    const responseMenuItem = await MenuItem.findById(createdMenuItem._id)
+      .populate("category", "name")
+      .populate("prices.sizeId", "name code")
+      .populate("station", "name stationType status")
+      .lean();
 
     invalidateMenuReadCaches();
 
     return res.status(201).json({
       success: true,
       message: "Menu item created successfully",
+      data: shapeMenuItemForResponse(req, responseMenuItem, "admin"),
     });
   } catch (error) {
     logger.error("Create menu item error:", error);
@@ -1225,8 +1264,8 @@ exports.getMenuItems = async (req, res) => {
             : { displayOrder: 1, name: 1 };
 
     const menuItemSelect = isAdmin
-      ? "name description image category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices"
-      : "name description image category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
+      ? "name description image thumbnail category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices"
+      : "name description image thumbnail category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
 
     const cacheKey = `${MENU_CACHE_PREFIX}items:${req.tenantId || "public"}:${responseView}:${getApiBaseUrl(req)}:${req.originalUrl}`;
     const payload = await getOrSetCache(
@@ -1414,12 +1453,9 @@ exports.getMenuItem = async (req, res) => {
         ...(price.costPrice && { costPrice: price.costPrice }),
       }));
     }
-    menuItem.image = buildImageUrl(
-      req,
-      "menu-item",
-      menuItem._id,
-      menuItem.image,
-    );
+    const imageAssets = buildImageAssets(req, "menu-item", menuItem._id, menuItem);
+    menuItem.image = imageAssets.image;
+    menuItem.thumbnail = imageAssets.thumbnail;
     menuItem.activeDiscount = getActiveDiscount(menuItem.discount);
 
     res.status(200).json({
@@ -1534,7 +1570,7 @@ exports.updateMenuItem = async (req, res) => {
     }
 
     const existingMenuItem = await MenuItem.findById(req.params.id).select(
-      "_id name category prices image imagePublicId isAvailable isActive",
+      "_id name category prices image thumbnail imagePublicId thumbnailPublicId imageProvider isAvailable isActive",
     );
 
     if (!existingMenuItem) {
@@ -1741,12 +1777,20 @@ exports.updateMenuItem = async (req, res) => {
       }
 
       updateData.image = req.file.url;
+      updateData.thumbnail = req.file.thumbnailUrl;
       updateData.imagePublicId = req.file.publicId;
+      updateData.thumbnailPublicId = req.file.thumbnailPublicId;
       updateData.imageProvider = req.file.storageProvider || "cloudinary";
 
-      if (existingMenuItem?.imagePublicId) {
+      if (existingMenuItem?.image || existingMenuItem?.thumbnail) {
         try {
-          await deleteAsset(existingMenuItem.imagePublicId, "image");
+          await deleteImageVariants({
+            image: existingMenuItem.image,
+            thumbnail: existingMenuItem.thumbnail,
+            imagePublicId: existingMenuItem.imagePublicId,
+            thumbnailPublicId: existingMenuItem.thumbnailPublicId,
+            provider: existingMenuItem.imageProvider,
+          });
           logger.info("Deleted old Cloudinary image:", existingMenuItem.image);
         } catch (err) {
           logger.error("Failed to delete old Cloudinary image:", err);
@@ -1758,7 +1802,10 @@ exports.updateMenuItem = async (req, res) => {
       req.params.id,
       updateData,
       { new: true, runValidators: true },
-    );
+    )
+      .populate("category", "name")
+      .populate("prices.sizeId", "name code")
+      .populate("station", "name stationType status");
 
     if (!menuItem) {
       return res.status(404).json({
@@ -1790,6 +1837,7 @@ exports.updateMenuItem = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Menu item updated successfully",
+      data: shapeMenuItemForResponse(req, menuItem.toObject(), "admin"),
     });
   } catch (error) {
     logger.error("Update menu item error:", error);
@@ -2013,6 +2061,24 @@ exports.deleteMenuItem = async (req, res) => {
       success: true,
       message: "Menu item deleted successfully",
     });
+
+    if (menuItem.image || menuItem.thumbnail) {
+      setImmediate(() => {
+        deleteImageVariants({
+          image: menuItem.image,
+          thumbnail: menuItem.thumbnail,
+          imagePublicId: menuItem.imagePublicId,
+          thumbnailPublicId: menuItem.thumbnailPublicId,
+          provider: menuItem.imageProvider,
+        }).catch((error) => {
+          logger.warn("Failed to delete menu item image asset", {
+            menuItemId: menuItem._id,
+            imagePublicId: menuItem.imagePublicId,
+            error: error.message,
+          });
+        });
+      });
+    }
   } catch (error) {
     logger.error(error);
     res.status(500).json({
@@ -2439,7 +2505,9 @@ exports.getSeasonalItems = async (req, res) => {
       .lean();
 
     const formattedItems = seasonalItems.map((item) => {
-      item.image = buildImageUrl(req, "menu-item", item._id, item.image);
+      const imageAssets = buildImageAssets(req, "menu-item", item._id, item);
+      item.image = imageAssets.image;
+      item.thumbnail = imageAssets.thumbnail;
 
       if (Array.isArray(item.prices)) {
         item.prices = item.prices.map((price) => ({
