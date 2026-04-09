@@ -39,6 +39,9 @@ const shapeSupportRequest = (request = {}) => ({
   respondedBy: shapeUser(request?.respondedBy),
 });
 
+const isSupportRequestLocked = (status = "open") =>
+  ["resolved", "closed"].includes(String(status || "open").toLowerCase());
+
 exports.createSupportRequest = async (req, res) => {
   const tenantId = normalizeTenantId(req.tenant) || normalizeTenantId(req.user?.tenantId);
   const { category = "other", subject, message } = req.body || {};
@@ -126,6 +129,14 @@ exports.updateSupportRequestStatus = async (req, res) => {
 
   if (!request) {
     return sendError(res, 404, "Support request not found");
+  }
+
+  if (isSupportRequestLocked(request.status)) {
+    return sendError(
+      res,
+      409,
+      "Resolved support requests are locked and cannot be updated"
+    );
   }
 
   if (hasStatus) {
