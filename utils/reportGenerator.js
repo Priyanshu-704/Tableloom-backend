@@ -2,11 +2,25 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
+const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
+const sharp = require("sharp");
 
 const REPORT_TTL_MS = 1000 * 60 * 60 * 6;
 const REPORT_OUTPUT_DIR = path.join(os.tmpdir(), "quickbite-generated-reports");
 const reportRegistry = new Map();
+const XLSX_CONTENT_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const PDF_FONT_REGULAR_NAME = "ReportRegular";
+const PDF_FONT_BOLD_NAME = "ReportBold";
+const PDF_FONT_REGULAR_CANDIDATES = [
+  "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+];
+const PDF_FONT_BOLD_CANDIDATES = [
+  "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+];
 
 const ensureOutputDir = () => {
   if (!fs.existsSync(REPORT_OUTPUT_DIR)) {
@@ -51,6 +65,34 @@ const escapeHtml = (value) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+
+const resolveExistingPath = (candidates = []) =>
+  candidates.find((candidate) => candidate && fs.existsSync(candidate)) || "";
+
+const getPdfFontName = (variant = "regular") => {
+  const fontPath = resolveExistingPath(
+    variant === "bold" ? PDF_FONT_BOLD_CANDIDATES : PDF_FONT_REGULAR_CANDIDATES
+  );
+
+  if (!fontPath) {
+    return variant === "bold" ? "Helvetica-Bold" : "Helvetica";
+  }
+
+  return variant === "bold" ? PDF_FONT_BOLD_NAME : PDF_FONT_REGULAR_NAME;
+};
+
+const registerPdfFonts = (doc) => {
+  const regularPath = resolveExistingPath(PDF_FONT_REGULAR_CANDIDATES);
+  const boldPath = resolveExistingPath(PDF_FONT_BOLD_CANDIDATES);
+
+  if (regularPath) {
+    doc.registerFont(PDF_FONT_REGULAR_NAME, regularPath);
+  }
+
+  if (boldPath) {
+    doc.registerFont(PDF_FONT_BOLD_NAME, boldPath);
+  }
+};
 
 const buildAnalyticsSummaryCards = (dataset = {}, currency = "INR") => [
   {
@@ -221,7 +263,7 @@ const ensurePageSpace = (doc, currentY, requiredHeight = 90) => {
 const renderSectionTitle = (doc, title, currentY) => {
   const nextY = ensurePageSpace(doc, currentY, 36);
   doc
-    .font("Helvetica-Bold")
+    .font(getPdfFontName("bold"))
     .fontSize(16)
     .fillColor("#111827")
     .text(title, doc.page.margins.left, nextY);
@@ -241,12 +283,12 @@ const renderSummaryCards = (doc, cards = [], currentY) => {
     doc.roundedRect(x, nextY, cardWidth, cardHeight, 14).fillAndStroke("#f8fafc", "#dbeafe");
     doc
       .fillColor("#475569")
-      .font("Helvetica")
+      .font(getPdfFontName("regular"))
       .fontSize(10)
       .text(card.label, x + 12, nextY + 12, { width: cardWidth - 24 });
     doc
       .fillColor("#0f172a")
-      .font("Helvetica-Bold")
+      .font(getPdfFontName("bold"))
       .fontSize(16)
       .text(card.value, x + 12, nextY + 34, { width: cardWidth - 24 });
   });
@@ -257,7 +299,11 @@ const renderSummaryCards = (doc, cards = [], currentY) => {
 const renderBarChart = (doc, title, rows = [], currentY, options = {}) => {
   let y = renderSectionTitle(doc, title, currentY);
   if (!rows.length) {
-    doc.font("Helvetica").fontSize(10).fillColor("#64748b").text("No data available", doc.page.margins.left, y);
+    doc
+      .font(getPdfFontName("regular"))
+      .fontSize(10)
+      .fillColor("#64748b")
+      .text("No data available", doc.page.margins.left, y);
     return y + 20;
   }
 
@@ -267,14 +313,14 @@ const renderBarChart = (doc, title, rows = [], currentY, options = {}) => {
     const label = row.label || row.metric || "Item";
     const numericValue = numberValue(row.quantity ?? row.value);
     const width = Math.max(18, (numericValue / maxValue) * (options.chartWidth || 220));
-    doc.font("Helvetica").fontSize(10).fillColor("#111827").text(label, doc.page.margins.left, y, {
+    doc.font(getPdfFontName("regular")).fontSize(10).fillColor("#111827").text(label, doc.page.margins.left, y, {
       width: 170,
     });
     doc.roundedRect(doc.page.margins.left + 180, y + 2, options.chartWidth || 220, 10, 999).fill("#e2e8f0");
     doc.roundedRect(doc.page.margins.left + 180, y + 2, width, 10, 999).fill(options.barColor || "#0f766e");
     doc
       .fillColor("#475569")
-      .font("Helvetica")
+      .font(getPdfFontName("regular"))
       .fontSize(10)
       .text(row.secondary ? `${row.value} | ${row.secondary}` : row.value, doc.page.margins.left + 410, y - 2, {
         width: 120,
@@ -360,7 +406,7 @@ const renderPieChart = (doc, title, rows = [], currentY, options = {}) => {
 
   if (!rows.length) {
     doc
-      .font("Helvetica")
+      .font(getPdfFontName("regular"))
       .fontSize(10)
       .fillColor("#64748b")
       .text("No data available", doc.page.margins.left, y);
@@ -396,7 +442,7 @@ const renderPieChart = (doc, title, rows = [], currentY, options = {}) => {
   doc.circle(centerX, centerY, radius * 0.58).fillAndStroke("#ffffff", "#e2e8f0");
   doc
     .fillColor("#0f172a")
-    .font("Helvetica-Bold")
+    .font(getPdfFontName("bold"))
     .fontSize(11)
     .text(String(rows.length), centerX - 12, centerY - 7, {
       width: 24,
@@ -404,7 +450,7 @@ const renderPieChart = (doc, title, rows = [], currentY, options = {}) => {
     });
   doc
     .fillColor("#64748b")
-    .font("Helvetica")
+    .font(getPdfFontName("regular"))
     .fontSize(8)
     .text("segments", centerX - 22, centerY + 8, {
       width: 44,
@@ -417,14 +463,14 @@ const renderPieChart = (doc, title, rows = [], currentY, options = {}) => {
     doc.circle(legendX, legendY + 7, 4).fill(colors[index % colors.length]);
     doc
       .fillColor("#111827")
-      .font("Helvetica-Bold")
+      .font(getPdfFontName("bold"))
       .fontSize(10)
       .text(row.label, legendX + 12, legendY + 1, {
         width: 120,
       });
     doc
       .fillColor("#475569")
-      .font("Helvetica")
+      .font(getPdfFontName("regular"))
       .fontSize(9)
       .text(row.secondary ? `${row.value} | ${row.secondary}` : row.value, legendX + 138, legendY + 1, {
         width: 150,
@@ -443,12 +489,12 @@ const renderTwoColumnTable = (doc, title, rows = [], currentY) => {
 
   y = ensurePageSpace(doc, y, 30);
   doc.roundedRect(tableX, y, tableWidth, 26, 10).fill("#eff6ff");
-  doc.font("Helvetica-Bold").fontSize(10).fillColor("#0f172a").text("Metric", tableX + 12, y + 8);
+  doc.font(getPdfFontName("bold")).fontSize(10).fillColor("#0f172a").text("Metric", tableX + 12, y + 8);
   doc.text("Value", valueX, y + 8);
   y += 34;
 
   if (!rows.length) {
-    doc.font("Helvetica").fontSize(10).fillColor("#64748b").text("No data available", tableX, y);
+    doc.font(getPdfFontName("regular")).fontSize(10).fillColor("#64748b").text("No data available", tableX, y);
     return y + 20;
   }
 
@@ -457,7 +503,7 @@ const renderTwoColumnTable = (doc, title, rows = [], currentY) => {
     if (index % 2 === 0) {
       doc.roundedRect(tableX, y - 4, tableWidth, 22, 8).fill("#f8fafc");
     }
-    doc.font("Helvetica").fontSize(10).fillColor("#111827").text(row.metric || row.status || row.label, tableX + 12, y);
+    doc.font(getPdfFontName("regular")).fontSize(10).fillColor("#111827").text(row.metric || row.status || row.label, tableX + 12, y);
     doc.text(row.value || row.count || row.averageTime || "-", valueX, y, {
       width: tableWidth - (valueX - tableX) - 12,
       align: "left",
@@ -466,6 +512,477 @@ const renderTwoColumnTable = (doc, title, rows = [], currentY) => {
   });
 
   return y + 8;
+};
+
+const buildReportSections = (reportType, dataset, currency) => {
+  if (reportType === "finance") {
+    return {
+      summaryCards: buildFinanceSummaryCards(dataset, currency),
+      charts: [
+        {
+          title: "Payment Methods",
+          type: "pie",
+          rows: buildFinancePaymentMethodRows(dataset, currency),
+          colors: FINANCE_CHART_COLORS,
+        },
+        {
+          title: "Order Types",
+          type: "pie",
+          rows: buildFinanceOrderTypeRows(dataset, currency),
+          colors: FINANCE_CHART_COLORS,
+        },
+      ],
+      tables: [
+        {
+          title: "Payment Method Revenue",
+          rows: buildFinancePaymentMethodTableRows(dataset, currency),
+        },
+        {
+          title: "Order Type Revenue",
+          rows: buildFinanceOrderTypeTableRows(dataset, currency),
+        },
+        {
+          title: "Revenue Breakdown",
+          rows: buildFinanceBreakdownRows(dataset, currency),
+        },
+      ],
+    };
+  }
+
+  return {
+    summaryCards: buildAnalyticsSummaryCards(dataset, currency),
+    charts: [
+      {
+        title: "Popular Items",
+        type: "bar",
+        rows: buildAnalyticsPopularItemsRows(dataset, currency),
+        barColor: "#0f766e",
+      },
+      {
+        title: "Order Status Chart",
+        type: "bar",
+        rows: buildAnalyticsOrderStatusRows(dataset).map((row) => ({
+          label: row.label,
+          value: row.value.toLocaleString(),
+          quantity: row.value,
+        })),
+        barColor: "#2563eb",
+      },
+    ],
+    tables: [
+      {
+        title: "Order Status Summary",
+        rows: buildAnalyticsOrderStatusRows(dataset).map((row) => ({
+          metric: row.label,
+          value: row.value.toLocaleString(),
+        })),
+      },
+      {
+        title: "Operations Summary",
+        rows: buildAnalyticsOperationsRows(dataset),
+      },
+      {
+        title: "Waiter Call Status",
+        rows: buildAnalyticsWaiterStatusRows(dataset).map((row) => ({
+          metric: `${row.status} (${row.count})`,
+          value: row.averageTime,
+        })),
+      },
+    ],
+  };
+};
+
+const buildChartCardSvg = ({
+  title,
+  bodyMarkup,
+  width = 820,
+  height = 320,
+}) => `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect x="0" y="0" width="${width}" height="${height}" rx="22" fill="#ffffff"/>
+  <rect x="1" y="1" width="${width - 2}" height="${height - 2}" rx="21" fill="none" stroke="#dbe4f0" stroke-width="2"/>
+  <text x="28" y="42" font-size="22" font-weight="700" fill="#0f172a" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${escapeHtml(title)}</text>
+  ${bodyMarkup}
+</svg>`;
+
+const buildBarChartSvg = ({
+  title,
+  rows = [],
+  barColor = "#0f766e",
+  width = 820,
+  height = 340,
+}) => {
+  if (!rows.length) {
+    return buildChartCardSvg({
+      title,
+      width,
+      height,
+      bodyMarkup: `<text x="28" y="94" font-size="16" fill="#64748b" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">No chart data found for the selected period.</text>`,
+    });
+  }
+
+  const chartRows = rows.slice(0, 8);
+  const chartTop = 84;
+  const rowHeight = 30;
+  const labelWidth = 250;
+  const trackWidth = 260;
+  const valueX = 600;
+  const maxValue = Math.max(
+    ...chartRows.map((row) => numberValue(row.quantity ?? row.value)),
+    1
+  );
+
+  const bodyMarkup = chartRows
+    .map((row, index) => {
+      const numericValue = numberValue(row.quantity ?? row.value);
+      const barWidth = Math.max(12, Math.round((numericValue / maxValue) * trackWidth));
+      const y = chartTop + index * rowHeight;
+      const valueLabel = row.secondary ? `${row.value} | ${row.secondary}` : row.value;
+
+      return `
+        <text x="28" y="${y + 14}" font-size="14" fill="#111827" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${escapeHtml(row.label || row.metric || "Item")}</text>
+        <rect x="${28 + labelWidth}" y="${y}" width="${trackWidth}" height="12" rx="999" fill="#e2e8f0"/>
+        <rect x="${28 + labelWidth}" y="${y}" width="${barWidth}" height="12" rx="999" fill="${barColor}"/>
+        <text x="${valueX}" y="${y + 11}" font-size="13" fill="#475569" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${escapeHtml(valueLabel)}</text>
+      `;
+    })
+    .join("");
+
+  return buildChartCardSvg({
+    title,
+    width,
+    height: Math.max(height, chartTop + chartRows.length * rowHeight + 36),
+    bodyMarkup,
+  });
+};
+
+const buildPieChartSvg = ({
+  title,
+  rows = [],
+  colors = FINANCE_CHART_COLORS,
+  width = 820,
+  height = 340,
+}) => {
+  if (!rows.length) {
+    return buildChartCardSvg({
+      title,
+      width,
+      height,
+      bodyMarkup: `<text x="28" y="94" font-size="16" fill="#64748b" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">No chart data found for the selected period.</text>`,
+    });
+  }
+
+  const chartRows = rows.filter((row) => numberValue(row.quantity) > 0);
+  if (!chartRows.length) {
+    return buildChartCardSvg({
+      title,
+      width,
+      height,
+      bodyMarkup: `<text x="28" y="94" font-size="16" fill="#64748b" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">No chart data found for the selected period.</text>`,
+    });
+  }
+
+  const centerX = 170;
+  const centerY = 190;
+  const radius = 92;
+  const total = chartRows.reduce((sum, row) => sum + numberValue(row.quantity), 0);
+  let currentAngle = -Math.PI / 2;
+
+  const slices = chartRows
+    .map((row, index) => {
+      const value = numberValue(row.quantity);
+      const sweep = total > 0 ? (value / total) * Math.PI * 2 : 0;
+      const path = describeSvgPiePath(
+        centerX,
+        centerY,
+        radius,
+        currentAngle,
+        currentAngle + sweep
+      );
+      currentAngle += sweep;
+      return `<path d="${path}" fill="${colors[index % colors.length]}" />`;
+    })
+    .join("");
+
+  const legendMarkup = chartRows
+    .map((row, index) => {
+      const y = 108 + index * 32;
+      const valueLabel = row.secondary ? `${row.value} | ${row.secondary}` : row.value;
+
+      return `
+        <circle cx="392" cy="${y}" r="6" fill="${colors[index % colors.length]}"/>
+        <text x="408" y="${y + 5}" font-size="14" font-weight="700" fill="#0f172a" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${escapeHtml(row.label)}</text>
+        <text x="408" y="${y + 22}" font-size="13" fill="#475569" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${escapeHtml(valueLabel)}</text>
+      `;
+    })
+    .join("");
+
+  return buildChartCardSvg({
+    title,
+    width,
+    height,
+    bodyMarkup: `
+      ${slices}
+      <circle cx="${centerX}" cy="${centerY}" r="${Math.round(radius * 0.58)}" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+      <text x="${centerX}" y="${centerY - 2}" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">${chartRows.length}</text>
+      <text x="${centerX}" y="${centerY + 18}" text-anchor="middle" font-size="11" fill="#64748b" font-family="Noto Sans, DejaVu Sans, Arial, sans-serif">segments</text>
+      ${legendMarkup}
+    `,
+  });
+};
+
+const buildChartPngBuffer = async (chart = {}) => {
+  const svg = chart.type === "pie"
+    ? buildPieChartSvg(chart)
+    : buildBarChartSvg(chart);
+
+  return sharp(Buffer.from(svg)).png().toBuffer();
+};
+
+const styleMergedRange = (worksheet, startRow, endRow, startCol, endCol, style = {}) => {
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let col = startCol; col <= endCol; col += 1) {
+      Object.assign(worksheet.getCell(row, col), {
+        style: {
+          ...(worksheet.getCell(row, col).style || {}),
+          ...style,
+        },
+      });
+    }
+  }
+};
+
+const addWorksheetSectionHeading = (worksheet, title, row) => {
+  worksheet.mergeCells(`A${row}:H${row}`);
+  const cell = worksheet.getCell(`A${row}`);
+  cell.value = title;
+  cell.font = { name: "Arial", size: 14, bold: true, color: { argb: "FF0F172A" } };
+  cell.alignment = { vertical: "middle", horizontal: "left" };
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFEFF6FF" },
+  };
+  cell.border = {
+    top: { style: "thin", color: { argb: "FFD6E4F0" } },
+    left: { style: "thin", color: { argb: "FFD6E4F0" } },
+    bottom: { style: "thin", color: { argb: "FFD6E4F0" } },
+    right: { style: "thin", color: { argb: "FFD6E4F0" } },
+  };
+  worksheet.getRow(row).height = 24;
+  return row + 1;
+};
+
+const addSummaryCardsToWorksheet = (worksheet, cards = [], startRow = 6) => {
+  cards.forEach((card, index) => {
+    const startCol = index * 2 + 1;
+    const endCol = startCol + 1;
+    worksheet.mergeCells(startRow, startCol, startRow + 2, endCol);
+    const cell = worksheet.getCell(startRow, startCol);
+    cell.value = {
+      richText: [
+        {
+          text: `${card.label}\n`,
+          font: { name: "Arial", size: 10, color: { argb: "FF64748B" } },
+        },
+        {
+          text: card.value,
+          font: { name: "Arial", size: 16, bold: true, color: { argb: "FF0F172A" } },
+        },
+      ],
+    };
+    cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFF8FAFC" },
+    };
+    cell.border = {
+      top: { style: "thin", color: { argb: "FFE2E8F0" } },
+      left: { style: "thin", color: { argb: "FFE2E8F0" } },
+      bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+      right: { style: "thin", color: { argb: "FFE2E8F0" } },
+    };
+    styleMergedRange(worksheet, startRow, startRow + 2, startCol, endCol, {
+      fill: cell.fill,
+      border: cell.border,
+    });
+  });
+
+  for (let row = startRow; row <= startRow + 2; row += 1) {
+    worksheet.getRow(row).height = 24;
+  }
+
+  return startRow + 4;
+};
+
+const addChartToWorksheet = async (workbook, worksheet, chart, startRow) => {
+  let row = addWorksheetSectionHeading(worksheet, chart.title, startRow);
+  const imageBuffer = await buildChartPngBuffer(chart);
+  const imageId = workbook.addImage({
+    buffer: imageBuffer,
+    extension: "png",
+  });
+  const imageHeight = chart.type === "pie" ? 340 : 320;
+  worksheet.addImage(imageId, {
+    tl: { col: 0.15, row: row - 1 + 0.15 },
+    ext: { width: 820, height: imageHeight },
+  });
+
+  const reservedRows = Math.ceil(imageHeight / 20);
+  for (let index = 0; index <= reservedRows; index += 1) {
+    worksheet.getRow(row + index).height = 20;
+  }
+
+  return row + reservedRows + 2;
+};
+
+const addTableToWorksheet = (worksheet, section = {}, startRow = 1) => {
+  let row = addWorksheetSectionHeading(worksheet, section.title, startRow);
+  worksheet.mergeCells(`A${row}:D${row}`);
+  worksheet.mergeCells(`E${row}:H${row}`);
+  worksheet.getCell(`A${row}`).value = "Metric";
+  worksheet.getCell(`E${row}`).value = "Value";
+
+  ["A", "E"].forEach((column) => {
+    const cell = worksheet.getCell(`${column}${row}`);
+    cell.font = { name: "Arial", size: 10, bold: true, color: { argb: "FF0F172A" } };
+    cell.alignment = { vertical: "middle", horizontal: "left" };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFEFF6FF" },
+    };
+  });
+  styleMergedRange(worksheet, row, row, 1, 8, {
+    border: {
+      top: { style: "thin", color: { argb: "FFD6E4F0" } },
+      left: { style: "thin", color: { argb: "FFD6E4F0" } },
+      bottom: { style: "thin", color: { argb: "FFD6E4F0" } },
+      right: { style: "thin", color: { argb: "FFD6E4F0" } },
+    },
+  });
+  worksheet.getRow(row).height = 22;
+  row += 1;
+
+  if (!section.rows?.length) {
+    worksheet.mergeCells(`A${row}:H${row}`);
+    const emptyCell = worksheet.getCell(`A${row}`);
+    emptyCell.value = "No data available";
+    emptyCell.font = { name: "Arial", size: 10, color: { argb: "FF64748B" } };
+    return row + 2;
+  }
+
+  section.rows.forEach((item, index) => {
+    worksheet.mergeCells(`A${row}:D${row}`);
+    worksheet.mergeCells(`E${row}:H${row}`);
+    worksheet.getCell(`A${row}`).value = item.metric || item.status || item.label || "-";
+    worksheet.getCell(`E${row}`).value = item.value || item.count || item.averageTime || "-";
+    styleMergedRange(worksheet, row, row, 1, 8, {
+      fill: index % 2 === 0
+        ? {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF8FAFC" },
+          }
+        : undefined,
+      border: {
+        top: { style: "thin", color: { argb: "FFE2E8F0" } },
+        left: { style: "thin", color: { argb: "FFE2E8F0" } },
+        bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+        right: { style: "thin", color: { argb: "FFE2E8F0" } },
+      },
+      alignment: {
+        vertical: "middle",
+        horizontal: "left",
+        wrapText: true,
+      },
+      font: {
+        name: "Arial",
+        size: 10,
+        color: { argb: "FF111827" },
+      },
+    });
+    worksheet.getRow(row).height = 20;
+    row += 1;
+  });
+
+  return row + 1;
+};
+
+const buildExcelWorkbookBuffer = async ({
+  reportType,
+  reportTitle,
+  restaurantName,
+  generatedAt,
+  dateRangeLabel,
+  currency,
+  dataset,
+}) => {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Quickbite";
+  workbook.created = new Date(generatedAt || Date.now());
+  workbook.modified = new Date();
+
+  const worksheet = workbook.addWorksheet("Overview", {
+    views: [{ state: "frozen", ySplit: 4 }],
+  });
+  worksheet.columns = [
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+  ];
+
+  worksheet.mergeCells("A1:H1");
+  worksheet.mergeCells("A2:H2");
+  worksheet.mergeCells("A3:H3");
+  worksheet.mergeCells("A4:H4");
+  worksheet.getCell("A1").value = reportTitle;
+  worksheet.getCell("A2").value = `Restaurant: ${restaurantName}`;
+  worksheet.getCell("A3").value = `Report Period: ${dateRangeLabel}`;
+  worksheet.getCell("A4").value = `Generated On: ${formatDateTime(generatedAt)}`;
+
+  worksheet.getCell("A1").font = { name: "Arial", size: 20, bold: true, color: { argb: "FF0F172A" } };
+  ["A2", "A3", "A4"].forEach((reference) => {
+    worksheet.getCell(reference).font = { name: "Arial", size: 10, color: { argb: "FF334155" } };
+  });
+  ["A1", "A2", "A3", "A4"].forEach((reference) => {
+    worksheet.getCell(reference).alignment = { vertical: "middle", horizontal: "left" };
+  });
+
+  const headerFill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFEFF6FF" },
+  };
+  styleMergedRange(worksheet, 1, 4, 1, 8, {
+    fill: headerFill,
+    border: {
+      top: { style: "thin", color: { argb: "FFD6E4F0" } },
+      left: { style: "thin", color: { argb: "FFD6E4F0" } },
+      bottom: { style: "thin", color: { argb: "FFD6E4F0" } },
+      right: { style: "thin", color: { argb: "FFD6E4F0" } },
+    },
+  });
+
+  const sections = buildReportSections(reportType, dataset, currency);
+  let currentRow = addSummaryCardsToWorksheet(worksheet, sections.summaryCards, 6);
+
+  for (const chart of sections.charts) {
+    currentRow = await addChartToWorksheet(workbook, worksheet, chart, currentRow);
+  }
+
+  for (const tableSection of sections.tables) {
+    currentRow = addTableToWorksheet(worksheet, tableSection, currentRow);
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
 };
 
 const buildExcelMarkup = ({
@@ -663,13 +1180,14 @@ const buildPdfBuffer = ({
     const chunks = [];
     const isFinance = reportType === "finance";
 
+    registerPdfFonts(doc);
     doc.on("data", (chunk) => chunks.push(chunk));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
 
     doc.roundedRect(40, 40, doc.page.width - 80, 94, 18).fillAndStroke("#eff6ff", "#dbeafe");
-    doc.fillColor("#0f172a").font("Helvetica-Bold").fontSize(22).text(reportTitle, 56, 58);
-    doc.font("Helvetica").fontSize(10).fillColor("#334155");
+    doc.fillColor("#0f172a").font(getPdfFontName("bold")).fontSize(22).text(reportTitle, 56, 58);
+    doc.font(getPdfFontName("regular")).fontSize(10).fillColor("#334155");
     doc.text(`Restaurant: ${restaurantName}`, 56, 88);
     doc.text(`Report Period: ${dateRangeLabel}`, 56, 104);
     doc.text(`Generated On: ${formatDateTime(generatedAt)}`, 56, 120);
@@ -769,7 +1287,7 @@ const generateAnalyticsReport = async ({
     reportType === "finance" ? "finance-report" : "analytics-report"
   );
   const safeDate = sanitizeFileSegment(dateRangeLabel, "period");
-  const extension = format === "excel" ? "xls" : "pdf";
+  const extension = format === "excel" ? "xlsx" : "pdf";
   const filename = `${safeTitle}-${safeDate}.${extension}`;
   const filePath = path.join(
     REPORT_OUTPUT_DIR,
@@ -779,7 +1297,7 @@ const generateAnalyticsReport = async ({
   );
 
   if (format === "excel") {
-    const workbookMarkup = buildExcelMarkup({
+    const workbookBuffer = await buildExcelWorkbookBuffer({
       reportType,
       reportTitle,
       restaurantName,
@@ -788,14 +1306,14 @@ const generateAnalyticsReport = async ({
       currency,
       dataset,
     });
-    fs.writeFileSync(filePath, workbookMarkup, "utf8");
+    fs.writeFileSync(filePath, workbookBuffer);
     return {
       reportId: registerReportFile({
         tenantId,
         format,
         filePath,
         filename,
-        contentType: "application/vnd.ms-excel",
+        contentType: XLSX_CONTENT_TYPE,
       }),
       filename,
       format,

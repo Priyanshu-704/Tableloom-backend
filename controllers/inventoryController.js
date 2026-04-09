@@ -62,6 +62,51 @@ const readCsvField = (row = {}, keys = []) => {
   return "";
 };
 
+const parseInventoryNumber = (value, label) => {
+  const rawValue = String(value ?? "").trim();
+
+  if (!rawValue) {
+    return 0;
+  }
+
+  const parsedValue = Number(rawValue);
+
+  if (Number.isNaN(parsedValue)) {
+    throw new Error(`${label} must be a valid number`);
+  }
+
+  if (parsedValue < 0) {
+    throw new Error(`${label} cannot be negative`);
+  }
+
+  return parsedValue;
+};
+
+const formatBulkUploadError = (error) => {
+  if (!error) {
+    return "Unknown upload error";
+  }
+
+  if (error.code === 11000) {
+    if (error.keyPattern?.sku) {
+      return "SKU already exists for another ingredient";
+    }
+
+    if (error.keyPattern?.ingredientName) {
+      return "Ingredient name already exists";
+    }
+
+    return "Duplicate inventory record detected";
+  }
+
+  if (error.name === "ValidationError" && error.errors) {
+    const firstValidationError = Object.values(error.errors)[0];
+    return firstValidationError?.message || error.message || "Validation failed";
+  }
+
+  return error.message || "Unknown upload error";
+};
+
 const getRelationsForInventory = (inventoryItem) => {
   const relatedMenuItems = Array.isArray(inventoryItem?.relatedMenuItems)
     ? inventoryItem.relatedMenuItems
@@ -611,35 +656,42 @@ exports.bulkUploadInventory = async (req, res) => {
   try {
     const rows = await parseCsvBuffer(req.file.buffer);
     const stats = {
+      fileName: req.file.originalname || "inventory-upload.csv",
+      processedAt: new Date().toISOString(),
       total: rows.length,
       created: 0,
       updated: 0,
       failed: 0,
       errors: [],
+      results: [],
     };
     const affectedMenuItemIds = new Set();
 
     for (let index = 0; index < rows.length; index += 1) {
       const row = rows[index];
       const lineNumber = index + 2;
+      const ingredientNameValue = String(
+        readCsvField(row, ["ingredientName", "ingredient", "name"])
+      ).trim();
+      const skuValue = String(readCsvField(row, ["sku", "stockCode"]))
+        .trim()
+        .toUpperCase();
 
       try {
-        const ingredientName = String(
-          readCsvField(row, ["ingredientName", "ingredient", "name"])
-        ).trim();
-        const sku = String(readCsvField(row, ["sku", "stockCode"])).trim().toUpperCase();
+        const ingredientName = ingredientNameValue;
+        const sku = skuValue;
         const unit = normalizeInventoryUnit(readCsvField(row, ["unit"]));
-        const currentStock = Math.max(
-          Number(readCsvField(row, ["currentStock", "current_stock", "stock"]) || 0),
-          0
+        const currentStock = parseInventoryNumber(
+          readCsvField(row, ["currentStock", "current_stock", "stock"]),
+          "Current stock"
         );
-        const minimumStock = Math.max(
-          Number(readCsvField(row, ["minimumStock", "minimum_stock", "minThreshold"]) || 0),
-          0
+        const minimumStock = parseInventoryNumber(
+          readCsvField(row, ["minimumStock", "minimum_stock", "minThreshold"]),
+          "Minimum stock"
         );
-        const reorderQuantity = Math.max(
-          Number(readCsvField(row, ["reorderQuantity", "reorder_quantity", "reorder"]) || 0),
-          0
+        const reorderQuantity = parseInventoryNumber(
+          readCsvField(row, ["reorderQuantity", "reorder_quantity", "reorder"]),
+          "Reorder quantity"
         );
         const notes = String(readCsvField(row, ["notes", "note"])).trim();
         const isActiveValue = String(readCsvField(row, ["isActive", "active"])).trim().toLowerCase();
@@ -683,6 +735,13 @@ exports.bulkUploadInventory = async (req, res) => {
             affectedMenuItemIds.add(String(relation.menuItem))
           );
           stats.updated += 1;
+          stats.results.push({
+            line: lineNumber,
+            ingredientName,
+            sku,
+            status: "updated",
+            message: "Updated existing ingredient inventory",
+          });
         } else {
           const createdItem = await InventoryItem.create({
             ingredientName,
@@ -703,12 +762,27 @@ exports.bulkUploadInventory = async (req, res) => {
             affectedMenuItemIds.add(String(relation.menuItem))
           );
           stats.created += 1;
+          stats.results.push({
+            line: lineNumber,
+            ingredientName,
+            sku,
+            status: "created",
+            message: "Created new ingredient inventory",
+          });
         }
       } catch (error) {
+        const errorMessage = formatBulkUploadError(error);
         stats.failed += 1;
         stats.errors.push({
           line: lineNumber,
-          message: error.message,
+          message: errorMessage,
+        });
+        stats.results.push({
+          line: lineNumber,
+          ingredientName: ingredientNameValue,
+          sku: skuValue,
+          status: "failed",
+          message: errorMessage,
         });
       }
     }
