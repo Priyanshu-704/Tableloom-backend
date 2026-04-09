@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, hasPermission } = require("../middleware/auth");
 const {
   generateAnalyticsReportFile,
+  getReportDataset,
   downloadGeneratedReport,
 } = require("../controllers/reportController");
 
@@ -13,6 +14,7 @@ router.post(
   hasPermission("VIEW_STATISTICS"),
   generateAnalyticsReportFile
 );
+router.get("/dataset", hasPermission("VIEW_STATISTICS"), getReportDataset);
 router.get(
   "/download/:reportId",
   hasPermission("VIEW_STATISTICS"),

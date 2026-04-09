@@ -18,6 +18,25 @@ const normalizeReportType = (value = "analytics") => {
   return normalized === "finance" ? "finance" : "analytics";
 };
 
+const escapeRegExp = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const normalizeReportTitle = (reportTitle = "", reportType = "analytics") => {
+  const fallbackTitle = reportType === "finance" ? "Finance Report" : "Analytics Report";
+  const normalizedTitle = String(reportTitle || "").trim().replace(/\s+/g, " ");
+
+  if (!normalizedTitle) {
+    return fallbackTitle;
+  }
+
+  const duplicateSuffixPattern = new RegExp(
+    `^${escapeRegExp(fallbackTitle)}\\s+[0-9\\u00B9\\u00B2\\u00B3\\u2070-\\u2079]+$`,
+    "i"
+  );
+
+  return duplicateSuffixPattern.test(normalizedTitle) ? fallbackTitle : normalizedTitle;
+};
+
 const resolveDateRange = (dateRange = {}) => {
   const startDate = dateRange?.startDate ? new Date(dateRange.startDate) : null;
   const endDate = dateRange?.endDate ? new Date(dateRange.endDate) : null;
@@ -683,9 +702,7 @@ exports.generateAnalyticsReportFile = async (req, res) => {
       req.tenantId || req.user?.tenantId || "default"
     );
 
-    const resolvedTitle =
-      String(reportTitle || "").trim() ||
-      (normalizedReportType === "finance" ? "Finance Report" : "Analytics Report");
+    const resolvedTitle = normalizeReportTitle(reportTitle, normalizedReportType);
 
     const result = await generateAnalyticsReport({
       tenantId: req.tenantId || req.user?.tenantId || "default",
@@ -722,6 +739,34 @@ exports.generateAnalyticsReportFile = async (req, res) => {
       return sendError(res, 400, error.message);
     }
     return sendError(res, 500, "Failed to generate report", error);
+  }
+};
+
+exports.getReportDataset = async (req, res) => {
+  try {
+    const { reportType = "analytics", startDate, endDate } = req.query || {};
+    const normalizedReportType = normalizeReportType(reportType);
+    const { rangeStart, rangeEnd } = resolveDateRange({ startDate, endDate });
+    const dataset = await buildReportDataset(
+      normalizedReportType,
+      rangeStart,
+      rangeEnd,
+      req.tenantId || req.user?.tenantId || "default"
+    );
+
+    return sendSuccess(res, 200, null, dataset, {
+      reportType: normalizedReportType,
+      dateRange: {
+        startDate: rangeStart,
+        endDate: rangeEnd,
+      },
+    });
+  } catch (error) {
+    logger.error("Get report dataset failed:", error);
+    if (error.message === "Start date and end date are required") {
+      return sendError(res, 400, error.message);
+    }
+    return sendError(res, 500, "Failed to fetch report dataset", error);
   }
 };
 

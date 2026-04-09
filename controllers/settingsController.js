@@ -6,6 +6,58 @@ const delayMonitor = require("../utils/delayMonitor");
 const { buildTenantAssetUrl } = require("../utils/assetUrl");
 const { invalidateTenantTaxSettings } = require("../utils/taxCalculator");
 
+const formatFieldName = (field = "") =>
+  String(field)
+    .split(".")
+    .pop()
+    .replace(/([A-Z])/g, " $1")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
+
+const getSettingsUpdateErrorResponse = (error) => {
+  const validationMessages = Object.values(error?.errors || {})
+    .map((fieldError) => fieldError?.message)
+    .filter(Boolean);
+
+  if (error?.name === "ValidationError" && validationMessages.length > 0) {
+    return {
+      statusCode: 400,
+      message: validationMessages[0],
+      extra: {
+        details: validationMessages,
+      },
+    };
+  }
+
+  if (error?.name === "CastError") {
+    return {
+      statusCode: 400,
+      message: `${formatFieldName(error.path)} is invalid. Please provide a valid value.`,
+    };
+  }
+
+  if (error?.code === 11000) {
+    const duplicateField = Object.keys(error.keyPattern || error.keyValue || {})[0];
+    return {
+      statusCode: 409,
+      message: duplicateField
+        ? `${formatFieldName(duplicateField)} already exists. Please use a different value.`
+        : "A record with the same value already exists.",
+    };
+  }
+
+  if (typeof error?.statusCode === "number") {
+    return {
+      statusCode: error.statusCode,
+      message: error.message || "Failed to update settings",
+      extra: error.details ? { details: error.details } : {},
+    };
+  }
+
+  return null;
+};
+
 const deepMerge = (target = {}, source = {}) => {
   const output = { ...(target || {}) };
 
@@ -182,6 +234,18 @@ exports.updateSettings = async (req, res) => {
     );
   } catch (error) {
     logger.error("Update settings failed:", error);
+    const normalizedError = getSettingsUpdateErrorResponse(error);
+
+    if (normalizedError) {
+      return sendError(
+        res,
+        normalizedError.statusCode,
+        normalizedError.message,
+        error,
+        normalizedError.extra || {}
+      );
+    }
+
     return sendError(
       res,
       500,

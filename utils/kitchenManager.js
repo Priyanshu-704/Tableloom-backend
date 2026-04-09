@@ -235,7 +235,7 @@ exports.createKitchenOrder = async (orderId) => {
         orderData,
         stationAssignments
       );
-      logger.info("Kitchen order notification created ✅");
+      logger.info("Kitchen order notification created successfully");
     }
 
     return kitchenOrder;
@@ -545,7 +545,17 @@ exports.emitExpediterNotification = (kitchenOrder, item) => {
 };
 
 exports.calculateItemDelayStatus = (item) => {
-  if (!item.estimatedCompletion || !item.preparationTime) {
+  const preparationTime = Number(item?.preparationTime || 0);
+  const resolvedEstimatedCompletion = item?.estimatedCompletion
+    ? new Date(item.estimatedCompletion)
+    : item?.startTime && preparationTime > 0
+    ? new Date(new Date(item.startTime).getTime() + preparationTime * 60000)
+    : null;
+
+  if (
+    !resolvedEstimatedCompletion ||
+    Number.isNaN(resolvedEstimatedCompletion.getTime())
+  ) {
     return {
       status: "on_time",
       color: "#4CAF50",
@@ -555,12 +565,15 @@ exports.calculateItemDelayStatus = (item) => {
   }
 
   const now = new Date();
-  const estimatedCompletion = new Date(item.estimatedCompletion);
-  const delayMinutes = Math.floor((now - estimatedCompletion) / 60000);
+  const delayMinutes = Math.floor(
+    (now - resolvedEstimatedCompletion) / 60000
+  );
 
   const { delayThresholds } = require("../utils/statusColors");
 
-  const timeRemaining = Math.floor((estimatedCompletion - now) / 60000);
+  const timeRemaining = Math.floor(
+    (resolvedEstimatedCompletion - now) / 60000
+  );
 
   if (timeRemaining <= 0) {
     if (delayMinutes >= delayThresholds.critical_delay) {
@@ -662,6 +675,7 @@ exports.checkDelayedOrders = async () => {
           await notificationManager.createDelayedOrderNotification(
             {
               _id: order._id,
+              tenantId: order.tenantId,
               orderNumber: order.orderNumber,
               tableNumber: order.tableNumber,
               customerName: order.customerName,

@@ -48,8 +48,8 @@ const setupSwagger = (app, contextPath = "") => {
     res.send(swaggerSpec);
   });
 
-  logger.info(`📚 Swagger UI: ${contextPath}/docs`);
-  logger.info(`📄 Swagger JSON: ${contextPath}/docs.json`);
+  logger.info(`Swagger UI: ${contextPath}/docs`);
+  logger.info(`Swagger JSON: ${contextPath}/docs.json`);
 };
 
 module.exports = setupSwagger;

@@ -7,6 +7,7 @@ const Order = require("../models/Order");
 const Customer = require("../models/Customer");
 const Bill = require("../models/Bill");
 const KitchenOrder = require("../models/KitchenOrder");
+require("../models/Size");
 
 const getBaselineTime = (order = {}) =>
   order.preparationStartedAt ||

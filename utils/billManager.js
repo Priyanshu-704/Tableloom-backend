@@ -817,7 +817,7 @@ const createPaymentConfirmationEmailHtml = (bill, paymentData) => {
                 <p><strong>Transaction ID:</strong> ${paymentData.transactionId}</p>
                 <p><strong>Amount Paid:</strong> ${formatMoney(bill.totalAmount, bill.currency)}</p>
                 
-                <h3 style="color: #28a745;">Payment Status: CONFIRMED ✓</h3>
+                <h3 style="color: #28a745;">Payment Status: CONFIRMED</h3>
             </div>
             
             <div class="footer">

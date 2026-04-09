@@ -50,7 +50,7 @@ const createSuperAdminUser = async () => {
       forcePasswordChange: false,
     });
 
-    logger.info("✅ Super admin created successfully!");
+    logger.info("Super admin created successfully.");
     logger.info({
       id: superAdmin._id,
       name: superAdmin.name,
@@ -58,15 +58,15 @@ const createSuperAdminUser = async () => {
       role: superAdmin.role,
     });
 
-    logger.info("\n📋 Super Admin Login Credentials:");
+    logger.info("\nSuper Admin Login Credentials:");
     logger.info(`Email: ${DEFAULT_SUPER_ADMIN.email}`);
     logger.info(`Password: ${DEFAULT_SUPER_ADMIN.password}`);
-    logger.info("\n🔐 Login URL:");
+    logger.info("\nLogin URL:");
     logger.info("Frontend: /super-admin/login");
 
     return superAdmin;
   } catch (error) {
-    logger.error("❌ Error creating super admin user:", error);
+    logger.error("Error creating super admin user:", error);
 
     if (error.code === 11000) {
       logger.info("Duplicate key error - Super admin might already exist");
@@ -78,14 +78,14 @@ const createSuperAdminUser = async () => {
 
 const seedSuperAdmin = async () => {
   try {
-    logger.info("🚀 Starting super admin seed...");
+    logger.info("Starting super admin seed...");
     await connectDB();
     await createSuperAdminUser();
-    logger.info("✅ Super admin seed completed successfully!");
+    logger.info("Super admin seed completed successfully.");
     mongoose.connection.close();
-    logger.info("📦 Database connection closed.");
+    logger.info("Database connection closed.");
   } catch (error) {
-    logger.error("❌ Super admin seed failed:", error);
+    logger.error("Super admin seed failed:", error);
     process.exit(1);
   }
 };

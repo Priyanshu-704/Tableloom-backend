@@ -145,24 +145,41 @@ const buildFinanceSummaryCards = (dataset = {}, currency = "INR") => [
   },
 ];
 
-const buildFinanceDailyRevenueRows = (dataset = {}, currency = "INR") =>
-  (dataset?.dailyRevenue || []).map((row) => ({
-    label: row?.day || "Day",
+const FINANCE_CHART_COLORS = [
+  "#0f766e",
+  "#2563eb",
+  "#f97316",
+  "#dc2626",
+  "#7c3aed",
+  "#0891b2",
+];
+
+const buildFinancePaymentMethodRows = (dataset = {}, currency = "INR") =>
+  (dataset?.paymentMethods || []).map((row) => ({
+    label: String(row?.method || "unknown").replace(/_/g, " "),
     value: formatCurrency(row?.revenue || 0, currency),
     secondary: `${numberValue(row?.orders || 0).toLocaleString()} orders`,
     quantity: numberValue(row?.revenue || 0),
   }));
 
-const buildFinancePaymentMethodRows = (dataset = {}, currency = "INR") =>
-  (dataset?.paymentMethods || []).map((row) => ({
-    metric: String(row?.method || "unknown").replace(/_/g, " "),
-    value: `${formatCurrency(row?.revenue || 0, currency)} | ${numberValue(row?.orders || 0).toLocaleString()} orders`,
-  }));
-
 const buildFinanceOrderTypeRows = (dataset = {}, currency = "INR") =>
   (dataset?.orderTypes || []).map((row) => ({
-    metric: String(row?.orderType || "unknown").replace(/_/g, " "),
-    value: `${formatCurrency(row?.revenue || 0, currency)} | ${numberValue(row?.orders || 0).toLocaleString()} orders`,
+    label: String(row?.orderType || "unknown").replace(/_/g, " "),
+    value: formatCurrency(row?.revenue || 0, currency),
+    secondary: `${numberValue(row?.orders || 0).toLocaleString()} orders`,
+    quantity: numberValue(row?.revenue || 0),
+  }));
+
+const buildFinancePaymentMethodTableRows = (dataset = {}, currency = "INR") =>
+  buildFinancePaymentMethodRows(dataset, currency).map((row) => ({
+    metric: row.label,
+    value: row.secondary ? `${row.value} | ${row.secondary}` : row.value,
+  }));
+
+const buildFinanceOrderTypeTableRows = (dataset = {}, currency = "INR") =>
+  buildFinanceOrderTypeRows(dataset, currency).map((row) => ({
+    metric: row.label,
+    value: row.secondary ? `${row.value} | ${row.secondary}` : row.value,
   }));
 
 const buildFinanceBreakdownRows = (dataset = {}, currency = "INR") => [
@@ -269,6 +286,155 @@ const renderBarChart = (doc, title, rows = [], currentY, options = {}) => {
   return y + 4;
 };
 
+const polarToCartesian = (centerX, centerY, radius, angleInRadians) => ({
+  x: centerX + radius * Math.cos(angleInRadians),
+  y: centerY + radius * Math.sin(angleInRadians),
+});
+
+const describeSvgPiePath = (centerX, centerY, radius, startAngle, endAngle) => {
+  const start = polarToCartesian(centerX, centerY, radius, endAngle);
+  const end = polarToCartesian(centerX, centerY, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle <= Math.PI ? 0 : 1;
+
+  return [
+    `M ${centerX} ${centerY}`,
+    `L ${start.x} ${start.y}`,
+    `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+    "Z",
+  ].join(" ");
+};
+
+const buildSvgPieChartMarkup = (title, rows = [], colors = FINANCE_CHART_COLORS) => {
+  if (!rows.length) {
+    return `
+      <div class="pie-panel">
+        <div class="pie-title">${escapeHtml(title)}</div>
+        <p>No chart data found for the selected period.</p>
+      </div>
+    `;
+  }
+
+  const total = rows.reduce((sum, row) => sum + numberValue(row.quantity), 0);
+  let currentAngle = -Math.PI / 2;
+  const slices = rows
+    .filter((row) => numberValue(row.quantity) > 0)
+    .map((row, index) => {
+      const value = numberValue(row.quantity);
+      const sweep = total > 0 ? (value / total) * Math.PI * 2 : 0;
+      const path = describeSvgPiePath(90, 90, 72, currentAngle, currentAngle + sweep);
+      currentAngle += sweep;
+      return `<path d="${path}" fill="${colors[index % colors.length]}" />`;
+    })
+    .join("");
+
+  return `
+    <div class="pie-panel">
+      <div class="pie-title">${escapeHtml(title)}</div>
+      <div class="pie-layout">
+        <svg width="180" height="180" viewBox="0 0 180 180" role="img" aria-label="${escapeHtml(title)}">
+          ${slices}
+          <circle cx="90" cy="90" r="40" fill="#ffffff" stroke="#e2e8f0" />
+        </svg>
+        <div class="pie-legend">
+          ${rows
+            .map(
+              (row, index) => `
+                <div class="pie-legend-row">
+                  <span class="pie-swatch" style="background:${colors[index % colors.length]}"></span>
+                  <span class="pie-label">${escapeHtml(row.label)}</span>
+                  <span class="pie-value">${escapeHtml(
+                    row.secondary ? `${row.value} | ${row.secondary}` : row.value
+                  )}</span>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const renderPieChart = (doc, title, rows = [], currentY, options = {}) => {
+  let y = renderSectionTitle(doc, title, currentY);
+
+  if (!rows.length) {
+    doc
+      .font("Helvetica")
+      .fontSize(10)
+      .fillColor("#64748b")
+      .text("No data available", doc.page.margins.left, y);
+    return y + 20;
+  }
+
+  y = ensurePageSpace(doc, y, 190);
+
+  const colors = options.colors || FINANCE_CHART_COLORS;
+  const centerX = doc.page.margins.left + 86;
+  const centerY = y + 66;
+  const radius = 52;
+  const total = rows.reduce((sum, row) => sum + numberValue(row.quantity), 0);
+  let startAngle = -Math.PI / 2;
+
+  rows.forEach((row, index) => {
+    const value = numberValue(row.quantity);
+    if (value <= 0 || total <= 0) {
+      return;
+    }
+
+    const sweep = (value / total) * Math.PI * 2;
+    doc.save();
+    doc.moveTo(centerX, centerY);
+    doc.fillColor(colors[index % colors.length]);
+    doc.arc(centerX, centerY, radius, startAngle, startAngle + sweep);
+    doc.lineTo(centerX, centerY);
+    doc.fill();
+    doc.restore();
+    startAngle += sweep;
+  });
+
+  doc.circle(centerX, centerY, radius * 0.58).fillAndStroke("#ffffff", "#e2e8f0");
+  doc
+    .fillColor("#0f172a")
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text(String(rows.length), centerX - 12, centerY - 7, {
+      width: 24,
+      align: "center",
+    });
+  doc
+    .fillColor("#64748b")
+    .font("Helvetica")
+    .fontSize(8)
+    .text("segments", centerX - 22, centerY + 8, {
+      width: 44,
+      align: "center",
+    });
+
+  let legendY = y;
+  const legendX = doc.page.margins.left + 178;
+  rows.forEach((row, index) => {
+    doc.circle(legendX, legendY + 7, 4).fill(colors[index % colors.length]);
+    doc
+      .fillColor("#111827")
+      .font("Helvetica-Bold")
+      .fontSize(10)
+      .text(row.label, legendX + 12, legendY + 1, {
+        width: 120,
+      });
+    doc
+      .fillColor("#475569")
+      .font("Helvetica")
+      .fontSize(9)
+      .text(row.secondary ? `${row.value} | ${row.secondary}` : row.value, legendX + 138, legendY + 1, {
+        width: 150,
+      });
+    legendY += 20;
+  });
+
+  return Math.max(y + 162, legendY) + 8;
+};
+
 const renderTwoColumnTable = (doc, title, rows = [], currentY) => {
   let y = renderSectionTitle(doc, title, currentY);
   const tableX = doc.page.margins.left;
@@ -316,16 +482,19 @@ const buildExcelMarkup = ({
     ? buildFinanceSummaryCards(dataset, currency)
     : buildAnalyticsSummaryCards(dataset, currency);
   const chartRows = isFinance
-    ? buildFinanceDailyRevenueRows(dataset, currency)
-    : buildAnalyticsPopularItemsRows(dataset, currency);
-  const firstTableRows = isFinance
     ? buildFinancePaymentMethodRows(dataset, currency)
+    : buildAnalyticsPopularItemsRows(dataset, currency);
+  const secondaryChartRows = isFinance
+    ? buildFinanceOrderTypeRows(dataset, currency)
+    : [];
+  const firstTableRows = isFinance
+    ? buildFinancePaymentMethodTableRows(dataset, currency)
     : buildAnalyticsOrderStatusRows(dataset).map((row) => ({
         metric: row.label,
         value: row.value.toLocaleString(),
       }));
   const secondTableRows = isFinance
-    ? buildFinanceOrderTypeRows(dataset, currency)
+    ? buildFinanceOrderTypeTableRows(dataset, currency)
     : buildAnalyticsOperationsRows(dataset);
   const thirdTableRows = isFinance
     ? buildFinanceBreakdownRows(dataset, currency)
@@ -334,7 +503,7 @@ const buildExcelMarkup = ({
         value: row.averageTime,
       }));
   const maxChartValue = Math.max(...chartRows.map((row) => row.quantity), 1);
-  const chartTitle = isFinance ? "Daily Revenue Chart" : "Popular Items Chart";
+  const chartTitle = isFinance ? "Revenue Mix" : "Popular Items Chart";
   const firstTableTitle = isFinance ? "Payment Method Revenue" : "Order Status Summary";
   const secondTableTitle = isFinance ? "Order Type Revenue" : "Operations Summary";
   const thirdTableTitle = isFinance ? "Revenue Breakdown" : "Waiter Call Status";
@@ -349,6 +518,7 @@ const buildExcelMarkup = ({
         <style>
           body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
           .header { border: 1px solid #dbeafe; border-radius: 18px; padding: 24px; background: linear-gradient(135deg, #eff6ff, #ffffff); }
+          .report-title { margin: 0 0 12px; font-size: 24px; font-weight: 700; color: #0f172a; }
           .cards { width: 100%; margin-top: 20px; border-collapse: separate; border-spacing: 12px 0; }
           .card { border: 1px solid #e5e7eb; border-radius: 16px; background: #f8fafc; padding: 16px; }
           .card-label { color: #64748b; font-size: 12px; }
@@ -362,11 +532,20 @@ const buildExcelMarkup = ({
           .chart-track { display: inline-block; width: 280px; height: 12px; background: #e2e8f0; border-radius: 999px; overflow: hidden; vertical-align: middle; }
           .chart-bar { display: inline-block; height: 12px; background: #0f766e; border-radius: 999px; }
           .chart-value { display: inline-block; width: 180px; margin-left: 12px; color: #475569; }
+          .pie-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 12px; }
+          .pie-panel { border: 1px solid #dbe4f0; border-radius: 18px; padding: 14px; background: #f8fafc; }
+          .pie-title { font-weight: bold; color: #0f172a; margin-bottom: 10px; }
+          .pie-layout { display: flex; gap: 16px; align-items: center; }
+          .pie-legend { display: flex; flex-direction: column; gap: 8px; }
+          .pie-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #334155; }
+          .pie-swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
+          .pie-label { min-width: 90px; color: #0f172a; }
+          .pie-value { color: #475569; }
         </style>
       </head>
       <body>
         <div class="header">
-          <h1>${escapeHtml(reportTitle)}</h1>
+          <div class="report-title">${escapeHtml(reportTitle)}</div>
           <p><strong>Restaurant:</strong> ${escapeHtml(restaurantName)}</p>
           <p><strong>Report Period:</strong> ${escapeHtml(dateRangeLabel)}</p>
           <p><strong>Generated On:</strong> ${escapeHtml(formatDateTime(generatedAt))}</p>
@@ -388,20 +567,29 @@ const buildExcelMarkup = ({
         </table>
 
         <div class="section-title">${escapeHtml(chartTitle)}</div>
-        ${chartRows.length
-          ? chartRows
-              .map((row) => {
-                const width = Math.max(8, Math.round((row.quantity / maxChartValue) * 100));
-                return `
-                  <div class="chart-row">
-                    <span class="chart-label">${escapeHtml(row.label)}</span>
-                    <span class="chart-track"><span class="chart-bar" style="width:${width}%"></span></span>
-                    <span class="chart-value">${escapeHtml(row.secondary ? `${row.value} | ${row.secondary}` : row.value)}</span>
-                  </div>
-                `;
-              })
-              .join("")
-          : `<p>No chart data found for the selected period.</p>`}
+        ${
+          isFinance
+            ? `
+              <div class="pie-grid">
+                ${buildSvgPieChartMarkup("Payment Methods", chartRows)}
+                ${buildSvgPieChartMarkup("Order Types", secondaryChartRows)}
+              </div>
+            `
+            : chartRows.length
+            ? chartRows
+                .map((row) => {
+                  const width = Math.max(8, Math.round((row.quantity / maxChartValue) * 100));
+                  return `
+                    <div class="chart-row">
+                      <span class="chart-label">${escapeHtml(row.label)}</span>
+                      <span class="chart-track"><span class="chart-bar" style="width:${width}%"></span></span>
+                      <span class="chart-value">${escapeHtml(row.secondary ? `${row.value} | ${row.secondary}` : row.value)}</span>
+                    </div>
+                  `;
+                })
+                .join("")
+            : `<p>No chart data found for the selected period.</p>`
+        }
 
         <div class="section-title">${escapeHtml(firstTableTitle)}</div>
         <table class="report">
@@ -494,12 +682,14 @@ const buildPdfBuffer = ({
     );
 
     if (isFinance) {
-      y = renderBarChart(doc, "Daily Revenue", buildFinanceDailyRevenueRows(dataset, currency), y, {
-        barColor: "#0f766e",
-        chartWidth: 200,
+      y = renderPieChart(doc, "Payment Methods", buildFinancePaymentMethodRows(dataset, currency), y, {
+        colors: FINANCE_CHART_COLORS,
       });
-      y = renderTwoColumnTable(doc, "Payment Method Revenue", buildFinancePaymentMethodRows(dataset, currency), y);
-      y = renderTwoColumnTable(doc, "Order Type Revenue", buildFinanceOrderTypeRows(dataset, currency), y);
+      y = renderPieChart(doc, "Order Types", buildFinanceOrderTypeRows(dataset, currency), y, {
+        colors: FINANCE_CHART_COLORS,
+      });
+      y = renderTwoColumnTable(doc, "Payment Method Revenue", buildFinancePaymentMethodTableRows(dataset, currency), y);
+      y = renderTwoColumnTable(doc, "Order Type Revenue", buildFinanceOrderTypeTableRows(dataset, currency), y);
       renderTwoColumnTable(doc, "Revenue Breakdown", buildFinanceBreakdownRows(dataset, currency), y);
     } else {
       y = renderBarChart(doc, "Popular Items", buildAnalyticsPopularItemsRows(dataset, currency), y, {

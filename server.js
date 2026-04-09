@@ -207,8 +207,8 @@ const bootstrapServices = async () => {
 
 const startServer = () => {
   server.listen(PORT, () => {
-    logger.info(`📚 Swagger UI: http://localhost:${PORT}${API_PREFIX}/docs`);
-    logger.info(`⚡ WebSocket: ws://localhost:${PORT}`);
+    logger.info(`Swagger UI: http://localhost:${PORT}${API_PREFIX}/docs`);
+    logger.info(`WebSocket: ws://localhost:${PORT}`);
     bootstrapServices().catch((error) => {
       logger.error("Failed to bootstrap background services:", error.message);
     });

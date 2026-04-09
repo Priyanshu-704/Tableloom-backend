@@ -1,9 +1,15 @@
 const { logger } = require("./logger.js");
+const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
+const { getCurrentTenantId } = require("./tenantContext");
 
 class NotificationManager {
+  resolveTenantId(data = {}) {
+    return data.tenantId || data.metadata?.tenantId || getCurrentTenantId() || null;
+  }
+
   normalizeActions(actions = []) {
     if (!Array.isArray(actions)) {
       return [];
@@ -90,6 +96,7 @@ class NotificationManager {
   async createNotification(data) {
     try {
       const notification = await Notification.create({
+        tenantId: this.resolveTenantId(data),
         title: data.title,
         message: data.message,
         type: data.type || "system_alert",
@@ -260,7 +267,8 @@ class NotificationManager {
     const priority = delayMinutes > 15 ? "urgent" : "high";
 
     return this.createNotification({
-      title: `⚠️ Order Delay - #${orderData.orderNumber}`,
+      tenantId: orderData.tenantId || null,
+      title: `Order Delay - #${orderData.orderNumber}`,
       message: `Order #${orderData.orderNumber} is delayed by ${delayMinutes} minutes`,
       type: "order_delayed",
       priority: priority,
@@ -285,6 +293,7 @@ class NotificationManager {
         },
       ],
       metadata: {
+        tenantId: orderData.tenantId || null,
         orderNumber: orderData.orderNumber,
         tableNumber: orderData.tableNumber,
         delayMinutes: delayMinutes,
@@ -378,7 +387,7 @@ class NotificationManager {
     );
 
     return this.createNotification({
-      title: `⏰ Upcoming Reservation - Table ${reservationData.tableNumber}`,
+      title: `Upcoming Reservation - Table ${reservationData.tableNumber}`,
       message: `Reservation for ${reservationData.customerName} in ${minutesUntil} minutes`,
       type: "reservation_alert",
       priority: minutesUntil <= 15 ? "urgent" : "high",
@@ -416,7 +425,7 @@ class NotificationManager {
   // Create shift change notification
   async createShiftChangeNotification(shiftData) {
     return this.createNotification({
-      title: `🔄 Shift ${shiftData.type === "start" ? "Starting" : "Ending"}`,
+      title: `Shift ${shiftData.type === "start" ? "Starting" : "Ending"}`,
       message: `Your ${shiftData.shiftName} shift ${
         shiftData.type === "start" ? "starts" : "ends"
       } in 15 minutes`,
@@ -799,9 +808,10 @@ class NotificationManager {
       const user = await User.findById(userId);
       if (!user) throw new Error("User not found");
 
+      const notificationUserId = new mongoose.Types.ObjectId(String(userId));
       const dateFilter = this.getDateFilter(period);
       const baseQuery = {
-        ...this.buildRecipientQuery(userId, user.role),
+        ...this.buildRecipientQuery(notificationUserId, user.role),
         createdAt: dateFilter,
       };
 
@@ -816,7 +826,7 @@ class NotificationManager {
                   count: { $sum: 1 },
                   unread: {
                     $sum: {
-                      $cond: [{ $in: [userId, "$readBy.user"] }, 0, 1],
+                      $cond: [{ $in: [notificationUserId, "$readBy.user"] }, 0, 1],
                     },
                   },
                 },
@@ -842,7 +852,7 @@ class NotificationManager {
             unreadCount: [
               {
                 $match: {
-                  "readBy.user": { $ne: userId },
+                  "readBy.user": { $ne: notificationUserId },
                 },
               },
               { $count: "count" },

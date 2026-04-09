@@ -26,7 +26,7 @@ const createAdminUser = async () => {
     });
 
     if (existingAdmin) {
-      logger.info('✅ Admin user already exists:');
+      logger.info('Admin user already exists:');
       logger.info({
         id: existingAdmin._id,
         name: existingAdmin.name,
@@ -45,7 +45,7 @@ const createAdminUser = async () => {
       isActive: true
     });
 
-    logger.info('✅ Admin user created successfully!');
+    logger.info('Admin user created successfully.');
     logger.info({
       id: adminUser._id,
       name: adminUser.name,
@@ -54,14 +54,14 @@ const createAdminUser = async () => {
       password: 'AdminTest123@$' // Show the plain password for initial login
     });
 
-    logger.info('\n📋 Login Credentials:');
+    logger.info('\nLogin Credentials:');
     logger.info('Email: admin2@restaurant.com');
     logger.info('Password: AdminTest123@$');
-    logger.info('\n⚠️  Please change the password after first login!');
+    logger.info('\nPlease change the password after first login.');
 
     return adminUser;
   } catch (error) {
-    logger.error('❌ Error creating admin user:', error);
+    logger.error('Error creating admin user:', error);
     
     // More detailed error information
     if (error.code === 11000) {
@@ -74,7 +74,7 @@ const createAdminUser = async () => {
 
 const seedAdmin = async () => {
   try {
-    logger.info('🚀 Starting admin seed...');
+    logger.info('Starting admin seed...');
     
     // Connect to database
     await connectDB();
@@ -82,8 +82,8 @@ const seedAdmin = async () => {
     // Create admin user
     await createAdminUser();
     
-    logger.info('✅ Admin seed completed successfully!');
-    logger.info('\n🎯 You can now:');
+    logger.info('Admin seed completed successfully.');
+    logger.info('\nYou can now:');
     logger.info('1. Login with admin credentials');
     logger.info('2. Create other staff members');
     logger.info('3. Set up tables and menu items');
@@ -91,10 +91,10 @@ const seedAdmin = async () => {
     
     // Close connection
     mongoose.connection.close();
-    logger.info('📦 Database connection closed.');
+    logger.info('Database connection closed.');
     
   } catch (error) {
-    logger.error('❌ Seed failed:', error);
+    logger.error('Seed failed:', error);
     process.exit(1);
   }
 };
