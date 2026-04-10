@@ -6,7 +6,8 @@ const {
   getTenants,
   getTenantOverview,
   updateTenantStatus,
-  verifyTenant
+  verifyTenant,
+  rejectTenant
 } = require("../controllers/tenantController");
 const {
   protect,
@@ -18,5 +19,6 @@ router.get("/", getTenants);
 router.post("/", createTenant);
 router.get("/:id/overview", getTenantOverview);
 router.patch("/:id/verify", verifyTenant);
+router.patch("/:id/reject", rejectTenant);
 router.patch("/:id/status", updateTenantStatus);
 module.exports = router;

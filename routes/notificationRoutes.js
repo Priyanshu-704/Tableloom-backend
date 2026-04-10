@@ -19,11 +19,21 @@ const {
   protect,
   hasPermission
 } = require("../middleware/auth");
-router.get("/session/:sessionId", getSessionNotifications);
-router.put("/session/:sessionId/mark-all-read", markAllSessionAsRead);
-router.put("/session/:sessionId/clear-all", clearAllSessionNotifications);
-router.put("/session/:sessionId/:id/read", markSessionAsRead);
+const {
+  requireTenantScope
+} = require("../middleware/tenant");
+const ensureNotificationScope = (req, res, next) => {
+  if (String(req.user?.role || "").toLowerCase() === "super_admin") {
+    return next();
+  }
+  return requireTenantScope(req, res, next);
+};
+router.get("/session/:sessionId", requireTenantScope, getSessionNotifications);
+router.put("/session/:sessionId/mark-all-read", requireTenantScope, markAllSessionAsRead);
+router.put("/session/:sessionId/clear-all", requireTenantScope, clearAllSessionNotifications);
+router.put("/session/:sessionId/:id/read", requireTenantScope, markSessionAsRead);
 router.use(protect);
+router.use(ensureNotificationScope);
 router.get("/", hasPermission("NOTIFICATION_VIEW"), getNotifications);
 router.get("/stats", hasPermission("NOTIFICATION_VIEW"), getNotificationStats);
 router.put("/mark-all-read", hasPermission("NOTIFICATION_VIEW"), markAllAsRead);

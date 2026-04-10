@@ -16,7 +16,9 @@ const {
 } = require("../utils/logger.js");
 const notificationManager = require("../utils/notificationManager");
 const {
-  sendStaffCredentials
+  sendStaffCredentials,
+  sendTenantRejectionEmail,
+  buildTenantAdminLoginUrl
 } = require("../utils/emailService");
 const {
   hydrateUserPermissions
@@ -131,7 +133,12 @@ const provisionTenantAdmin = async ({
   };
   await tenant.save();
   await ensureAppSettings(tenant._id, tenant.name, adminEmail, updatedBy);
-  const emailSent = await sendStaffCredentials(adminUser.email, adminUser.name, tempPassword, "admin");
+  const emailSent = await sendStaffCredentials(adminUser.email, adminUser.name, tempPassword, "admin", {
+    loginUrl: buildTenantAdminLoginUrl(tenant),
+    subject: `Your Admin Account Credentials - ${tenant.name}`,
+    heading: `${tenant.name} admin access is ready`,
+    intro: `Your admin account for ${tenant.name} has been created with the following details:`
+  });
   return {
     adminUser,
     tempPassword,
@@ -237,7 +244,7 @@ const getNormalizedTenantPayload = (payload = {}, tenant = null) => {
   };
 };
 const createSuperAdminTenantRegistrationNotification = tenant => notificationManager.createNotification({
-  tenantId: tenant?._id || null,
+  tenantId: null,
   title: "New Tenant Registration",
   message: `${tenant?.name || "A restaurant"} registered and is waiting for approval.`,
   type: "system_alert",
@@ -566,7 +573,7 @@ exports.verifyTenant = async (req, res) => {
   const {
     adminUser,
     tempPassword,
-    emailSent
+    emailSent: credentialsEmailSent
   } = await provisionTenantAdmin({
     tenant,
     adminName,
@@ -592,7 +599,44 @@ exports.verifyTenant = async (req, res) => {
   return sendSuccess(res, 200, "Tenant verified successfully", {
     tenant: toTenantListItem(tenant.toObject ? tenant.toObject() : tenant),
     admin: pickFields(adminUser, ["_id", "name", "email", "role", "forcePasswordChange"]),
-    credentials: toTenantCredentials(adminUser, tempPassword, emailSent)
+    credentials: toTenantCredentials(adminUser, tempPassword, credentialsEmailSent)
+  });
+};
+exports.rejectTenant = async (req, res) => {
+  const {
+    reason = ""
+  } = req.body || {};
+  const tenant = await Tenant.findById(req.params.id).populate("adminUser", "name email role isActive");
+  if (!tenant) {
+    return sendError(res, 404, "Tenant not found");
+  }
+  const isPending = tenant.onboarding?.verificationStatus === "pending" || tenant.status === "pending";
+  if (!isPending) {
+    return sendError(res, 400, "Only pending tenants can be rejected");
+  }
+  if (tenant.adminUser) {
+    return sendError(res, 400, "Verified tenants cannot be rejected");
+  }
+  const adminEmail = tenant.requestedAdmin?.email || tenant.contact?.email;
+  tenant.status = "cancelled";
+  tenant.onboarding = {
+    ...tenant.onboarding,
+    verificationStatus: "rejected",
+    verificationNotes: String(reason || "").trim(),
+    verifiedAt: null,
+    verifiedBy: req.user?._id || null
+  };
+  tenant.updatedBy = req.user?._id || null;
+  await tenant.save();
+  const emailSent = adminEmail ? await sendTenantRejectionEmail({
+    tenant,
+    adminName: tenant.requestedAdmin?.name || tenant.name,
+    adminEmail,
+    reason
+  }) : false;
+  return sendSuccess(res, 200, "Tenant rejected successfully", {
+    tenant: toTenantListItem(tenant.toObject ? tenant.toObject() : tenant),
+    emailSent
   });
 };
 exports.updateTenantStatus = async (req, res) => {

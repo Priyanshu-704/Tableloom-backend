@@ -171,7 +171,9 @@ const notificationSchema = new mongoose.Schema({
     virtuals: true
   }
 });
-notificationSchema.plugin(tenantScoped);
+notificationSchema.plugin(tenantScoped, {
+  required: false
+});
 notificationSchema.index({
   recipients: 1,
   status: 1,

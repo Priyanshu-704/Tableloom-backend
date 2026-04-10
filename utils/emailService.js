@@ -17,21 +17,36 @@ const transporter = nodemailer.createTransport({
     rejectUnauthorized: false
   }
 });
-const sendStaffCredentials = async (email, name, password, role) => {
+const normalizeBaseUrl = (value = "") => String(value || "").trim().replace(/\/+$/, "");
+const buildTenantAdminLoginUrl = (tenant = {}) => {
+  const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const tenantSlug = String(tenant?.slug || "").trim().toLowerCase();
+  const tenantKey = String(tenant?.key || "").trim().toLowerCase();
+  if (!baseUrl || !tenantSlug || !tenantKey) {
+    return baseUrl || null;
+  }
+  return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/login`;
+};
+const sendStaffCredentials = async (email, name, password, role, options = {}) => {
+  const loginUrl = String(options?.loginUrl || process.env.FRONTEND_URL || "").trim();
+  const subject = String(options?.subject || "Your Staff Account Credentials - QR Order System").trim();
+  const heading = String(options?.heading || "Welcome to QR Order System!").trim();
+  const intro = String(options?.intro || "Your staff account has been created with the following details:").trim();
   const mailOptions = {
     from: process.env.EMAIL_FROM,
     to: email,
-    subject: "Your Staff Account Credentials - QR Order System",
+    subject,
     html: `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #333;">Welcome to QR Order System!</h2>
+        <h2 style="color: #333;">${heading}</h2>
         <p>Hello ${name},</p>
-        <p>Your staff account has been created with the following details:</p>
+        <p>${intro}</p>
         
         <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
           <p><strong>Email:</strong> ${email}</p>
           <p><strong>Password:</strong> <code style="background: #e0e0e0; padding: 5px 10px; border-radius: 3px;">${password}</code></p>
           <p><strong>Role:</strong> ${role}</p>
+          ${loginUrl ? `<p><strong>Admin Panel URL:</strong> <a href="${loginUrl}">${loginUrl}</a></p>` : ""}
         </div>
         
         <p><strong>Important Security Notice:</strong></p>
@@ -41,7 +56,7 @@ const sendStaffCredentials = async (email, name, password, role) => {
           <li>Keep your credentials secure and do not share them</li>
         </ul>
         
-        <p>You can access the system at: ${process.env.FRONTEND_URL}</p>
+        ${loginUrl ? `<p>You can access the system at: <a href="${loginUrl}">${loginUrl}</a></p>` : ""}
         
         <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
           <p style="color: #666; font-size: 12px;">
@@ -97,7 +112,52 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     return false;
   }
 };
+const sendTenantRejectionEmail = async ({
+  tenant,
+  adminName,
+  adminEmail,
+  reason = ""
+} = {}) => {
+  const supportUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const normalizedReason = String(reason || "").trim();
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to: adminEmail,
+    subject: `Tenant Registration Update - ${tenant?.name || "Your workspace"}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Tenant registration was not approved</h2>
+        <p>Hello ${adminName || tenant?.requestedAdmin?.name || tenant?.name || "there"},</p>
+        <p>We reviewed the registration request for <strong>${tenant?.name || "your restaurant workspace"}</strong>, and it was not approved at this time.</p>
+
+        <div style="background: #fdf2f2; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #fecaca;">
+          <p><strong>Restaurant:</strong> ${tenant?.name || "-"}</p>
+          <p><strong>Requested admin email:</strong> ${adminEmail || tenant?.requestedAdmin?.email || tenant?.contact?.email || "-"}</p>
+          ${normalizedReason ? `<p><strong>Reason:</strong> ${normalizedReason}</p>` : ""}
+        </div>
+
+        <p>If you think this needs another review, please contact the platform support team${supportUrl ? ` from ${supportUrl}` : ""}.</p>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+          <p style="color: #666; font-size: 12px;">
+            This message was sent automatically by QR Order System.
+          </p>
+        </div>
+      </div>
+    `
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    logger.info(`Tenant rejection email sent to ${adminEmail}`);
+    return true;
+  } catch (error) {
+    logger.error("Tenant rejection email failed:", error);
+    return false;
+  }
+};
 module.exports = {
   sendStaffCredentials,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
+  sendTenantRejectionEmail,
+  buildTenantAdminLoginUrl
 };

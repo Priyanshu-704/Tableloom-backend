@@ -52,7 +52,10 @@ class NotificationManager {
     };
   }
   resolveTenantId(data = {}) {
-    return data.tenantId || data.metadata?.tenantId || getCurrentTenantId() || null;
+    if (Object.prototype.hasOwnProperty.call(data, "tenantId")) {
+      return data.tenantId ?? null;
+    }
+    return data.metadata?.tenantId || getCurrentTenantId() || null;
   }
   normalizeActions(actions = []) {
     if (!Array.isArray(actions)) {
@@ -108,6 +111,12 @@ class NotificationManager {
       "hiddenForSessions.sessionId": {
         $ne: sessionId
       }
+    };
+  }
+  buildUserNotificationActionQuery(notificationId, userId, role) {
+    return {
+      _id: notificationId,
+      ...this.buildRecipientQuery(userId, role)
     };
   }
   decorateNotificationForUser(notification, userId) {
@@ -529,7 +538,19 @@ class NotificationManager {
       if (!user) {
         throw new Error("User not found");
       }
-      const notification = await Notification.markAsRead(notificationId, userId);
+      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
+        $addToSet: {
+          readBy: {
+            user: userId,
+            readAt: Date.now()
+          }
+        },
+        $set: {
+          status: "read"
+        }
+      }, {
+        new: true
+      });
       if (!notification) {
         throw new Error("Notification not found");
       }
@@ -554,7 +575,23 @@ class NotificationManager {
   }
   async markAsAcknowledged(notificationId, userId) {
     try {
-      const notification = await Notification.markAsAcknowledged(notificationId, userId);
+      const user = await User.findById(userId).select("role");
+      if (!user) {
+        throw new Error("User not found");
+      }
+      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
+        $addToSet: {
+          acknowledgedBy: {
+            user: userId,
+            acknowledgedAt: Date.now()
+          }
+        },
+        $set: {
+          status: "acknowledged"
+        }
+      }, {
+        new: true
+      });
       if (!notification) {
         throw new Error("Notification not found");
       }
@@ -593,7 +630,11 @@ class NotificationManager {
   }
   async dismissNotification(notificationId, userId) {
     try {
-      const notification = await Notification.findByIdAndUpdate(notificationId, {
+      const user = await User.findById(userId).select("role");
+      if (!user) {
+        throw new Error("User not found");
+      }
+      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
         $push: {
           hiddenFor: {
             user: userId,

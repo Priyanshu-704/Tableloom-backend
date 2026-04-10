@@ -21,7 +21,7 @@ router.use("/kitchen", requireTenantScope, enforceSuperAdminTenantReadOnly, requ
 router.use("/kitchen-stations", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./kitchenStationRoutes"));
 router.use("/images", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./imageRoutes"));
 router.use("/bills", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./billRoutes"));
-router.use("/notifications", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./notificationRoutes"));
+router.use("/notifications", enforceSuperAdminTenantReadOnly, require("./notificationRoutes"));
 router.use("/push-notifications", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./pushNotificationRoutes"));
 router.use("/settings", require("./settingsRoutes"));
 router.use("/dashboard", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./dashboardRoutes"));

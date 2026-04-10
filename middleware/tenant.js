@@ -81,7 +81,7 @@ exports.requireTenantScope = exports.requireTenant;
 exports.enforceSuperAdminTenantReadOnly = (req, res, next) => {
   const normalizedRole = String(req.user?.role || "").toLowerCase();
   const normalizedMethod = String(req.method || "").toUpperCase();
-  if (SUPER_ADMIN_MONITORING_ROLES.has(normalizedRole) && !SUPER_ADMIN_SAFE_METHODS.has(normalizedMethod)) {
+  if (req.tenant && SUPER_ADMIN_MONITORING_ROLES.has(normalizedRole) && !SUPER_ADMIN_SAFE_METHODS.has(normalizedMethod)) {
     return res.status(403).json({
       success: false,
       message: "Super admin monitoring mode is read-only"

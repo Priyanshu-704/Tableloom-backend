@@ -78,7 +78,7 @@ exports.createSupportRequest = async (req, res) => {
     select: "name slug key status"
   }]);
   notificationManager.createNotification({
-    tenantId,
+    tenantId: null,
     title: "New Admin Request",
     message: `${request.tenantId?.name || "A tenant"} sent a new admin request: ${request.subject}`,
     type: "system_alert",
