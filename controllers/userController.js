@@ -349,11 +349,12 @@ exports.getAllStaff = async (req, res) => {
       page = 1,
       limit = 20
     } = req.query;
+    const tenantId = normalizeTenantId(req.tenant) || normalizeTenantId(req.user?.tenantId);
     let query = {};
     query.role = {
       $in: ["admin", "manager", "chef", "waiter"]
     };
-    query.tenantId = req.user.tenantId;
+    query.tenantId = tenantId;
     if (role) {
       query.role = role;
     }
