@@ -2,6 +2,69 @@ const { logger } = require("./../utils/logger.js");
 const Feedback = require("../models/Feedback");
 const feedbackManager = require('../utils/feedbackManager');
 
+const shapeFeedbackCustomer = (customer = null) =>
+  customer
+    ? {
+        _id: customer._id,
+        name: customer.name || "",
+      }
+    : null;
+
+const shapeFeedbackOrder = (order = null) =>
+  order
+    ? {
+        _id: order._id,
+        orderNumber: order.orderNumber || "",
+      }
+    : null;
+
+const shapeFeedbackTable = (table = null) =>
+  table
+    ? {
+        _id: table._id,
+        tableNumber: table.tableNumber || null,
+      }
+    : null;
+
+const shapeFeedbackEntry = (feedback = {}) => {
+  const tags = [
+    ...(Array.isArray(feedback?.categories) ? feedback.categories : []),
+    ...(Array.isArray(feedback?.highlights) ? feedback.highlights : []),
+    ...(Array.isArray(feedback?.issues) ? feedback.issues : []),
+  ].filter(Boolean);
+
+  return {
+    _id: feedback?._id,
+    ratings: feedback?.ratings || {},
+    comments: feedback?.comments || "",
+    categories: Array.isArray(feedback?.categories) ? feedback.categories : [],
+    tags,
+    sentiment: feedback?.sentiment || "neutral",
+    status: feedback?.status || "new",
+    priority: feedback?.priority || "medium",
+    followUpRequired: Boolean(feedback?.followUpRequired),
+    customer: shapeFeedbackCustomer(feedback?.customer),
+    order: shapeFeedbackOrder(feedback?.order),
+    table: shapeFeedbackTable(feedback?.table),
+    createdAt: feedback?.createdAt || null,
+  };
+};
+
+const shapeFeedbackDashboard = (dashboard = {}) => ({
+  statistics: dashboard?.statistics || {},
+  nps: dashboard?.nps || {},
+  trendingTopics: Array.isArray(dashboard?.trendingTopics)
+    ? dashboard.trendingTopics.map((entry, index) => ({
+        _id: entry?._id || entry?.topic || `topic-${index}`,
+      }))
+    : [],
+  recentFeedback: Array.isArray(dashboard?.recentFeedback)
+    ? dashboard.recentFeedback.map((entry) => ({
+        _id: entry?._id,
+      }))
+    : [],
+});
+
 
 exports.submitFeedback = async (req, res) => {
   try {
@@ -11,7 +74,7 @@ exports.submitFeedback = async (req, res) => {
     res.status(201).json({
       success: true,
       message: result.message || 'Thank you for your feedback!',
-      data: result.data
+      data: shapeFeedbackEntry(result.data)
     });
   } catch (error) {
     logger.error(error);
@@ -99,7 +162,7 @@ exports.getFeedbackForActiveSession = async (req, res) => {
     
    res.status(200).json({
       success: true,
-      data: feedback
+      data: feedback ? shapeFeedbackEntry(feedback) : null
     });
     
   } catch (error) {
@@ -142,7 +205,7 @@ exports.getFeedbackBySession = async (req, res) => {
    res.status(200).json({
       success: true,
       count: feedback.length,
-      data: feedback
+      data: feedback.map((entry) => shapeFeedbackEntry(entry))
     });
   } catch (error) {
     logger.error(error);
@@ -249,7 +312,7 @@ exports.getAllFeedback = async (req, res) => {
         page: pageNum,
         pages: Math.ceil(total / limitNum)
       },
-      data: paginatedFeedback
+      data: paginatedFeedback.map((entry) => shapeFeedbackEntry(entry))
     });
   } catch (error) {
     logger.error(error);
@@ -302,7 +365,7 @@ exports.respondToFeedback = async (req, res) => {
    res.status(200).json({
       success: true,
       message: 'Response sent successfully',
-      data: feedback
+      data: shapeFeedbackEntry(feedback)
     });
   } catch (error) {
     logger.error(error);
@@ -351,7 +414,7 @@ exports.updateFeedbackStatus = async (req, res) => {
    res.status(200).json({
       success: true,
       message: 'Feedback status updated successfully',
-      data: feedback
+      data: shapeFeedbackEntry(feedback)
     });
   } catch (error) {
     logger.error(error);
@@ -456,12 +519,12 @@ exports.getFeedbackDashboard = async (req, res) => {
 
    res.status(200).json({
       success: true,
-      data: {
+      data: shapeFeedbackDashboard({
         recentFeedback,
         statistics,
         nps,
         trendingTopics
-      }
+      })
     });
   } catch (error) {
     logger.error(error);

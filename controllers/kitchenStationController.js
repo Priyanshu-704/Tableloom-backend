@@ -2,22 +2,40 @@ const { logger } = require("./../utils/logger.js");
 const KitchenStation = require("../models/KitchenStation");
 const Category = require("../models/Category");
 
+const shapeAssignedCategory = (category = {}) => ({
+  _id: category._id,
+  name: category.name || "",
+});
+
+const shapeKitchenStationResponse = (station = {}, categories = []) => ({
+  _id: station._id,
+  name: station.name || "",
+  stationType: station.stationType || "",
+  capacity: Number(station.capacity || 0),
+  colorCode: station.colorCode || "#4CAF50",
+  displayOrder: Number(station.displayOrder || 0),
+  status: station.status || "active",
+  currentLoad: Number(station.currentLoad || 0),
+  preparationTimes: station.preparationTimes || {},
+  assignedCategories: categories.map(shapeAssignedCategory),
+  categoryCount: categories.length,
+});
+
 exports.getKitchenStations = async (req, res) => {
   try {
     const stations = await KitchenStation.find()
+      .select(
+        "name stationType capacity colorCode displayOrder status currentLoad preparationTimes",
+      )
       .sort({ displayOrder: 1, name: 1 })
       .lean();
 
     const stationsWithCategories = await Promise.all(
       stations.map(async (station) => {
         const categories = await Category.find({ kitchenStation: station._id })
-          .select("name description")
+          .select("name")
           .lean();
-        return {
-          ...station,
-          assignedCategories: categories,
-          categoryCount: categories.length,
-        };
+        return shapeKitchenStationResponse(station, categories);
       }),
     );
 
@@ -38,7 +56,11 @@ exports.getKitchenStations = async (req, res) => {
 
 exports.getKitchenStation = async (req, res) => {
   try {
-    const station = await KitchenStation.findById(req.params.id).lean();
+    const station = await KitchenStation.findById(req.params.id)
+      .select(
+        "name stationType capacity colorCode displayOrder status currentLoad preparationTimes",
+      )
+      .lean();
 
     if (!station) {
       return res.status(404).json({
@@ -48,15 +70,12 @@ exports.getKitchenStation = async (req, res) => {
     }
 
     const categories = await Category.find({ kitchenStation: station._id })
-      .select("name description isActive")
+      .select("name")
       .lean();
 
     res.status(200).json({
       success: true,
-      data: {
-        ...station,
-        assignedCategories: categories,
-      },
+      data: shapeKitchenStationResponse(station, categories),
     });
   } catch (error) {
     logger.error(error);
@@ -107,11 +126,15 @@ exports.createKitchenStation = async (req, res) => {
     }
 
     const station = await KitchenStation.create(stationData);
+    const shapedStation = shapeKitchenStationResponse(
+      station.toObject ? station.toObject() : station,
+      [],
+    );
 
     res.status(201).json({
       success: true,
       message: "Kitchen station created successfully",
-      data: station,
+      data: shapedStation,
     });
   } catch (error) {
     logger.error(error);
@@ -158,12 +181,12 @@ exports.updateKitchenStation = async (req, res) => {
       req.params.id,
       updateData,
       { new: true, runValidators: true },
-    );
+    ).lean();
 
     res.status(200).json({
       success: true,
       message: "Kitchen station updated successfully",
-      data: updatedStation,
+      data: shapeKitchenStationResponse(updatedStation, []),
     });
   } catch (error) {
     logger.error(error);

@@ -243,7 +243,7 @@ exports.getOrCreateCart = async (sessionId) => {
     let cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       )
       .populate("table", "tableNumber tableName");
 
@@ -267,7 +267,7 @@ exports.getOrCreateCart = async (sessionId) => {
 
       await cart.populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       );
       await cart.populate("table", "tableNumber tableName");
     }
@@ -387,7 +387,7 @@ exports.addItemToCart = async (sessionId, itemData) => {
 
     await cart.populate(
       "items.menuItem",
-      "name description prices image thumbnail isAvailable isActive",
+      "name image thumbnail",
     );
     await cart.populate("table", "tableNumber tableName");
 
@@ -406,7 +406,7 @@ exports.incrementItemQuantity = async (
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       )
       .populate("table", "tableNumber tableName");
 
@@ -445,7 +445,7 @@ exports.decrementItemQuantity = async (
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       )
       .populate("table", "tableNumber tableName");
 
@@ -486,7 +486,7 @@ exports.removeItemFromCart = async (sessionId, menuItemId, sizeId = null) => {
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       )
       .populate("table", "tableNumber tableName");
 
@@ -518,7 +518,7 @@ exports.clearCart = async (sessionId) => {
     const cart = await Cart.findOne({ sessionId })
       .populate(
         "items.menuItem",
-        "name description prices image thumbnail isAvailable isActive",
+        "name image thumbnail",
       )
       .populate("table", "tableNumber tableName");
 

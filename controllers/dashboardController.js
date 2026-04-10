@@ -3,21 +3,11 @@ const Order = require("../models/Order");
 const Table = require("../models/Table");
 const Customer = require("../models/Customer");
 const WaiterCall = require("../models/WaiterCall");
-const Feedback = require("../models/Feedback");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const { getOrSetCache } = require("../utils/responseCache");
 const feedbackManager = require("../utils/feedbackManager");
 
 const DASHBOARD_OVERVIEW_CACHE_TTL_MS = 15 * 1000;
-const DEFAULT_ORDER_STATUS_COUNTS = {
-  pending: 0,
-  confirmed: 0,
-  preparing: 0,
-  ready: 0,
-  served: 0,
-  completed: 0,
-  cancelled: 0,
-};
 
 const buildCustomerAnalytics = async (rangeStart, rangeEnd) => {
   const analytics = await Customer.aggregate([
@@ -124,13 +114,9 @@ exports.getAdminDashboard = async (req, res) => {
           latestCalls,
           pendingOrders,
           preparingOrders,
-          groupedStatusCounts,
           popularItems,
           customerAnalytics,
-          feedbackStatistics,
           feedbackNps,
-          trendingTopics,
-          recentFeedback,
           waiterSummary,
         ] = await Promise.all([
           Order.countDocuments({ orderPlacedAt: { $gte: today } }),
@@ -193,19 +179,6 @@ exports.getAdminDashboard = async (req, res) => {
                 orderPlacedAt: { $gte: today },
               },
             },
-            {
-              $group: {
-                _id: "$status",
-                count: { $sum: 1 },
-              },
-            },
-          ]),
-          Order.aggregate([
-            {
-              $match: {
-                orderPlacedAt: { $gte: today },
-              },
-            },
             { $unwind: "$items" },
             {
               $group: {
@@ -247,15 +220,7 @@ exports.getAdminDashboard = async (req, res) => {
             },
           ]),
           buildCustomerAnalytics(today, todayEnd),
-          feedbackManager.getFeedbackStatistics("30days"),
           feedbackManager.getNPS("30days"),
-          feedbackManager.getTrendingTopics(5),
-          Feedback.find({})
-            .populate("customer", "name email phone")
-            .populate("order", "orderNumber")
-            .sort({ createdAt: -1 })
-            .limit(10)
-            .lean(),
           WaiterCall.aggregate([
             {
               $group: {
@@ -284,16 +249,6 @@ exports.getAdminDashboard = async (req, res) => {
             },
           ]),
         ]);
-
-        const orderStatusCounts = groupedStatusCounts.reduce(
-          (accumulator, entry) => {
-            if (entry?._id) {
-              accumulator[entry._id] = entry.count || 0;
-            }
-            return accumulator;
-          },
-          { ...DEFAULT_ORDER_STATUS_COUNTS },
-        );
 
         const recentActivity = [
           ...latestOrders.map((order) => ({
@@ -330,26 +285,19 @@ exports.getAdminDashboard = async (req, res) => {
           },
           recentActivity,
           orderStats: {
-            totalOrders: todayOrders,
             pendingOrders,
             preparingOrders,
             todayOrders,
-            todayRevenue: todayRevenue[0]?.total || 0,
-            statusCounts: orderStatusCounts,
             popularItems,
           },
           customerAnalytics: {
-            period: "today",
-            totalSessions: customerAnalytics.totalSessions || 0,
             activeSessions: customerAnalytics.activeSessions || 0,
             completedSessions: customerAnalytics.completedSessions || 0,
-            revenue: customerAnalytics.revenue || 0,
           },
           feedbackDashboard: {
-            recentFeedback,
-            statistics: feedbackStatistics,
-            nps: feedbackNps,
-            trendingTopics,
+            nps: {
+              score: Number(feedbackNps?.score ?? feedbackNps?.nps ?? 0),
+            },
           },
           waiterDashboard: {
             pendingCalls: waiterSummary[0]?.pendingCalls || 0,

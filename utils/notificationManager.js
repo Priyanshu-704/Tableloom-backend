@@ -6,6 +6,57 @@ const socketManager = require("./socketManager");
 const { getCurrentTenantId } = require("./tenantContext");
 
 class NotificationManager {
+  shapeAction(action = {}) {
+    if (!action) {
+      return null;
+    }
+
+    return {
+      label: String(action.label || "").trim(),
+      type: String(action.type || "button").trim(),
+      action: String(action.action || "").trim(),
+    };
+  }
+
+  shapeSender(sender = null) {
+    if (!sender) {
+      return null;
+    }
+
+    return {
+      _id: sender._id,
+      name: sender.name || "",
+      role: sender.role || "",
+    };
+  }
+
+  shapeNotification(notification = {}, overrides = {}) {
+    if (!notification) {
+      return null;
+    }
+
+    const actions = Array.isArray(notification.actions)
+      ? notification.actions.map((action) => this.shapeAction(action)).filter(Boolean)
+      : [];
+
+    return {
+      _id: notification._id,
+      title: notification.title || "",
+      message: notification.message || "",
+      type: notification.type || "system_alert",
+      priority: notification.priority || "medium",
+      status: notification.status || "unread",
+      effectiveStatus: overrides.effectiveStatus || notification.effectiveStatus || notification.status || "unread",
+      isRead: Boolean(overrides.isRead ?? notification.isRead),
+      actionRequired: Boolean(notification.actionRequired),
+      relatedModel: notification.relatedModel || null,
+      actions,
+      createdAt: notification.createdAt || null,
+      expiresAt: notification.expiresAt || null,
+      sender: this.shapeSender(notification.sender),
+    };
+  }
+
   resolveTenantId(data = {}) {
     return data.tenantId || data.metadata?.tenantId || getCurrentTenantId() || null;
   }
@@ -78,18 +129,18 @@ class NotificationManager {
       (entry) => String(entry.user) === normalizedUserId
     );
 
-    return {
-      ...serialized,
+    return this.shapeNotification(serialized, {
       isRead,
       isAcknowledged,
-      effectiveStatus: serialized.status === "dismissed"
-        ? "dismissed"
-        : isAcknowledged
-          ? "acknowledged"
-          : isRead
-            ? "read"
-            : "unread",
-    };
+      effectiveStatus:
+        serialized.status === "dismissed"
+          ? "dismissed"
+          : isAcknowledged
+            ? "acknowledged"
+            : isRead
+              ? "read"
+              : "unread",
+    });
   }
 
   // Create notification
@@ -116,7 +167,7 @@ class NotificationManager {
       });
 
       // Populate sender details
-      await notification.populate("sender", "name role profileImage");
+      await notification.populate("sender", "name role");
 
       // Emit real-time notification
       await this.emitNotification(notification);
@@ -126,7 +177,10 @@ class NotificationManager {
         logger.error("Push notification dispatch failed:", pushError);
       });
 
-      return notification;
+      return this.shapeNotification(notification, {
+        isRead: false,
+        effectiveStatus: notification.status || "unread",
+      });
     } catch (error) {
       logger.error("Create notification failed:", error);
       throw error;
@@ -498,8 +552,8 @@ class NotificationManager {
       if (actionRequired) query.actionRequired = true;
 
       const notifications = await Notification.find(query)
-        .populate("sender", "name role profileImage")
-        .populate("relatedTo")
+        .select("title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy createdAt expiresAt")
+        .populate("sender", "name role")
         .sort({ createdAt: -1, priority: -1 });
 
       let decoratedNotifications = notifications.map((notification) =>
@@ -556,20 +610,20 @@ class NotificationManager {
     }
 
     let notifications = await Notification.find(query)
+      .select("title message type priority status actionRequired actions createdAt expiresAt readBySessions")
       .sort({ createdAt: -1, priority: -1 })
       .lean();
 
-    notifications = notifications.map((notification) => ({
-      ...notification,
-      isRead: (notification.readBySessions || []).some(
+    notifications = notifications.map((notification) => {
+      const isRead = (notification.readBySessions || []).some(
         (entry) => String(entry.sessionId) === String(sessionId),
-      ),
-      effectiveStatus: (notification.readBySessions || []).some(
-        (entry) => String(entry.sessionId) === String(sessionId),
-      )
-        ? "read"
-        : "unread",
-    }));
+      );
+
+      return this.shapeNotification(notification, {
+        isRead,
+        effectiveStatus: isRead ? "read" : "unread",
+      });
+    });
 
     if (search) {
       const keyword = String(search).trim().toLowerCase();
@@ -746,11 +800,10 @@ class NotificationManager {
       throw new Error("Notification not found");
     }
 
-    return {
-      ...notification.toObject(),
+    return this.shapeNotification(notification, {
       isRead: true,
       effectiveStatus: "read",
-    };
+    });
   }
 
   async markAllSessionNotificationsAsRead(sessionId) {
@@ -819,35 +872,6 @@ class NotificationManager {
         { $match: baseQuery },
         {
           $facet: {
-            byType: [
-              {
-                $group: {
-                  _id: "$type",
-                  count: { $sum: 1 },
-                  unread: {
-                    $sum: {
-                      $cond: [{ $in: [notificationUserId, "$readBy.user"] }, 0, 1],
-                    },
-                  },
-                },
-              },
-            ],
-            byPriority: [
-              {
-                $group: {
-                  _id: "$priority",
-                  count: { $sum: 1 },
-                },
-              },
-            ],
-            byStatus: [
-              {
-                $group: {
-                  _id: "$status",
-                  count: { $sum: 1 },
-                },
-              },
-            ],
             total: [{ $count: "count" }],
             unreadCount: [
               {
@@ -862,9 +886,6 @@ class NotificationManager {
       ]);
 
       return {
-        byType: stats[0]?.byType || [],
-        byPriority: stats[0]?.byPriority || [],
-        byStatus: stats[0]?.byStatus || [],
         total: stats[0]?.total[0]?.count || 0,
         unreadCount: stats[0]?.unreadCount[0]?.count || 0,
         period,
@@ -945,7 +966,10 @@ class NotificationManager {
     ) {
       notification.recipients.forEach((recipientId) => {
         io.to(`user-${recipientId}`).emit("new_notification", {
-          ...notification.toObject(),
+          ...this.shapeNotification(notification, {
+            isRead: false,
+            effectiveStatus: "unread",
+          }),
           isUnread: true,
         });
       });
@@ -958,7 +982,10 @@ class NotificationManager {
     ) {
       notification.roles.forEach((role) => {
         io.to(`role-${role}`).emit("new_notification", {
-          ...notification.toObject(),
+          ...this.shapeNotification(notification, {
+            isRead: false,
+            effectiveStatus: "unread",
+          }),
           isUnread: true,
         });
       });
@@ -967,14 +994,20 @@ class NotificationManager {
     // Send to all staff
     if (notification.recipientType === "all") {
       io.to("staff-room").emit("new_notification", {
-        ...notification.toObject(),
+        ...this.shapeNotification(notification, {
+          isRead: false,
+          effectiveStatus: "unread",
+        }),
         isUnread: true,
       });
     }
 
     if (notification.customerSessionId) {
       io.to(`customer-${notification.customerSessionId}`).emit("new_notification", {
-        ...notification.toObject(),
+        ...this.shapeNotification(notification, {
+          isRead: false,
+          effectiveStatus: "unread",
+        }),
         isUnread: true,
       });
     }

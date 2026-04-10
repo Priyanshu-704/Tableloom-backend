@@ -8,10 +8,7 @@ const Order = require("../models/Order");
 const KitchenStation = require("../models/KitchenStation");
 const InventoryItem = require("../models/InventoryItem");
 const Feedback = require("../models/Feedback");
-const Notification = require("../models/Notification");
-const WaiterCall = require("../models/WaiterCall");
 const Customer = require("../models/Customer");
-const Bill = require("../models/Bill");
 const generatePassword = require("../utils/passwordGenerator");
 const { sendStaffCredentials } = require("../utils/emailService");
 const { hydrateUserPermissions } = require("../utils/permissionSettings");
@@ -166,6 +163,63 @@ const toTenantCredentials = (adminUser = {}, tempPassword = "", emailSent = fals
   emailSent: Boolean(emailSent),
 });
 
+const getInventoryStatus = (item = {}) => {
+  if (!item?.isActive) {
+    return "inactive";
+  }
+
+  if (Number(item.currentStock || 0) <= 0) {
+    return "out_of_stock";
+  }
+
+  if (Number(item.currentStock || 0) <= Number(item.minimumStock || 0)) {
+    return "low_stock";
+  }
+
+  return "in_stock";
+};
+
+const toWorkspaceStaff = (staff = {}) =>
+  pickFields(staff, ["_id", "name", "email", "role", "isActive"]);
+
+const toWorkspaceTable = (table = {}) =>
+  pickFields(table, ["_id", "tableNumber", "tableName", "status", "capacity"]);
+
+const toWorkspaceCategory = (category = {}) =>
+  pickFields(category, ["_id", "name", "description", "isActive"]);
+
+const toWorkspaceMenuItem = (item = {}) => ({
+  _id: item?._id,
+  name: item?.name || "",
+  isAvailable: Boolean(item?.isAvailable),
+  category: item?.category ? pickFields(item.category, ["name"]) : null,
+  station: item?.station ? pickFields(item.station, ["name"]) : null,
+});
+
+const toWorkspaceKitchenStation = (station = {}) =>
+  pickFields(station, ["_id", "name", "stationType", "status", "capacity"]);
+
+const toWorkspaceInventoryItem = (item = {}) => ({
+  _id: item?._id,
+  ingredientName: item?.ingredientName || "",
+  currentStock: Number(item?.currentStock || 0),
+  unit: item?.unit || "",
+  status: getInventoryStatus(item),
+});
+
+const toWorkspaceRecentOrder = (order = {}) =>
+  pickFields(order, ["_id", "orderNumber", "status", "paymentStatus", "totalAmount"]);
+
+const toWorkspaceRecentFeedback = (feedback = {}) => ({
+  _id: feedback?._id,
+  ratings: {
+    overall: feedback?.ratings?.overall || 0,
+  },
+  sentiment: feedback?.sentiment || "neutral",
+  status: feedback?.status || "new",
+  comments: feedback?.comments || "",
+});
+
 const toTenantOverviewPayload = ({ tenant, settings, summary, workspace }) => ({
   tenant: {
     _id: tenant?._id,
@@ -222,56 +276,44 @@ exports.getTenantOverview = async (req, res) => {
     inventoryItems,
     recentOrders,
     recentFeedback,
-    recentNotifications,
-    recentWaiterCalls,
     summary,
   ] = await Promise.all([
     AppSetting.findOne({ tenantId, key: "app-settings" }).lean(),
     User.find({ tenantId, role: { $in: ["admin", "manager", "chef", "waiter"] } })
-      .select("name email role isActive lastLogin forcePasswordChange createdAt")
+      .select("name email role isActive")
       .sort({ createdAt: -1 })
       .lean(),
     Table.find({ tenantId })
-      .select("tableNumber tableName status capacity location isActive createdAt")
+      .select("tableNumber tableName status capacity")
       .sort({ createdAt: -1 })
       .lean(),
     Category.find({ tenantId })
-      .select("name description isActive kitchenStation createdAt")
+      .select("name description isActive")
       .sort({ createdAt: -1 })
       .lean(),
     MenuItem.find({ tenantId })
-      .select("name category station isAvailable isActive createdAt")
+      .select("name category station isAvailable")
       .populate("category", "name")
       .populate("station", "name")
       .sort({ createdAt: -1 })
       .limit(25)
       .lean(),
     KitchenStation.find({ tenantId })
-      .select("name stationType status capacity currentLoad displayOrder createdAt")
+      .select("name stationType status capacity")
       .sort({ displayOrder: 1, name: 1 })
       .lean(),
     InventoryItem.find({ tenantId })
-      .select("ingredientName category currentStock unit minThreshold status updatedAt")
+      .select("ingredientName currentStock unit minimumStock isActive")
       .sort({ updatedAt: -1 })
       .limit(25)
       .lean(),
     Order.find({ tenantId })
-      .select("orderNumber status totalAmount paymentStatus orderType createdAt updatedAt")
+      .select("orderNumber status totalAmount paymentStatus")
       .sort({ createdAt: -1 })
       .limit(25)
       .lean(),
     Feedback.find({ tenantId })
       .select("ratings.overall sentiment status priority comments createdAt")
-      .sort({ createdAt: -1 })
-      .limit(25)
-      .lean(),
-    Notification.find({ tenantId })
-      .select("title type priority status createdAt")
-      .sort({ createdAt: -1 })
-      .limit(25)
-      .lean(),
-    WaiterCall.find({ tenantId })
-      .select("table requestType status priority createdAt")
       .sort({ createdAt: -1 })
       .limit(25)
       .lean(),
@@ -284,10 +326,6 @@ exports.getTenantOverview = async (req, res) => {
       Order.countDocuments({ tenantId }),
       InventoryItem.countDocuments({ tenantId }),
       KitchenStation.countDocuments({ tenantId }),
-      Feedback.countDocuments({ tenantId }),
-      Notification.countDocuments({ tenantId }),
-      WaiterCall.countDocuments({ tenantId }),
-      Bill.countDocuments({ tenantId }),
     ]),
   ]);
 
@@ -300,10 +338,6 @@ exports.getTenantOverview = async (req, res) => {
     orderCount,
     inventoryCount,
     kitchenStationCount,
-    feedbackCount,
-    notificationCount,
-    waiterCallCount,
-    billCount,
   ] = summary;
 
   return sendSuccess(
@@ -322,22 +356,16 @@ exports.getTenantOverview = async (req, res) => {
         orderCount,
         inventoryCount,
         kitchenStationCount,
-        feedbackCount,
-        notificationCount,
-        waiterCallCount,
-        billCount,
       },
       workspace: {
-        staff,
-        tables,
-        categories,
-        menuItems,
-        kitchenStations,
-        inventoryItems,
-        recentOrders,
-        recentFeedback,
-        recentNotifications,
-        recentWaiterCalls,
+        staff: staff.map((entry) => toWorkspaceStaff(entry)),
+        tables: tables.map((entry) => toWorkspaceTable(entry)),
+        categories: categories.map((entry) => toWorkspaceCategory(entry)),
+        menuItems: menuItems.map((entry) => toWorkspaceMenuItem(entry)),
+        kitchenStations: kitchenStations.map((entry) => toWorkspaceKitchenStation(entry)),
+        inventoryItems: inventoryItems.map((entry) => toWorkspaceInventoryItem(entry)),
+        recentOrders: recentOrders.map((entry) => toWorkspaceRecentOrder(entry)),
+        recentFeedback: recentFeedback.map((entry) => toWorkspaceRecentFeedback(entry)),
       },
     })
   );

@@ -27,45 +27,40 @@ const buildTableQrUrl = (table, tenant = null) => {
 
 const sanitizeTable = (table, { includeAdminFields = true, tenant = null } = {}) => {
   const tableObj = table.toObject ? table.toObject() : { ...table };
+  const sanitizedTable = {
+    _id: tableObj._id,
+    tableNumber: tableObj.tableNumber,
+    tableName: tableObj.tableName || "",
+    capacity: Number(tableObj.capacity || 0),
+    location: tableObj.location || "indoor",
+    status: tableObj.status || "available",
+    isActive: Boolean(tableObj.isActive),
+    lastOccupied: tableObj.lastOccupied || null,
+    qrCode: tableObj.qrCode
+      ? buildTenantAssetUrl(null, `/images/table-qr/${tableObj._id}`, tenant)
+      : null,
+    qrUrl: buildTableQrUrl(tableObj, tenant),
+  };
 
-  if (tableObj.createdBy?.name) {
-    tableObj.createdBy = {
-      _id: tableObj.createdBy._id,
-      name: tableObj.createdBy.name,
-    };
+  if (includeAdminFields) {
+    sanitizedTable.notes = tableObj.notes || "";
   }
-
-  if (!includeAdminFields) {
-    delete tableObj.notes;
-    delete tableObj.createdBy;
-  }
-
-  tableObj.qrCode = tableObj.qrCode
-    ? buildTenantAssetUrl(null, `/images/table-qr/${tableObj._id}`, tenant)
-    : null;
-  tableObj.qrUrl = buildTableQrUrl(tableObj, tenant);
 
   if (tableObj.qrTokenExpiry) {
     const remainingMs = new Date(tableObj.qrTokenExpiry) - new Date();
-    tableObj.tokenExpiry = tableObj.qrTokenExpiry;
-    tableObj.tokenDaysRemaining = Math.max(
+    sanitizedTable.tokenExpiry = tableObj.qrTokenExpiry;
+    sanitizedTable.tokenDaysRemaining = Math.max(
       0,
       Math.ceil(remainingMs / (1000 * 60 * 60 * 24)),
     );
-    tableObj.tokenExpired = remainingMs <= 0;
+    sanitizedTable.tokenExpired = remainingMs <= 0;
   } else {
-    tableObj.tokenExpiry = null;
-    tableObj.tokenDaysRemaining = 0;
-    tableObj.tokenExpired = true;
+    sanitizedTable.tokenExpiry = null;
+    sanitizedTable.tokenDaysRemaining = 0;
+    sanitizedTable.tokenExpired = true;
   }
 
-  delete tableObj.qrToken;
-  delete tableObj.qrTokenExpiry;
-  delete tableObj.qrImageBucket;
-  delete tableObj.qrPublicId;
-  delete tableObj.qrProvider;
-
-  return tableObj;
+  return sanitizedTable;
 };
 
 const filterTablesByPermission = (user, query = {}) => {
@@ -111,7 +106,6 @@ exports.createTable = async (req, res) => {
       qrToken: qrInfo.token,
       qrTokenExpiry: qrInfo.expiry,
     });
-    await table.populate("createdBy", "name");
 
     res.status(201).json({
       success: true,
@@ -176,11 +170,13 @@ exports.getTables = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const tables = await Table.find(query)
-      .select("-currentOrder -currentCustomer")
-      .populate("createdBy", "name")
+      .select(
+        "tableNumber tableName capacity location status qrCode qrToken qrTokenExpiry qrImageBucket qrPublicId qrProvider lastOccupied notes isActive",
+      )
       .sort({ tableNumber: 1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limitNum)
+      .lean();
 
     const sanitizedTables = tables.map((table) =>
       sanitizeTable(table, {
@@ -214,8 +210,10 @@ exports.getTables = async (req, res) => {
 exports.getTable = async (req, res) => {
   try {
     const table = await Table.findById(req.params.id)
-      .populate("createdBy", "name")
-      .select("-currentOrder -currentCustomer");
+      .select(
+        "tableNumber tableName capacity location status qrCode qrToken qrTokenExpiry qrImageBucket qrPublicId qrProvider lastOccupied notes isActive",
+      )
+      .lean();
 
     if (!table) {
       return res.status(404).json({
@@ -269,7 +267,7 @@ exports.updateTable = async (req, res) => {
         notes,
       },
       { new: true, runValidators: true },
-    ).populate("createdBy", "name");
+    ).lean();
 
     if (!table) {
       return res.status(404).json({

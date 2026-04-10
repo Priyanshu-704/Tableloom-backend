@@ -103,6 +103,33 @@ const ensureSameTenantAccess = (requester, targetUser) => {
   );
 };
 
+const shapeAuthUser = (user = {}, { permissions } = {}) => ({
+  _id: user?._id || null,
+  name: user?.name || "",
+  email: user?.email || "",
+  role: user?.role || "",
+  tenantId: user?.tenantId || null,
+  forcePasswordChange: Boolean(user?.forcePasswordChange),
+  isActive: user?.isActive !== false,
+  ...(Array.isArray(permissions) ? { permissions } : {}),
+});
+
+const shapeStaffUser = (user = {}, { permissions } = {}) => ({
+  _id: user?._id || null,
+  name: user?.name || "",
+  email: user?.email || "",
+  phone: user?.phone || "",
+  role: user?.role || "",
+  isActive: user?.isActive !== false,
+  forcePasswordChange: Boolean(user?.forcePasswordChange),
+  createdAt: user?.createdAt || null,
+  ...(Array.isArray(permissions)
+    ? { permissions }
+    : Array.isArray(user?.customPermissions)
+      ? { permissions: user.customPermissions }
+      : {}),
+});
+
 // @desc    Register a new staff member
 // @route   POST /api/users/register
 // @access  Private (Admin with USER_CREATE, Manager with USER_CREATE but limited roles)
@@ -197,14 +224,10 @@ exports.registerStaff = async (req, res) => {
           "Staff member registered successfully" +
           (emailSent ? " and credentials emailed" : " but email failed"),
         data: {
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          isActive: user.isActive,
-          forcePasswordChange: user.forcePasswordChange,
-          emailSent: emailSent,
-          permissions: await getEffectivePermissionsForUser(user),
+          ...shapeStaffUser(user, {
+            permissions: await getEffectivePermissionsForUser(user),
+          }),
+          emailSent,
         },
       });
     }
@@ -302,14 +325,7 @@ exports.loginStaff = async (req, res) => {
         success: true,
         message: "Login successful",
         accessToken,
-        data: {
-          _id: user._id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          tenantId: user.tenantId,
-          forcePasswordChange: user.forcePasswordChange,
-        },
+        data: shapeAuthUser(user),
       });
     } else {
       res.status(401).json({
@@ -402,13 +418,9 @@ exports.refreshToken = async (req, res) => {
       message: "Token refreshed successfully",
       accessToken,
       data: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        tenantId: user.tenantId,
-        forcePasswordChange: user.forcePasswordChange,
-        permissions: await getEffectivePermissionsForUser(user),
+        ...shapeAuthUser(user, {
+          permissions: await getEffectivePermissionsForUser(user),
+        }),
         sessionId: user.sessionId, // For customers
       },
     });
@@ -469,9 +481,7 @@ exports.getAllStaff = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     const users = await User.find(query)
-      .select("-password -refreshToken -__v -customPermissions")
-      .populate("createdBy", "name email")
-      .populate("updatedBy", "name email")
+      .select("name email phone role isActive forcePasswordChange createdAt customPermissions")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum)
@@ -487,16 +497,7 @@ exports.getAllStaff = async (req, res) => {
         page: pageNum,
         pages: Math.ceil(total / limitNum),
       },
-      data: users.map((user) => ({
-        ...user,
-        createdBy: user.createdBy
-          ? { id: user.createdBy._id, name: user.createdBy.name }
-          : null,
-        updatedBy: user.updatedBy
-          ? { id: user.updatedBy._id, name: user.updatedBy.name }
-          : null,
-        lastLogin: user.lastLogin || null,
-      })),
+      data: users.map((user) => shapeStaffUser(user)),
     });
   } catch (error) {
     logger.error("Get all staff error:", error);
@@ -514,15 +515,12 @@ exports.getAllStaff = async (req, res) => {
 exports.getProfile = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select(
-      "-password -refreshToken -customPermissions",
+      "name email role tenantId forcePasswordChange isActive",
     );
 
     res.status(200).json({
       success: true,
-      data: {
-        ...user.toObject(),
-        tenantId: user.tenantId,
-      },
+      data: shapeAuthUser(user),
     });
   } catch (error) {
     logger.error("Get profile error:", error);
@@ -564,15 +562,12 @@ exports.updateProfile = async (req, res) => {
     const user = await User.findByIdAndUpdate(req.user._id, fieldsToUpdate, {
       new: true,
       runValidators: true,
-    }).select("-password -refreshToken -customPermissions");
+    }).select("name email role tenantId forcePasswordChange isActive");
 
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
-      data: {
-        ...user.toObject(),
-        tenantId: user.tenantId,
-      },
+      data: shapeAuthUser(user),
     });
   } catch (error) {
     logger.error("Update profile error:", error);
@@ -867,14 +862,9 @@ exports.toggleStaffStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `User ${isActive ? "activated" : "deactivated"} successfully`,
-      data: {
-        _id: targetUser._id,
-        name: targetUser.name,
-        email: targetUser.email,
-        role: targetUser.role,
-        isActive: targetUser.isActive,
+      data: shapeStaffUser(targetUser, {
         permissions: await getEffectivePermissionsForUser(targetUser),
-      },
+      }),
     });
   } catch (error) {
     logger.error("Toggle user status error:", error);
@@ -1085,15 +1075,9 @@ exports.updateUserRole = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `User role updated to ${role} successfully`,
-      data: {
-        _id: targetUser._id,
-        name: targetUser.name,
-        email: targetUser.email,
-        role: targetUser.role,
-        isActive: targetUser.isActive,
-        status: targetUser.status || "active",
+      data: shapeStaffUser(targetUser, {
         permissions: await getEffectivePermissionsForUser(targetUser),
-      },
+      }),
     });
   } catch (error) {
     logger.error("Update user role error:", error);

@@ -102,8 +102,7 @@ exports.blockSuperAdminTenantAccess = (req, res, next) => {
 
     return res.status(403).json({
       success: false,
-      message:
-        "Super admin monitoring mode is read-only inside restaurant workspaces",
+      message: "Super admin monitoring mode is read-only",
     });
   }
 

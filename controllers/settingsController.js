@@ -162,6 +162,18 @@ const toAdminSettings = (req, settings) => ({
   operations: settings?.operations || {},
 });
 
+const shapeDelayMonitorStatus = (status = {}) => ({
+  isRunning: Boolean(status?.isRunning),
+  lastCheck: status?.lastCheck || null,
+  lastRunSummary: status?.lastRunSummary
+    ? {
+        delayedOrdersFound: Number(status.lastRunSummary.delayedOrdersFound || 0),
+      }
+    : {
+        delayedOrdersFound: 0,
+      },
+});
+
 exports.getPublicSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
@@ -177,7 +189,7 @@ exports.getAdminSettings = async (req, res) => {
     const settings = await getOrCreateSettings(req.tenant?._id);
     return sendSuccess(res, 200, null, toAdminSettings(req, settings.toObject()), {
       meta: {
-        delayMonitorStatus: delayMonitor.getStatus(),
+        delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
       },
     });
   } catch (error) {
@@ -244,7 +256,7 @@ exports.updateSettings = async (req, res) => {
       {
         publicSettings: toPublicSettings(req, settings.toObject()),
         meta: {
-          delayMonitorStatus: delayMonitor.getStatus(),
+          delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
         },
       }
     );

@@ -152,11 +152,31 @@ const buildStatus = (item) => {
 const serializeInventory = (item) => {
   const inventory = item.toObject ? item.toObject() : item;
   const normalizedUnit = normalizeInventoryUnit(inventory.unit);
+  const relatedMenuItems = getRelationsForInventory(inventory).map((relation) => ({
+    menuItem:
+      relation?.menuItem && typeof relation.menuItem === "object"
+        ? {
+            _id: relation.menuItem._id,
+            name: relation.menuItem.name || "",
+            isAvailable: Boolean(relation.menuItem.isAvailable),
+          }
+        : relation?.menuItem || null,
+    quantityRequired: Math.max(Number(relation?.quantityRequired || 0), 0),
+  }));
+
   return {
-    ...inventory,
+    _id: inventory._id,
+    ingredientName: inventory.ingredientName || "",
+    sku: inventory.sku || "",
     unit: normalizedUnit,
+    currentStock: Number(inventory.currentStock || 0),
+    minimumStock: Number(inventory.minimumStock || 0),
+    reorderQuantity: Number(inventory.reorderQuantity || 0),
+    notes: inventory.notes || "",
+    isActive: Boolean(inventory.isActive),
+    relatedMenuItems,
     stockStatus: buildStatus(inventory),
-    linkedMenuItemsCount: getRelationsForInventory(inventory).length,
+    linkedMenuItemsCount: relatedMenuItems.length,
   };
 };
 
@@ -344,18 +364,11 @@ exports.getInventoryItems = async (req, res) => {
 
     const [items, total, allItems] = await Promise.all([
       InventoryItem.find(inventoryQuery)
+        .select("ingredientName sku unit currentStock minimumStock reorderQuantity notes isActive relatedMenuItems menuItem")
         .populate({
           path: "relatedMenuItems.menuItem",
-          select: "name category isAvailable",
-          populate: { path: "category", select: "name" },
+          select: "name isAvailable",
         })
-        .populate({
-          path: "menuItem",
-          select: "name category isAvailable",
-          populate: { path: "category", select: "name" },
-        })
-        .populate("createdBy", "name")
-        .populate("updatedBy", "name")
         .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limitNum),
@@ -465,8 +478,7 @@ exports.createInventoryItem = async (req, res) => {
       message: "Ingredient inventory created successfully",
       data: serializeInventory(await inventoryItem.populate({
         path: "relatedMenuItems.menuItem",
-        select: "name category isAvailable",
-        populate: { path: "category", select: "name" },
+        select: "name isAvailable",
       })),
     });
   } catch (error) {
@@ -561,8 +573,7 @@ exports.updateInventoryItem = async (req, res) => {
 
     const populated = await InventoryItem.findById(inventoryItem._id).populate({
       path: "relatedMenuItems.menuItem",
-      select: "name category isAvailable",
-      populate: { path: "category", select: "name" },
+      select: "name isAvailable",
     });
 
     res.status(200).json({
@@ -627,8 +638,7 @@ exports.adjustInventoryStock = async (req, res) => {
 
     const populated = await InventoryItem.findById(inventoryItem._id).populate({
       path: "relatedMenuItems.menuItem",
-      select: "name category isAvailable",
-      populate: { path: "category", select: "name" },
+      select: "name isAvailable",
     });
 
     res.status(200).json({

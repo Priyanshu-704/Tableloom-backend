@@ -34,6 +34,59 @@ const handleCallError = (res, error, fallbackMessage) => {
   );
 };
 
+const shapeCallStaff = (staff = null) =>
+  staff
+    ? {
+        _id: staff._id,
+        name: staff.name || "",
+        role: staff.role || "",
+      }
+    : null;
+
+const shapeCallTable = (table = null) =>
+  table
+    ? {
+        _id: table._id,
+        tableNumber: table.tableNumber || "",
+        tableName: table.tableName || "",
+        location: table.location || "",
+      }
+    : null;
+
+const shapeWaiterCall = (call = {}) => ({
+  _id: call._id,
+  callId: call.callId || "",
+  status: call.status || "pending",
+  callType: call.callType || "waiter",
+  priority: call.priority || "medium",
+  message: call.message || "",
+  createdAt: call.createdAt || null,
+  updatedAt: call.updatedAt || null,
+  responseTime: Number(call.responseTime || 0),
+  resolutionTime: Number(call.resolutionTime || 0),
+  resolutionNotes: call.resolutionNotes || "",
+  tableNumber: call.tableNumber || call.table?.tableNumber || "",
+  location: call.location || call.table?.location || "",
+  table: shapeCallTable(call.table),
+  customer: call.customer
+    ? {
+        _id: call.customer._id,
+        name: call.customer.name || "",
+        phone: call.customer.phone || "",
+      }
+    : null,
+  assignedTo: shapeCallStaff(call.assignedTo),
+  acknowledgedBy: shapeCallStaff(call.acknowledgedBy),
+  startedBy: shapeCallStaff(call.startedBy),
+  completedBy: shapeCallStaff(call.completedBy),
+});
+
+const shapeAvailableStaff = (staff = {}) => ({
+  _id: staff._id,
+  name: staff.name || "",
+  role: staff.role || "",
+});
+
 exports.createWaiterCall = async (req, res) => {
   try {
     const { sessionId, callType, priority, message, coordinates } = req.body;
@@ -49,7 +102,12 @@ exports.createWaiterCall = async (req, res) => {
       coordinates: coordinates || null,
     });
 
-    return sendSuccess(res, 201, "Waiter call created successfully", waiterCall);
+    return sendSuccess(
+      res,
+      201,
+      "Waiter call created successfully",
+      shapeWaiterCall(waiterCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to create waiter call");
   }
@@ -66,7 +124,12 @@ exports.acknowledgeCall = async (req, res) => {
       estimatedTime
     );
 
-    return sendSuccess(res, 200, "Call acknowledged successfully", waiterCall);
+    return sendSuccess(
+      res,
+      200,
+      "Call acknowledged successfully",
+      shapeWaiterCall(waiterCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to acknowledge call");
   }
@@ -83,7 +146,12 @@ exports.completeCall = async (req, res) => {
       resolutionNotes
     );
 
-    return sendSuccess(res, 200, "Call completed successfully", waiterCall);
+    return sendSuccess(
+      res,
+      200,
+      "Call completed successfully",
+      shapeWaiterCall(waiterCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to complete call");
   }
@@ -99,7 +167,12 @@ exports.cancelCall = async (req, res) => {
     }
 
     const waiterCall = await waiterCallManager.cancelCall(callId, sessionId, reason || "");
-    return sendSuccess(res, 200, "Call cancelled successfully", waiterCall);
+    return sendSuccess(
+      res,
+      200,
+      "Call cancelled successfully",
+      shapeWaiterCall(waiterCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to cancel call");
   }
@@ -115,7 +188,13 @@ exports.getPendingCalls = async (req, res) => {
     if (priority) filters.priority = priority;
 
     const pendingCalls = await waiterCallManager.getPendingCalls(filters);
-    return sendSuccess(res, 200, null, pendingCalls, { count: pendingCalls.length });
+    return sendSuccess(
+      res,
+      200,
+      null,
+      pendingCalls.map((call) => shapeWaiterCall(call)),
+      { count: pendingCalls.length },
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to get pending calls");
   }
@@ -124,7 +203,13 @@ exports.getPendingCalls = async (req, res) => {
 exports.getActiveCalls = async (_req, res) => {
   try {
     const activeCalls = await waiterCallManager.getActiveCalls();
-    return sendSuccess(res, 200, null, activeCalls, { count: activeCalls.length });
+    return sendSuccess(
+      res,
+      200,
+      null,
+      activeCalls.map((call) => shapeWaiterCall(call)),
+      { count: activeCalls.length },
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to get active calls");
   }
@@ -139,7 +224,13 @@ exports.getSessionActiveCalls = async (req, res) => {
     }
 
     const activeCalls = await waiterCallManager.getSessionActiveCalls(sessionId);
-    return sendSuccess(res, 200, null, activeCalls, { count: activeCalls.length });
+    return sendSuccess(
+      res,
+      200,
+      null,
+      activeCalls.map((call) => shapeWaiterCall(call)),
+      { count: activeCalls.length },
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to get session active calls");
   }
@@ -223,7 +314,7 @@ exports.getAllCalls = async (req, res) => {
       const paginatedCalls = search ? calls.slice(skip, skip + limitNum) : calls;
 
       return {
-        data: paginatedCalls,
+        data: paginatedCalls.map((call) => shapeWaiterCall(call)),
         count: paginatedCalls.length,
         total,
         pagination: {
@@ -269,8 +360,20 @@ exports.getStaffPerformance = async (req, res) => {
 
 exports.getCallDashboard = async (_req, res) => {
   try {
-    const dashboardData = await waiterCallManager.getCallDashboard();
-    return sendSuccess(res, 200, null, dashboardData);
+    const statistics = await waiterCallManager.getCallStatistics("today");
+    return sendSuccess(res, 200, null, {
+      statistics: {
+        totalCalls: Number(statistics?.totalCalls || 0),
+        pendingCalls: Number(statistics?.pendingCalls || 0),
+        activeCalls: Number(statistics?.activeCalls || 0),
+        avgResponseTime: Number(statistics?.avgResponseTime || 0),
+      },
+      totalCalls: Number(statistics?.totalCalls || 0),
+      pendingCalls: Number(statistics?.pendingCalls || 0),
+      activeCalls: Number(statistics?.activeCalls || 0),
+      avgResponseTime: Number(statistics?.avgResponseTime || 0),
+      lastUpdated: new Date(),
+    });
   } catch (error) {
     return handleCallError(res, error, "Failed to get dashboard data");
   }
@@ -286,7 +389,12 @@ exports.updateCallStatus = async (req, res) => {
     }
 
     const updatedCall = await waiterCallManager.updateCallStatus(callId, status, req.user.id, notes);
-    return sendSuccess(res, 200, "Call status updated successfully", updatedCall);
+    return sendSuccess(
+      res,
+      200,
+      "Call status updated successfully",
+      shapeWaiterCall(updatedCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to update call status");
   }
@@ -302,7 +410,12 @@ exports.assignCallToStaff = async (req, res) => {
     }
 
     const assignedCall = await waiterCallManager.assignCallToStaff(callId, staffId, req.user.id);
-    return sendSuccess(res, 200, "Call assigned successfully", assignedCall);
+    return sendSuccess(
+      res,
+      200,
+      "Call assigned successfully",
+      shapeWaiterCall(assignedCall),
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to assign call");
   }
@@ -332,7 +445,13 @@ exports.getMyAssignedCalls = async (req, res) => {
 exports.getAvailableStaff = async (_req, res) => {
   try {
     const availableStaff = await waiterCallManager.getAvailableStaff();
-    return sendSuccess(res, 200, null, availableStaff, { count: availableStaff.length });
+    return sendSuccess(
+      res,
+      200,
+      null,
+      availableStaff.map((staff) => shapeAvailableStaff(staff)),
+      { count: availableStaff.length },
+    );
   } catch (error) {
     return handleCallError(res, error, "Failed to get available staff");
   }

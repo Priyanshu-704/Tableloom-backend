@@ -5,6 +5,47 @@ const KitchenStation = require("../models/KitchenStation");
 const mongoose = require("mongoose");
 const delayMonitor = require("../utils/delayMonitor");
 
+const shapeDelayMonitorStatus = (status = {}) => ({
+  isRunning: Boolean(status?.isRunning),
+  lastCheck: status?.lastCheck || null,
+  lastRunSummary: status?.lastRunSummary
+    ? {
+        delayedOrdersFound: Number(status.lastRunSummary.delayedOrdersFound || 0),
+      }
+    : {
+        delayedOrdersFound: 0,
+      },
+});
+
+const shapeKitchenOrderItem = (item = {}) => ({
+  _id: item?._id,
+  menuItemName: item?.menuItemName || "",
+  quantity: Number(item?.quantity || 0),
+  status: item?.status || "pending",
+  preparationTime: Number(item?.preparationTime || 0),
+  estimatedCompletion: item?.estimatedCompletion || null,
+  notes: item?.notes || item?.specialInstructions || "",
+});
+
+const shapeStationOrder = (order = {}) => ({
+  _id: order?._id,
+  orderNumber: order?.orderNumber || "",
+  priority: order?.priority || "normal",
+  createdAt: order?.createdAt || null,
+  table: {
+    tableNumber: order?.tableNumber || null,
+  },
+  stationItems: Array.isArray(order?.stationItems)
+    ? order.stationItems.map((item) => shapeKitchenOrderItem(item))
+    : [],
+});
+
+const shapeKitchenActionData = (kitchenOrder = {}) => ({
+  _id: kitchenOrder?._id,
+  orderNumber: kitchenOrder?.orderNumber || "",
+  overallStatus: kitchenOrder?.overallStatus || "",
+});
+
 
 exports.startPreparingItem = async (req, res) => {
   try {
@@ -18,7 +59,7 @@ exports.startPreparingItem = async (req, res) => {
    res.status(200).json({
       success: true,
       message: "Item preparation started",
-      data: kitchenOrder,
+      data: shapeKitchenActionData(kitchenOrder),
     });
   } catch (error) {
     logger.error(error);
@@ -53,7 +94,7 @@ exports.markItemReady = async (req, res) => {
    res.status(200).json({
       success: true,
       message: "Item marked as ready",
-      data: kitchenOrder,
+      data: shapeKitchenActionData(kitchenOrder),
     });
   } catch (error) {
     logger.error(error);
@@ -88,7 +129,7 @@ exports.markItemServed = async (req, res) => {
    res.status(200).json({
       success: true,
       message: "Item marked as served",
-      data: kitchenOrder,
+      data: shapeKitchenActionData(kitchenOrder),
     });
   } catch (error) {
     logger.error(error);
@@ -412,7 +453,12 @@ exports.getDelayedOrders = async (req, res) => {
 
    res.status(200).json({
       success: true,
-      data: delayedOrders,
+      data: {
+        totalDelayed: Number(delayedOrders?.totalDelayed || 0),
+        criticalDelays: Number(delayedOrders?.criticalDelays || 0),
+        warningDelays: Number(delayedOrders?.warningDelays || 0),
+        updatedAt: delayedOrders?.updatedAt || null,
+      },
       timestamp: new Date(),
     });
   } catch (error) {
@@ -432,10 +478,12 @@ exports.checkDelayedOrders = async (req, res) => {
    res.status(200).json({
       success: true,
       message: `Found ${delayedOrders.length} delayed orders`,
-      data: delayedOrders,
+      data: {
+        delayedOrdersFound: delayedOrders.length,
+      },
       timestamp: new Date(),
       meta: {
-        delayMonitorStatus: delayMonitor.getStatus(),
+        delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
       },
     });
   } catch (error) {
@@ -452,7 +500,7 @@ exports.getDelayMonitorStatus = async (_req, res) => {
   try {
     res.status(200).json({
       success: true,
-      data: delayMonitor.getStatus(),
+      data: shapeDelayMonitorStatus(delayMonitor.getStatus()),
     });
   } catch (error) {
     logger.error(error);
@@ -615,7 +663,7 @@ exports.getOrdersByStation = async (req, res) => {
    res.status(200).json({
       success: true,
       count: orders.length,
-      data: orders,
+      data: orders.map((order) => shapeStationOrder(order)),
       station: {
         id: station._id,
         name: station.name,
@@ -882,19 +930,9 @@ exports.getStationStatistics = async (req, res) => {
           _id: station._id,
           name: station.name,
           stationType: station.stationType,
-          currentLoad: station.currentLoad,
           capacity: station.capacity,
-          loadPercentage: Math.round(
-            (station.currentLoad / station.capacity) * 100
-          ),
         },
-        dailyStatistics: statistics,
         overallStats,
-        dateRange: {
-          startDate: startDate.toISOString().split("T")[0],
-          endDate: new Date().toISOString().split("T")[0],
-          days: parseInt(days),
-        },
       },
     });
   } catch (error) {

@@ -28,6 +28,60 @@ const shapeOrderHistorySummary = (order) => ({
     : [],
 });
 
+const shapeOrderItemResponse = (item = {}, index = 0) => {
+  const quantity = Number(item.quantity || 0);
+  const unitPrice = Number(item.unitPrice || item.price || 0);
+  const totalPrice =
+    Number(item.totalPrice) || unitPrice * quantity;
+
+  return {
+    _id: item._id || `${item.menuItem?._id || "item"}-${index}`,
+    quantity,
+    unitPrice,
+    totalPrice,
+    name: item.menuItem?.name || item.name || "Menu item",
+    sizeName: item.sizeName || item.sizeId?.name || "",
+    notes: item.notes || item.specialInstructions || "",
+    specialInstructions: item.specialInstructions || "",
+    menuItem: item.menuItem
+      ? {
+          _id: item.menuItem._id,
+          name: item.menuItem.name,
+        }
+      : null,
+    sizeId: item.sizeId
+      ? {
+          _id: item.sizeId._id,
+          name: item.sizeId.name,
+        }
+      : null,
+  };
+};
+
+const shapeOrderResponse = (order = {}) => ({
+  _id: order._id,
+  orderNumber: order.orderNumber,
+  status: order.status,
+  paymentStatus: order.paymentStatus,
+  totalAmount: Number(order.totalAmount || 0),
+  currency: order.currency || "INR",
+  specialInstructions: order.specialInstructions || "",
+  preparationTime: Number(order.preparationTime || 0),
+  estimatedReadyTime: order.estimatedReadyTime || null,
+  orderPlacedAt: order.orderPlacedAt || order.createdAt || null,
+  createdAt: order.createdAt || null,
+  table: order.table
+    ? {
+        _id: order.table._id,
+        tableNumber: order.table.tableNumber,
+        tableName: order.table.tableName || "",
+      }
+    : null,
+  items: Array.isArray(order.items)
+    ? order.items.map((item, index) => shapeOrderItemResponse(item, index))
+    : [],
+});
+
 
 const transformOrderData = (order, req) => {
   if (!order) return null;
@@ -91,11 +145,13 @@ const resolveOrderStatisticsDateRange = (query = {}) => {
 exports.getOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate('customer', 'sessionId name phone email')
-      .populate('table', 'tableNumber tableName capacity location')
-      .populate('items.menuItem', 'name description image thumbnail category tags nutritionalInfo allergens ingredients')
-      .populate('cancelledBy', 'name')
-      .populate('items.sizeId', 'name code'); 
+      .select(
+        "orderNumber status paymentStatus totalAmount currency specialInstructions preparationTime estimatedReadyTime orderPlacedAt createdAt table items",
+      )
+      .populate("table", "tableNumber tableName")
+      .populate("items.menuItem", "name")
+      .populate("items.sizeId", "name")
+      .lean();
 
     if (!order) {
       return res.status(404).json({
@@ -104,11 +160,9 @@ exports.getOrder = async (req, res) => {
       });
     }
 
-    const transformedOrder = transformOrderData(order, req);
-
    res.status(200).json({
       success: true,
-      data: transformedOrder
+      data: shapeOrderResponse(order)
     });
   } catch (error) {
     logger.error(error);
@@ -138,11 +192,14 @@ exports.getOrderBySession = async (req, res) => {
     }
 
     const order = await Order.findOne({ customer: customer._id })
-      .populate('customer', 'sessionId name phone email')
-      .populate('table', 'tableNumber tableName capacity location')
-      .populate('items.menuItem', 'name description image thumbnail category tags nutritionalInfo allergens ingredients')
-      .populate('items.sizeId', 'name code')
-      .sort({ createdAt: -1 });
+      .select(
+        "orderNumber status paymentStatus totalAmount currency specialInstructions preparationTime estimatedReadyTime orderPlacedAt createdAt table items",
+      )
+      .populate("table", "tableNumber tableName")
+      .populate("items.menuItem", "name")
+      .populate("items.sizeId", "name")
+      .sort({ createdAt: -1 })
+      .lean();
 
     if (!order) {
       return res.status(404).json({
@@ -151,11 +208,9 @@ exports.getOrderBySession = async (req, res) => {
       });
     }
 
-    const transformedOrder = transformOrderData(order);
-
    res.status(200).json({
       success: true,
-      data: transformedOrder
+      data: shapeOrderResponse(order)
     });
   } catch (error) {
     logger.error(error);
@@ -524,11 +579,17 @@ exports.getAllOrders = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
 
     let ordersQuery = Order.find(query)
-      .populate('customer', 'name phone email')
-      .populate('table', 'tableNumber tableName')
-      .populate('items.menuItem', 'name image thumbnail')
-      .populate('items.sizeId', 'name code')
+      .select(
+        "orderNumber status paymentStatus totalAmount currency specialInstructions estimatedReadyTime orderPlacedAt createdAt table items",
+      )
+      .populate("table", "tableNumber tableName")
+      .populate("items.menuItem", "name")
+      .populate("items.sizeId", "name")
       .sort({ orderPlacedAt: -1 });
+
+    if (search) {
+      ordersQuery = ordersQuery.populate("customer", "name phone");
+    }
 
     if (!search) {
       ordersQuery = ordersQuery.skip(skip).limit(limitNum);
@@ -536,7 +597,21 @@ exports.getAllOrders = async (req, res) => {
 
     const orders = await ordersQuery;
 
-    let transformedOrders = orders.map(order => transformOrderData(order));
+    let transformedOrders = orders.map((order) => {
+      const orderObj = order.toObject ? order.toObject() : order;
+      const shapedOrder = shapeOrderResponse(orderObj);
+      return search
+        ? {
+            ...shapedOrder,
+            customer: orderObj.customer
+              ? {
+                  name: orderObj.customer.name || "",
+                  phone: orderObj.customer.phone || "",
+                }
+              : null,
+          }
+        : shapedOrder;
+    });
 
     if (search) {
       const keyword = search.trim().toLowerCase();
@@ -561,9 +636,9 @@ exports.getAllOrders = async (req, res) => {
     }
 
     const total = search ? transformedOrders.length : await Order.countDocuments(query);
-    const paginatedOrders = search
-      ? transformedOrders.slice(skip, skip + limitNum)
-      : transformedOrders;
+    const paginatedOrders = (
+      search ? transformedOrders.slice(skip, skip + limitNum) : transformedOrders
+    ).map(({ customer, ...order }) => order);
 
 
     const revenueStats = await Order.aggregate([

@@ -189,7 +189,7 @@ exports.getAvailableStaff = async () => {
     return await User.find({
       ...query,
     })
-      .select("name role isActive")
+      .select("name role")
       .lean();
   } catch (error) {
     logger.error("Get available staff failed:", error);
@@ -213,7 +213,7 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
       sessionId,
       status: { $in: ACTIVE_CALL_STATUSES },
     })
-      .populate("table", "tableNumber tableName location coordinates")
+      .populate("table", "tableNumber tableName location")
       .populate("customer", "name phone");
 
     if (existingActiveCall) {
@@ -262,7 +262,7 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
       urgencyLevel: this.calculateUrgencyLevel(callData.callType, callData.priority),
     });
 
-    await waiterCall.populate("table", "tableNumber tableName location coordinates");
+    await waiterCall.populate("table", "tableNumber tableName location");
     await waiterCall.populate("customer", "name phone");
     invalidateWaiterCallCaches();
 
@@ -336,8 +336,8 @@ exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
 
     await waiterCall.save();
     invalidateWaiterCallCaches();
-    await waiterCall.populate("acknowledgedBy", "name role profileImage");
-    await waiterCall.populate("table", "tableNumber tableName location coordinates");
+    await waiterCall.populate("acknowledgedBy", "name role");
+    await waiterCall.populate("table", "tableNumber tableName location");
 
     const payload = {
       ...buildCallPayload(waiterCall),
@@ -385,7 +385,7 @@ exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
 
     await waiterCall.save();
     invalidateWaiterCallCaches();
-    await waiterCall.populate("completedBy", "name role profileImage");
+    await waiterCall.populate("completedBy", "name role");
     await waiterCall.populate("table", "tableNumber tableName location");
 
     const payload = {
@@ -443,7 +443,7 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
 
     await waiterCall.save();
     invalidateWaiterCallCaches();
-    await waiterCall.populate("acknowledgedBy", "name role profileImage");
+    await waiterCall.populate("acknowledgedBy", "name role");
     await waiterCall.populate("startedBy", "name role");
     await waiterCall.populate("table", "tableNumber tableName location");
 
@@ -483,7 +483,7 @@ exports.getPendingCalls = async (filters = {}) => {
       WAITER_CALL_LIST_CACHE_TTL_MS,
       async () =>
         WaiterCall.find(query)
-          .populate("table", "tableNumber tableName location coordinates")
+          .populate("table", "tableNumber tableName location")
           .populate("customer", "name phone")
           .sort({ createdAt: 1 })
           .lean(),
@@ -501,9 +501,9 @@ exports.getActiveCalls = async () => {
       WAITER_CALL_LIST_CACHE_TTL_MS,
       async () =>
         WaiterCall.find({ status: { $in: ACTIVE_CALL_STATUSES } })
-          .populate("table", "tableNumber tableName location coordinates")
+          .populate("table", "tableNumber tableName location")
           .populate("customer", "name phone")
-          .populate("acknowledgedBy", "name role profileImage")
+          .populate("acknowledgedBy", "name role")
           .populate("assignedTo", "name role")
           .sort({ updatedAt: -1, createdAt: -1 })
           .lean(),
@@ -528,9 +528,9 @@ exports.getSessionActiveCalls = async (sessionId) => {
           sessionId,
           status: { $in: ACTIVE_CALL_STATUSES },
         })
-          .populate("table", "tableNumber tableName location coordinates")
+          .populate("table", "tableNumber tableName location")
           .populate("customer", "name phone")
-          .populate("acknowledgedBy", "name role profileImage")
+          .populate("acknowledgedBy", "name role")
           .populate("assignedTo", "name role")
           .sort({ updatedAt: -1, createdAt: -1 })
           .lean(),

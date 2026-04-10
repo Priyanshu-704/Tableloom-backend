@@ -13,6 +13,7 @@ const shapeCustomerSessionResponse = (session) => {
   return {
     _id: session._id,
     sessionId: session.sessionId,
+    isActive: Boolean(session.isActive),
     sessionStatus: session.sessionStatus,
     sessionStart: session.sessionStart,
     sessionEnd: session.sessionEnd || null,
@@ -20,6 +21,7 @@ const shapeCustomerSessionResponse = (session) => {
     paymentStatus: session.paymentStatus || "pending",
     paymentMethod: session.paymentMethod || "",
     totalAmount: Number(session.totalAmount || 0),
+    totalSpent: Number(session.totalSpent || session.totalAmount || 0),
     name: session.name || "",
     email: session.email || "",
     phone: session.phone || "",
@@ -864,6 +866,9 @@ exports.getAllSessions = async (req, res) => {
       mode === "active" ? { lastActivity: -1 } : { sessionStart: -1 };
 
     let sessionsQuery = Customer.find(query)
+      .select(
+        "sessionId isActive sessionStatus sessionStart sessionEnd lastActivity paymentStatus paymentMethod totalAmount totalSpent name email phone table currentOrder",
+      )
       .populate("table", "tableNumber tableName capacity location")
       .populate("currentOrder", "orderNumber status totalAmount items")
       .sort(sortCriteria);
@@ -894,11 +899,12 @@ exports.getAllSessions = async (req, res) => {
       pagination: {
         page: pageNum,
         limit: limitNum,
+        total,
         pages: Math.ceil(total / limitNum),
         hasNext: pageNum * limitNum < total,
         hasPrev: pageNum > 1,
       },
-      data: paginatedSessions,
+      data: paginatedSessions.map((session) => shapeCustomerSessionResponse(session)),
     };
 
     return res.status(200).json(response);

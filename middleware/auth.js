@@ -28,9 +28,25 @@ exports.checkPermission = (user, permission) => {
 const isSafeMethod = (method = "") =>
   ["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase());
 
-const isAllowedSuperAdminTenantMutation = (req) => {
+const isAllowedSuperAdminMutation = (req) => {
   const normalizedPath = String(req.path || "");
   return normalizedPath === "/logout";
+};
+
+const isSuperAdminReadOnlyViolation = (req) =>
+  String(req.user?.role || "").toLowerCase() === "super_admin" &&
+  !isSafeMethod(req.method) &&
+  !isAllowedSuperAdminMutation(req);
+
+const blockSuperAdminWrite = (req, res) => {
+  logger.warn(
+    `[SECURITY] Super Admin attempted WRITE operation on ${req.originalUrl || req.url || req.path || "unknown-route"} (${String(req.method || "").toUpperCase()})`,
+  );
+
+  return res.status(403).json({
+    success: false,
+    message: "Super admin monitoring mode is read-only",
+  });
 };
 
 exports.protect = async (req, res, next) => {
@@ -81,17 +97,8 @@ exports.protect = async (req, res, next) => {
       });
     }
 
-    if (
-      requestTenantId &&
-      req.user?.role === "super_admin" &&
-      !isSafeMethod(req.method) &&
-      !isAllowedSuperAdminTenantMutation(req)
-    ) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Super admin monitoring mode is read-only inside restaurant workspaces",
-      });
+    if (isSuperAdminReadOnlyViolation(req)) {
+      return blockSuperAdminWrite(req, res);
     }
 
     next();
@@ -187,17 +194,8 @@ exports.refreshAccessToken = async (req, res, next) => {
       });
     }
 
-    if (
-      requestTenantId &&
-      req.user?.role === "super_admin" &&
-      !isSafeMethod(req.method) &&
-      !isAllowedSuperAdminTenantMutation(req)
-    ) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "Super admin monitoring mode is read-only inside restaurant workspaces",
-      });
+    if (isSuperAdminReadOnlyViolation(req)) {
+      return blockSuperAdminWrite(req, res);
     }
 
     next();
