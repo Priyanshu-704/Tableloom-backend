@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const tenantScoped = require("../plugins/tenantScoped");
-
 const tableHistorySchema = new mongoose.Schema({
   table: {
     type: mongoose.Schema.ObjectId,
@@ -38,7 +37,5 @@ const tableHistorySchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
-
 tableHistorySchema.plugin(tenantScoped);
-
 module.exports = mongoose.model('TableHistory', tableHistorySchema);

@@ -1,4 +1,6 @@
-const { logger } = require("./../utils/logger.js");
+const {
+  logger
+} = require("./../utils/logger.js");
 const Category = require("../models/Category");
 const Coupon = require("../models/Coupon");
 const MenuItem = require("../models/MenuItem");
@@ -8,82 +10,73 @@ const notificationManager = require("../utils/notificationManager");
 const {
   parseCSV,
   generateCSVTemplate,
-  generateExportData,
+  generateExportData
 } = require("../utils/csvProcessor");
-const { getOrSetCache, clearCache } = require("../utils/responseCache");
-require("dotenv").config({ quiet: true });
-
-const { buildTenantImageAssetUrl, getApiBaseUrl } = require("../utils/assetUrl");
-const { deleteImageVariants } = require("../utils/imageStorage");
-
+const {
+  getOrSetCache,
+  clearCache
+} = require("../utils/responseCache");
+require("dotenv").config({
+  quiet: true
+});
+const {
+  buildTenantImageAssetUrl,
+  getApiBaseUrl
+} = require("../utils/assetUrl");
+const {
+  deleteImageVariants
+} = require("../utils/imageStorage");
 const MENU_CACHE_PREFIX = "menu:";
 const MENU_ITEMS_CACHE_TTL_MS = 15 * 1000;
 const MENU_FILTERS_CACHE_TTL_MS = 30 * 1000;
 const MENU_CATEGORIES_CACHE_TTL_MS = 20 * 1000;
 const MENU_SIZES_CACHE_TTL_MS = 30 * 1000;
-
 const invalidateMenuReadCaches = () => clearCache(MENU_CACHE_PREFIX);
-
-const isAdminMenuRequest = (req) =>
-  Boolean(
-    req.user &&
-      ["admin", "staff", "super-admin", "manager"].includes(req.user.role),
-  );
-
-const getMenuResponseView = (req) => {
+const isAdminMenuRequest = req => Boolean(req.user && ["admin", "staff", "super-admin", "manager"].includes(req.user.role));
+const getMenuResponseView = req => {
   const requestedView = String(req.query.view || "").toLowerCase();
   if (requestedView === "customer") {
     return "customer";
   }
-
   if (requestedView === "admin") {
     return "admin";
   }
-
   return isAdminMenuRequest(req) ? "admin" : "customer";
 };
-
 const buildImageAssets = (req, type, id, entity = {}) => {
   const hasAsset = Boolean(entity?.image || entity?.thumbnail);
-
   if (!hasAsset) {
     return {
       image: null,
-      thumbnail: null,
+      thumbnail: null
     };
   }
-
   return {
     image: buildTenantImageAssetUrl(req, `/images/${type}/${id}`),
     thumbnail: buildTenantImageAssetUrl(req, `/images/${type}/${id}`, {
-      variant: "thumbnail",
-    }),
+      variant: "thumbnail"
+    })
   };
 };
-
 const shapeMenuPrice = (price = {}, includeCostPrice = false) => ({
   price: price.price,
   size: price.sizeId || null,
-  ...(includeCostPrice ? { costPrice: price.costPrice || null } : {}),
+  ...(includeCostPrice ? {
+    costPrice: price.costPrice || null
+  } : {})
 });
-
 const shapeMenuItemForResponse = (req, item = {}, view = "customer") => {
   const isAdminView = view === "admin";
-
   return {
     _id: item._id,
     name: item.name,
     description: item.description || "",
     ...buildImageAssets(req, "menu-item", item._id, item),
-    category: item.category
-      ? {
-          _id: item.category._id,
-          name: item.category.name,
-        }
-      : null,
-    prices: Array.isArray(item.prices)
-      ? item.prices.map((price) => shapeMenuPrice(price, isAdminView))
-      : [],
+    category: item.category ? {
+      _id: item.category._id,
+      name: item.category.name
+    } : null,
+    prices: Array.isArray(item.prices) ? item.prices.map(price => shapeMenuPrice(price, isAdminView)) : [],
     activeDiscount: getActiveDiscount(item.discount),
     isAvailable: Boolean(item.isAvailable),
     isActive: Boolean(item.isActive),
@@ -95,43 +88,33 @@ const shapeMenuItemForResponse = (req, item = {}, view = "customer") => {
     orderCount: Number(item.orderCount || 0),
     preparationTime: Number(item.preparationTime || 0),
     tags: Array.isArray(item.tags) ? item.tags : [],
-    ...(isAdminView
-      ? {
-          station: item.station || null,
-          ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
-          allergens: Array.isArray(item.allergens) ? item.allergens : [],
-          nutritionalInfo: item.nutritionalInfo || {},
-          seasonal: item.seasonal || { isSeasonal: false },
-          discount: item.discount || {
-            isActive: false,
-            type: "percentage",
-            value: 0,
-          },
-        }
-      : {}),
+    ...(isAdminView ? {
+      station: item.station || null,
+      ingredients: Array.isArray(item.ingredients) ? item.ingredients : [],
+      allergens: Array.isArray(item.allergens) ? item.allergens : [],
+      nutritionalInfo: item.nutritionalInfo || {},
+      seasonal: item.seasonal || {
+        isSeasonal: false
+      },
+      discount: item.discount || {
+        isActive: false,
+        type: "percentage",
+        value: 0
+      }
+    } : {})
   };
 };
-
 const notifyMenuVisibilityChange = async ({
   menuItem,
   field,
   enabled,
-  actorId,
+  actorId
 }) => {
   if (!menuItem?._id || !field) {
     return;
   }
-
   const normalizedField = field === "isActive" ? "status" : "availability";
-  const nextStateLabel =
-    field === "isActive"
-      ? enabled
-        ? "active"
-        : "inactive"
-      : enabled
-        ? "available"
-        : "unavailable";
-
+  const nextStateLabel = field === "isActive" ? enabled ? "active" : "inactive" : enabled ? "available" : "unavailable";
   await notificationManager.createNotification({
     title: `Menu Item ${normalizedField === "status" ? "Status" : "Availability"} Changed`,
     message: `${menuItem.name} is now ${nextStateLabel}.`,
@@ -144,23 +127,20 @@ const notifyMenuVisibilityChange = async ({
     relatedTo: menuItem._id,
     relatedModel: "Inventory",
     actionRequired: false,
-    actions: [
-      {
-        label: "View Menu Items",
-        type: "link",
-        action: "/dashboard/menu/items",
-        color: "secondary",
-      },
-    ],
+    actions: [{
+      label: "View Menu Items",
+      type: "link",
+      action: "/dashboard/menu/items",
+      color: "secondary"
+    }],
     metadata: {
       menuItemId: menuItem._id,
       menuItemName: menuItem.name,
       field,
-      state: nextStateLabel,
-    },
+      state: nextStateLabel
+    }
   });
 };
-
 const shapeCategoryForResponse = (req, category = {}, includeStation = false) => ({
   _id: category._id,
   name: category.name,
@@ -168,37 +148,28 @@ const shapeCategoryForResponse = (req, category = {}, includeStation = false) =>
   ...buildImageAssets(req, "category", category._id, category),
   displayOrder: Number(category.displayOrder || 0),
   isActive: Boolean(category.isActive),
-  ...(includeStation
-    ? {
-        kitchenStation: category.kitchenStation
-          ? {
-              _id: category.kitchenStation._id,
-              name: category.kitchenStation.name,
-              stationType: category.kitchenStation.stationType,
-              status: category.kitchenStation.status,
-            }
-          : null,
-      }
-    : {}),
+  ...(includeStation ? {
+    kitchenStation: category.kitchenStation ? {
+      _id: category.kitchenStation._id,
+      name: category.kitchenStation.name,
+      stationType: category.kitchenStation.stationType,
+      status: category.kitchenStation.status
+    } : null
+  } : {})
 });
-
-const getCategoryWithStation = async (categoryId) => {
+const getCategoryWithStation = async categoryId => {
   if (!categoryId) {
     return null;
   }
-
-  return Category.findById(categoryId)
-    .select("_id kitchenStation")
-    .lean();
+  return Category.findById(categoryId).select("_id kitchenStation").lean();
 };
-
-const normalizeSeasonalData = (value) => {
+const normalizeSeasonalData = value => {
   if (value === undefined || value === null || value === "") {
-    return { isSeasonal: false };
+    return {
+      isSeasonal: false
+    };
   }
-
   let parsed = value;
-
   if (typeof value === "string") {
     try {
       parsed = JSON.parse(value);
@@ -206,20 +177,13 @@ const normalizeSeasonalData = (value) => {
       throw new Error("Invalid JSON format for seasonal");
     }
   }
-
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Seasonal data must be an object");
   }
-
   const normalized = {
-    isSeasonal:
-      parsed.isSeasonal === true ||
-      parsed.isSeasonal === "true" ||
-      parsed.isSeasonal === 1 ||
-      parsed.isSeasonal === "1",
-    seasonName: parsed.seasonName?.trim?.() || "",
+    isSeasonal: parsed.isSeasonal === true || parsed.isSeasonal === "true" || parsed.isSeasonal === 1 || parsed.isSeasonal === "1",
+    seasonName: parsed.seasonName?.trim?.() || ""
   };
-
   if (parsed.startDate) {
     const startDate = new Date(parsed.startDate);
     if (Number.isNaN(startDate.getTime())) {
@@ -227,7 +191,6 @@ const normalizeSeasonalData = (value) => {
     }
     normalized.startDate = startDate;
   }
-
   if (parsed.endDate) {
     const endDate = new Date(parsed.endDate);
     if (Number.isNaN(endDate.getTime())) {
@@ -235,26 +198,18 @@ const normalizeSeasonalData = (value) => {
     }
     normalized.endDate = endDate;
   }
-
-  if (
-    normalized.startDate &&
-    normalized.endDate &&
-    normalized.startDate > normalized.endDate
-  ) {
+  if (normalized.startDate && normalized.endDate && normalized.startDate > normalized.endDate) {
     throw new Error("Seasonal start date cannot be after end date");
   }
-
   if (!normalized.isSeasonal) {
     return {
       isSeasonal: false,
-      seasonName: "",
+      seasonName: ""
     };
   }
-
   return normalized;
 };
-
-const normalizeDiscountData = (value) => {
+const normalizeDiscountData = value => {
   if (value === undefined || value === null || value === "") {
     return {
       isActive: false,
@@ -263,56 +218,37 @@ const normalizeDiscountData = (value) => {
       code: "",
       description: "",
       startDate: null,
-      endDate: null,
+      endDate: null
     };
   }
-
   let parsed = value;
-
   if (typeof value === "string") {
     parsed = JSON.parse(value);
   }
-
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Discount data must be an object");
   }
-
   const normalized = {
-    isActive:
-      parsed.isActive === true ||
-      parsed.isActive === "true" ||
-      parsed.isActive === 1 ||
-      parsed.isActive === "1",
+    isActive: parsed.isActive === true || parsed.isActive === "true" || parsed.isActive === 1 || parsed.isActive === "1",
     type: parsed.type === "fixed" ? "fixed" : "percentage",
     value: Number(parsed.value || 0),
-    code: String(parsed.code || "")
-      .trim()
-      .toUpperCase(),
+    code: String(parsed.code || "").trim().toUpperCase(),
     description: String(parsed.description || "").trim(),
     startDate: parsed.startDate ? new Date(parsed.startDate) : null,
-    endDate: parsed.endDate ? new Date(parsed.endDate) : null,
+    endDate: parsed.endDate ? new Date(parsed.endDate) : null
   };
-
   if (Number.isNaN(normalized.value) || normalized.value < 0) {
     throw new Error("Discount value must be a non-negative number");
   }
-
   if (normalized.startDate && Number.isNaN(normalized.startDate.getTime())) {
     throw new Error("Invalid discount start date");
   }
-
   if (normalized.endDate && Number.isNaN(normalized.endDate.getTime())) {
     throw new Error("Invalid discount end date");
   }
-
-  if (
-    normalized.startDate &&
-    normalized.endDate &&
-    normalized.startDate > normalized.endDate
-  ) {
+  if (normalized.startDate && normalized.endDate && normalized.startDate > normalized.endDate) {
     throw new Error("Discount start date cannot be after end date");
   }
-
   if (!normalized.isActive || !normalized.value) {
     return {
       isActive: false,
@@ -321,348 +257,306 @@ const normalizeDiscountData = (value) => {
       code: normalized.code,
       description: normalized.description,
       startDate: normalized.startDate,
-      endDate: normalized.endDate,
+      endDate: normalized.endDate
     };
   }
-
   return normalized;
 };
-
 const getActiveDiscount = (discount = {}) => {
   if (!discount?.isActive || !Number(discount?.value || 0)) {
     return null;
   }
-
   const now = new Date();
   const startDate = discount.startDate ? new Date(discount.startDate) : null;
   const endDate = discount.endDate ? new Date(discount.endDate) : null;
-
   if (startDate && startDate > now) {
     return null;
   }
-
   if (endDate && endDate < now) {
     return null;
   }
-
   return discount;
 };
-
 exports.getSizes = async (req, res) => {
   try {
-    const { activeOnly } = req.query;
-    const isActiveOnly =
-      activeOnly === "true" ? true : activeOnly === "false" ? false : undefined;
+    const {
+      activeOnly
+    } = req.query;
+    const isActiveOnly = activeOnly === "true" ? true : activeOnly === "false" ? false : undefined;
     const query = {};
-
     if (isActiveOnly !== undefined) {
       query.isActive = isActiveOnly;
     }
-
     const cacheKey = `${MENU_CACHE_PREFIX}sizes:${req.tenantId || "public"}:${activeOnly ?? "all"}`;
-    const sizes = await getOrSetCache(cacheKey, MENU_SIZES_CACHE_TTL_MS, async () =>
-      Size.find(query)
-        .select("_id name code isActive")
-        .sort({ name: 1 })
-        .lean()
-    );
-
+    const sizes = await getOrSetCache(cacheKey, MENU_SIZES_CACHE_TTL_MS, async () => Size.find(query).select("_id name code isActive").sort({
+      name: 1
+    }).lean());
     res.status(200).json({
       success: true,
       count: sizes.length,
-      data: sizes,
+      data: sizes
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 };
-
 exports.createSize = async (req, res) => {
   try {
-    const { name, code, isActive } = req.body;
-
+    const {
+      name,
+      code,
+      isActive
+    } = req.body;
     const size = await Size.create({
       name,
       code,
       isActive: isActive ?? true,
-      createdBy: req.user.id,
+      createdBy: req.user.id
     });
-
     res.status(201).json({
       success: true,
-      message: "Size created successfully",
+      message: "Size created successfully"
     });
     invalidateMenuReadCaches();
   } catch (error) {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "A size with this name already exists",
+        message: "A size with this name already exists"
       });
     }
-
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.updateSize = async (req, res) => {
   try {
-    const size = await Size.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedBy: req.user._id },
-      { new: true, runValidators: true },
-    );
-
-    if (!size)
-      return res.status(404).json({ success: false, error: "Size not found" });
-
+    const size = await Size.findByIdAndUpdate(req.params.id, {
+      ...req.body,
+      updatedBy: req.user._id
+    }, {
+      new: true,
+      runValidators: true
+    });
+    if (!size) return res.status(404).json({
+      success: false,
+      error: "Size not found"
+    });
     res.status(200).json({
       success: true,
-      message: "Updated Successfully",
+      message: "Updated Successfully"
     });
     invalidateMenuReadCaches();
   } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
   }
 };
-
 exports.toggleSizeStatus = async (req, res) => {
   try {
     const size = await Size.findById(req.params.id);
-
-    if (!size)
-      return res.status(404).json({ success: false, error: "Size not found" });
-
+    if (!size) return res.status(404).json({
+      success: false,
+      error: "Size not found"
+    });
     size.isActive = !size.isActive;
     size.updatedBy = req.user._id;
-
     await size.save();
-
     res.status(200).json({
       success: true,
-      message: `Size is now ${size.isActive ? "Active" : "Inactive"}`,
+      message: `Size is now ${size.isActive ? "Active" : "Inactive"}`
     });
     invalidateMenuReadCaches();
   } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
+    res.status(400).json({
+      success: false,
+      error: error.message
+    });
   }
 };
-
-// ------categories -------
 exports.createCategory = async (req, res) => {
   try {
-    const { name, description, displayOrder, kitchenStation } = req.body;
-
+    const {
+      name,
+      description,
+      displayOrder,
+      kitchenStation
+    } = req.body;
     if (!String(name || "").trim()) {
       return res.status(400).json({
         success: false,
-        message: "Category name is required.",
+        message: "Category name is required."
       });
     }
-
     if (!kitchenStation) {
       return res.status(400).json({
         success: false,
-        message: "Kitchen station is required.",
+        message: "Kitchen station is required."
       });
     }
     const categoryData = {
       name: String(name).trim(),
       description: String(description || "").trim(),
-      displayOrder: Number.isFinite(Number(displayOrder))
-        ? Number(displayOrder)
-        : 0,
-      isActive:
-        req.body?.isActive === undefined
-          ? true
-          : req.body.isActive === true || req.body.isActive === "true",
-      createdBy: req.user._id,
+      displayOrder: Number.isFinite(Number(displayOrder)) ? Number(displayOrder) : 0,
+      isActive: req.body?.isActive === undefined ? true : req.body.isActive === true || req.body.isActive === "true",
+      createdBy: req.user._id
     };
-
     if (kitchenStation) {
       const KitchenStation = require("../models/KitchenStation");
       const stationExists = await KitchenStation.findById(kitchenStation);
       if (!stationExists) {
         return res.status(400).json({
           success: false,
-          message: "Kitchen station not found",
+          message: "Kitchen station not found"
         });
       }
       categoryData.kitchenStation = kitchenStation;
     }
-
     if (req.file) {
       if (!req.file.url) {
         return res.status(400).json({
           success: false,
-          message: "Image upload failed - no Cloudinary URL received",
+          message: "Image upload failed - no Cloudinary URL received"
         });
       }
-
       categoryData.image = req.file.url;
       categoryData.thumbnail = req.file.thumbnailUrl;
       categoryData.imagePublicId = req.file.publicId;
       categoryData.thumbnailPublicId = req.file.thumbnailPublicId;
       categoryData.imageProvider = req.file.storageProvider || "cloudinary";
     }
-
     const category = await Category.create(categoryData);
-
     const response = {
       success: true,
       message: "Category created successfully",
-      data: shapeCategoryForResponse(req, category, false),
+      data: shapeCategoryForResponse(req, category, false)
     };
-
     invalidateMenuReadCaches();
     return res.status(201).json(response);
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "Category with this name already exists",
+        message: "Category with this name already exists"
       });
     }
-
     return res.status(500).json({
       success: false,
       message: "Server error",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
-
 exports.getCategories = async (req, res) => {
   try {
-    const { activeOnly, withStation } = req.query;
-
+    const {
+      activeOnly,
+      withStation
+    } = req.query;
     let query = {};
-
-    const hasActiveOnlyFilter =
-      Object.prototype.hasOwnProperty.call(req.query, "activeOnly") &&
-      ["true", "false"].includes(String(activeOnly));
-    const hasWithStationFilter =
-      Object.prototype.hasOwnProperty.call(req.query, "withStation") &&
-      ["true", "false"].includes(String(withStation));
-
+    const hasActiveOnlyFilter = Object.prototype.hasOwnProperty.call(req.query, "activeOnly") && ["true", "false"].includes(String(activeOnly));
+    const hasWithStationFilter = Object.prototype.hasOwnProperty.call(req.query, "withStation") && ["true", "false"].includes(String(withStation));
     const isActiveOnly = hasActiveOnlyFilter ? activeOnly === "true" : undefined;
-
     if (isActiveOnly !== undefined) {
       query.isActive = isActiveOnly;
     }
-
-    const withStationFlag = hasWithStationFilter
-      ? withStation === "true"
-      : undefined;
-
+    const withStationFlag = hasWithStationFilter ? withStation === "true" : undefined;
     if (withStationFlag === true) {
-      query.kitchenStation = { $exists: true, $ne: null };
+      query.kitchenStation = {
+        $exists: true,
+        $ne: null
+      };
     }
-
     if (withStationFlag === false) {
-      query.kitchenStation = { $in: [null, undefined] };
+      query.kitchenStation = {
+        $in: [null, undefined]
+      };
     }
-
     const includeStation = withStationFlag !== false;
     const responseView = getMenuResponseView(req);
-    const cacheKey = `${MENU_CACHE_PREFIX}categories:${req.tenantId || "public"}:${responseView}:${JSON.stringify({ query, includeStation })}`;
-
-    const categories = await getOrSetCache(
-      cacheKey,
-      MENU_CATEGORIES_CACHE_TTL_MS,
-      async () => {
-        const categoryRows = await Category.find(query)
-          .select(
-            "name description image thumbnail displayOrder isActive kitchenStation"
-          )
-          .populate("kitchenStation", "name stationType status")
-          .sort({ displayOrder: 1, name: 1 })
-          .lean();
-
-        return categoryRows.map((category) =>
-          shapeCategoryForResponse(req, category, includeStation),
-        );
-      },
-    );
-
+    const cacheKey = `${MENU_CACHE_PREFIX}categories:${req.tenantId || "public"}:${responseView}:${JSON.stringify({
+      query,
+      includeStation
+    })}`;
+    const categories = await getOrSetCache(cacheKey, MENU_CATEGORIES_CACHE_TTL_MS, async () => {
+      const categoryRows = await Category.find(query).select("name description image thumbnail displayOrder isActive kitchenStation").populate("kitchenStation", "name stationType status").sort({
+        displayOrder: 1,
+        name: 1
+      }).lean();
+      return categoryRows.map(category => shapeCategoryForResponse(req, category, includeStation));
+    });
     res.status(200).json({
       success: true,
       count: categories.length,
-      data: categories,
+      data: categories
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getCategoryById = async (req, res) => {
   try {
-    const category = await Category.findById(req.params.id)
-      .populate("createdBy", "name")
-      .populate("kitchenStation", "name stationType")
-      .lean();
-
+    const category = await Category.findById(req.params.id).populate("createdBy", "name").populate("kitchenStation", "name stationType").lean();
     if (!category) {
       return res.status(404).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     const imageAssets = buildImageAssets(req, "category", category._id, category);
     category.image = imageAssets.image;
     category.thumbnail = imageAssets.thumbnail;
-
     category.storageType = category.image ? "asset" : "none";
-
     res.status(200).json({
       success: true,
-      data: category,
+      data: category
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.updateCategory = async (req, res) => {
   try {
-    const { kitchenStation, ...otherData } = req.body;
-
+    const {
+      kitchenStation,
+      ...otherData
+    } = req.body;
     const updateData = {
       ...otherData,
-      updatedBy: req.user.id,
+      updatedBy: req.user.id
     };
-
     const oldCategory = await Category.findById(req.params.id);
     if (!oldCategory) {
       return res.status(404).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     if (kitchenStation !== undefined) {
       if (kitchenStation) {
-        const stationExists =
-          await require("../models/KitchenStation").findById(kitchenStation);
+        const stationExists = await require("../models/KitchenStation").findById(kitchenStation);
         if (!stationExists) {
           return res.status(400).json({
             success: false,
-            message: "Kitchen station not found",
+            message: "Kitchen station not found"
           });
         }
         updateData.kitchenStation = kitchenStation;
@@ -670,15 +564,13 @@ exports.updateCategory = async (req, res) => {
         updateData.kitchenStation = null;
       }
     }
-
     if (req.file) {
       if (!req.file.url) {
         return res.status(400).json({
           success: false,
-          message: "Image upload failed - no Cloudinary URL received",
+          message: "Image upload failed - no Cloudinary URL received"
         });
       }
-
       if (oldCategory.image || oldCategory.thumbnail) {
         try {
           await deleteImageVariants({
@@ -686,70 +578,58 @@ exports.updateCategory = async (req, res) => {
             thumbnail: oldCategory.thumbnail,
             imagePublicId: oldCategory.imagePublicId,
             thumbnailPublicId: oldCategory.thumbnailPublicId,
-            provider: oldCategory.imageProvider,
+            provider: oldCategory.imageProvider
           });
           logger.info("Deleted old category image:", oldCategory.image);
         } catch (err) {
           logger.error("Cloudinary delete failed:", err);
         }
       }
-
       updateData.image = req.file.url;
       updateData.thumbnail = req.file.thumbnailUrl;
       updateData.imagePublicId = req.file.publicId;
       updateData.thumbnailPublicId = req.file.thumbnailPublicId;
       updateData.imageProvider = req.file.storageProvider || "cloudinary";
     }
-
-    const updatedCategory = await Category.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true },
-    ).populate("kitchenStation", "name stationType");
-
+    const updatedCategory = await Category.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true
+    }).populate("kitchenStation", "name stationType");
     const response = {
       success: true,
       message: "Category updated successfully",
-      data: shapeCategoryForResponse(req, updatedCategory.toObject(), true),
+      data: shapeCategoryForResponse(req, updatedCategory.toObject(), true)
     };
-
     invalidateMenuReadCaches();
     return res.status(200).json(response);
   } catch (error) {
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "Category with this name already exists",
+        message: "Category with this name already exists"
       });
     }
-
     return res.status(500).json({
       success: false,
       message: "Server error",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
-
 exports.toggleCategoryStatus = async (req, res) => {
   try {
     const category = await Category.findById(req.params.id);
-
     if (!category) {
       return res.status(404).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     category.isActive = !category.isActive;
     await category.save();
-
     res.status(200).json({
       success: true,
-      message: `Category ${
-        category.isActive ? "activated" : "deactivated"
-      } successfully`,
+      message: `Category ${category.isActive ? "activated" : "deactivated"} successfully`
     });
     invalidateMenuReadCaches();
   } catch (error) {
@@ -757,44 +637,36 @@ exports.toggleCategoryStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.deleteCategory = async (req, res) => {
   try {
     const categoryId = req.params.id;
-    const [category, linkedMenuItem] = await Promise.all([
-      Category.findById(categoryId).select(
-        "image thumbnail imagePublicId thumbnailPublicId imageProvider"
-      ),
-      MenuItem.exists({ category: categoryId }),
-    ]);
-
+    const [category, linkedMenuItem] = await Promise.all([Category.findById(categoryId).select("image thumbnail imagePublicId thumbnailPublicId imageProvider"), MenuItem.exists({
+      category: categoryId
+    })]);
     if (!category) {
       return res.status(404).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     if (linkedMenuItem) {
       return res.status(400).json({
         success: false,
-        message:
-          "Cannot delete category because menu items are linked to it. Remove or update those menu items first.",
+        message: "Cannot delete category because menu items are linked to it. Remove or update those menu items first."
       });
     }
-
-    await Category.deleteOne({ _id: categoryId });
-
+    await Category.deleteOne({
+      _id: categoryId
+    });
     res.status(200).json({
       success: true,
-      message: "Category deleted successfully",
+      message: "Category deleted successfully"
     });
     invalidateMenuReadCaches();
-
     if (category.image || category.thumbnail) {
       setImmediate(() => {
         deleteImageVariants({
@@ -802,12 +674,12 @@ exports.deleteCategory = async (req, res) => {
           thumbnail: category.thumbnail,
           imagePublicId: category.imagePublicId,
           thumbnailPublicId: category.thumbnailPublicId,
-          provider: category.imageProvider,
-        }).catch((error) => {
+          provider: category.imageProvider
+        }).catch(error => {
           logger.warn("Failed to delete category image asset", {
             categoryId,
             imagePublicId: category.imagePublicId,
-            error: error.message,
+            error: error.message
           });
         });
       });
@@ -817,37 +689,30 @@ exports.deleteCategory = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.createMenuItem = async (req, res) => {
   try {
     const menuData = {
       ...req.body,
       createdBy: req.user.id,
-      updatedBy: req.user.id,
+      updatedBy: req.user.id
     };
-
     delete menuData.station;
-
     const safeParseArray = (value, fieldName) => {
       if (value === undefined || value === null || value === "") {
         return [];
       }
-
       if (Array.isArray(value)) {
         return value;
       }
-
       if (typeof value === "string") {
         value = value.trim();
-
         if (value === "") {
           return [];
         }
-
         if (value.startsWith("[")) {
           try {
             const parsed = JSON.parse(value);
@@ -859,40 +724,28 @@ exports.createMenuItem = async (req, res) => {
             logger.error(`JSON parse error for ${fieldName}:`, error);
           }
         }
-
         if (value.includes(",")) {
-          return value
-            .split(",")
-            .map((item) => item.trim())
-            .filter((item) => item !== "");
+          return value.split(",").map(item => item.trim()).filter(item => item !== "");
         }
-
         return [value];
       }
-
       return [value];
     };
-
     const parseJsonObject = (value, fieldName) => {
       if (value === undefined || value === null || value === "") {
         return null;
       }
-
       if (typeof value === "object" && !Array.isArray(value)) {
         return value;
       }
-
       if (Array.isArray(value)) {
         return value;
       }
-
       if (typeof value === "string") {
         value = value.trim();
-
         if (value === "") {
           return null;
         }
-
         try {
           return JSON.parse(value);
         } catch (error) {
@@ -900,178 +753,126 @@ exports.createMenuItem = async (req, res) => {
           throw new Error(`Invalid JSON format for ${fieldName}`);
         }
       }
-
       return value;
     };
-
     try {
-      menuData.ingredients = safeParseArray(
-        menuData.ingredients,
-        "ingredients",
-      );
+      menuData.ingredients = safeParseArray(menuData.ingredients, "ingredients");
       menuData.allergens = safeParseArray(menuData.allergens, "allergens");
       menuData.tags = safeParseArray(menuData.tags, "tags");
-
       menuData.prices = parseJsonObject(menuData.prices, "prices");
-
-      menuData.nutritionalInfo = parseJsonObject(
-        menuData.nutritionalInfo,
-        "nutritionalInfo",
-      );
+      menuData.nutritionalInfo = parseJsonObject(menuData.nutritionalInfo, "nutritionalInfo");
       menuData.seasonal = normalizeSeasonalData(menuData.seasonal);
       menuData.discount = normalizeDiscountData(menuData.discount);
     } catch (error) {
       return res.status(400).json({
         success: false,
         message: error.message,
-        field: error.message.includes("ingredients")
-          ? "ingredients"
-          : error.message.includes("allergens")
-            ? "allergens"
-            : error.message.includes("tags")
-              ? "tags"
-              : error.message.includes("prices")
-                ? "prices"
-                : error.message.includes("nutritionalInfo")
-                  ? "nutritionalInfo"
-                  : error.message.includes("seasonal")
-                    ? "seasonal"
-                    : error.message.includes("Discount")
-                      ? "discount"
-                    : "unknown",
+        field: error.message.includes("ingredients") ? "ingredients" : error.message.includes("allergens") ? "allergens" : error.message.includes("tags") ? "tags" : error.message.includes("prices") ? "prices" : error.message.includes("nutritionalInfo") ? "nutritionalInfo" : error.message.includes("seasonal") ? "seasonal" : error.message.includes("Discount") ? "discount" : "unknown"
       });
     }
-
     if (!menuData.name || !menuData.name.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Menu item name is required",
+        message: "Menu item name is required"
       });
     }
-
     if (!menuData.category) {
       return res.status(400).json({
         success: false,
-        message: "Category is required",
+        message: "Category is required"
       });
     }
-
     const category = await getCategoryWithStation(menuData.category);
     if (!category) {
       return res.status(400).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     if (!category.kitchenStation) {
       return res.status(400).json({
         success: false,
-        message: "Selected category does not have a kitchen station",
+        message: "Selected category does not have a kitchen station"
       });
     }
-
     menuData.station = category.kitchenStation;
-
-    if (
-      !menuData.prices ||
-      !Array.isArray(menuData.prices) ||
-      menuData.prices.length === 0
-    ) {
+    if (!menuData.prices || !Array.isArray(menuData.prices) || menuData.prices.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "At least one price is required",
+        message: "At least one price is required"
       });
     }
-
     if (menuData.isVegetarian !== undefined) {
-      menuData.isVegetarian =
-        menuData.isVegetarian === "true" ||
-        menuData.isVegetarian === true ||
-        menuData.isVegetarian === "1";
+      menuData.isVegetarian = menuData.isVegetarian === "true" || menuData.isVegetarian === true || menuData.isVegetarian === "1";
     }
-
     if (menuData.spiceLevel !== undefined) {
       const spiceLevel = parseInt(menuData.spiceLevel);
       if (isNaN(spiceLevel) || spiceLevel < 0 || spiceLevel > 5) {
         return res.status(400).json({
           success: false,
-          message: "Spice level must be a number between 0 and 5",
+          message: "Spice level must be a number between 0 and 5"
         });
       }
       menuData.spiceLevel = spiceLevel;
     }
-
     const prepTime = parseInt(menuData.preparationTime, 10);
     if (isNaN(prepTime) || prepTime < 1) {
       return res.status(400).json({
         success: false,
-        message: "Preparation time is required and must be at least 1 minute",
+        message: "Preparation time is required and must be at least 1 minute"
       });
     }
     menuData.preparationTime = prepTime;
-
     const requestedSizeIds = [];
-
     for (const price of menuData.prices) {
       if (!price.sizeId || !price.price) {
         return res.status(400).json({
           success: false,
-          message: "Each price must have size and price fields",
+          message: "Each price must have size and price fields"
         });
       }
-
       requestedSizeIds.push(String(price.sizeId));
-
       const priceValue = parseFloat(price.price);
       if (isNaN(priceValue) || priceValue <= 0) {
         return res.status(400).json({
           success: false,
-          message: `Invalid price for size ${price.sizeId}: must be a positive number`,
+          message: `Invalid price for size ${price.sizeId}: must be a positive number`
         });
       }
       price.price = priceValue;
-
       if (price.costPrice !== undefined) {
         const costPriceValue = parseFloat(price.costPrice);
         if (isNaN(costPriceValue) || costPriceValue < 0) {
           return res.status(400).json({
             success: false,
-            message: `Invalid cost price for size ${price.sizeId}: must be a non-negative number`,
+            message: `Invalid cost price for size ${price.sizeId}: must be a non-negative number`
           });
         }
         price.costPrice = costPriceValue;
       }
     }
-
     try {
       const uniqueSizeIds = [...new Set(requestedSizeIds)];
-      const existingSizes = await Size.find({ _id: { $in: uniqueSizeIds } })
-        .select("_id")
-        .lean();
-      const existingSizeIds = new Set(
-        existingSizes.map((size) => String(size._id)),
-      );
-      const invalidSizeId = uniqueSizeIds.find(
-        (sizeId) => !existingSizeIds.has(sizeId),
-      );
-
+      const existingSizes = await Size.find({
+        _id: {
+          $in: uniqueSizeIds
+        }
+      }).select("_id").lean();
+      const existingSizeIds = new Set(existingSizes.map(size => String(size._id)));
+      const invalidSizeId = uniqueSizeIds.find(sizeId => !existingSizeIds.has(sizeId));
       if (invalidSizeId) {
         return res.status(400).json({
           success: false,
-          message: `Invalid size ID: ${invalidSizeId}`,
+          message: `Invalid size ID: ${invalidSizeId}`
         });
       }
     } catch (error) {
-      const castErrorValue =
-        error?.name === "CastError" ? error.value : requestedSizeIds[0];
-
+      const castErrorValue = error?.name === "CastError" ? error.value : requestedSizeIds[0];
       return res.status(400).json({
         success: false,
-        message: `Invalid size ID format: ${castErrorValue}`,
+        message: `Invalid size ID format: ${castErrorValue}`
       });
     }
-
     if (req.file) {
       if (req.file.url) {
         menuData.image = req.file.url;
@@ -1083,84 +884,56 @@ exports.createMenuItem = async (req, res) => {
       } else {
         return res.status(400).json({
           success: false,
-          message: "Image upload failed - no file path received",
+          message: "Image upload failed - no file path received"
         });
       }
     }
-
-    menuData.isAvailable =
-      menuData.isAvailable !== undefined
-        ? menuData.isAvailable === "true" || menuData.isAvailable === true
-        : true;
-
-    menuData.isActive =
-      menuData.isActive !== undefined
-        ? menuData.isActive === "true" || menuData.isActive === true
-        : true;
-
+    menuData.isAvailable = menuData.isAvailable !== undefined ? menuData.isAvailable === "true" || menuData.isAvailable === true : true;
+    menuData.isActive = menuData.isActive !== undefined ? menuData.isActive === "true" || menuData.isActive === true : true;
     const createdMenuItem = await MenuItem.create(menuData);
-    const responseMenuItem = await MenuItem.findById(createdMenuItem._id)
-      .populate("category", "name")
-      .populate("prices.sizeId", "name code")
-      .populate("station", "name stationType status")
-      .lean();
-
+    const responseMenuItem = await MenuItem.findById(createdMenuItem._id).populate("category", "name").populate("prices.sizeId", "name code").populate("station", "name stationType status").lean();
     invalidateMenuReadCaches();
-
     return res.status(201).json({
       success: true,
       message: "Menu item created successfully",
-      data: shapeMenuItemForResponse(req, responseMenuItem, "admin"),
+      data: shapeMenuItemForResponse(req, responseMenuItem, "admin")
     });
   } catch (error) {
     logger.error("Create menu item error:", error);
-
-    // Handle duplicate key error
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(409).json({
         success: false,
-        message: `Menu item with this ${field} already exists`,
+        message: `Menu item with this ${field} already exists`
       });
     }
-
-    // Handle validation errors
     if (error.name === "ValidationError") {
-      const errors = Object.values(error.errors).map((err) => ({
+      const errors = Object.values(error.errors).map(err => ({
         field: err.path,
-        message: err.message,
+        message: err.message
       }));
-
       return res.status(400).json({
         success: false,
         message: "Validation failed",
-        errors: errors,
+        errors: errors
       });
     }
-
-    // Handle CastError (invalid ObjectId)
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
-        message: `Invalid ${error.path}: ${error.value}`,
+        message: `Invalid ${error.path}: ${error.value}`
       });
     }
-
-    // Default error response
     return res.status(500).json({
       success: false,
       message: "Internal server error while creating menu item",
-      error:
-        process.env.NODE_ENV === "development"
-          ? {
-              message: error.message,
-              stack: error.stack,
-            }
-          : undefined,
+      error: process.env.NODE_ENV === "development" ? {
+        message: error.message,
+        stack: error.stack
+      } : undefined
     });
   }
 };
-
 exports.getMenuItems = async (req, res) => {
   try {
     const {
@@ -1177,14 +950,11 @@ exports.getMenuItems = async (req, res) => {
       activeOnly = "true",
       page = 1,
       limit = 20,
-      sortBy = "",
+      sortBy = ""
     } = req.query;
-
     const responseView = getMenuResponseView(req);
     const isAdmin = responseView === "admin";
-
     let mongoQuery = {};
-
     if (activeOnly === "true") mongoQuery.isActive = true;
     if (isAvailable === "true") {
       mongoQuery.isAvailable = true;
@@ -1194,307 +964,301 @@ exports.getMenuItems = async (req, res) => {
       mongoQuery.isAvailable = true;
     }
     if (category) mongoQuery.category = category;
-
     if (query) {
-      mongoQuery.$or = [
-        { name: { $regex: query, $options: "i" } },
-        { description: { $regex: query, $options: "i" } },
-        { ingredients: { $in: [new RegExp(query, "i")] } },
-        { tags: { $in: [new RegExp(query, "i")] } },
-      ];
+      mongoQuery.$or = [{
+        name: {
+          $regex: query,
+          $options: "i"
+        }
+      }, {
+        description: {
+          $regex: query,
+          $options: "i"
+        }
+      }, {
+        ingredients: {
+          $in: [new RegExp(query, "i")]
+        }
+      }, {
+        tags: {
+          $in: [new RegExp(query, "i")]
+        }
+      }];
     }
-
     if (dietary) {
       const dietaryArr = dietary.split(",");
       if (dietaryArr.includes("vegetarian")) mongoQuery.isVegetarian = true;
-      if (dietaryArr.includes("nonVegetarian"))
-        mongoQuery.isNonVegetarian = true;
+      if (dietaryArr.includes("nonVegetarian")) mongoQuery.isNonVegetarian = true;
       if (dietaryArr.includes("vegan")) mongoQuery.isVegan = true;
       if (dietaryArr.includes("glutenFree")) mongoQuery.isGlutenFree = true;
     }
-
     if (tags) {
       const tagArray = tags.split(",");
-      mongoQuery.tags = { $in: tagArray };
+      mongoQuery.tags = {
+        $in: tagArray
+      };
     }
-
     if (sizeIds) {
-      const sizeIdArray = sizeIds
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean);
-
+      const sizeIdArray = sizeIds.split(",").map(value => value.trim()).filter(Boolean);
       if (sizeIdArray.length > 0) {
-        mongoQuery["prices.sizeId"] = { $in: sizeIdArray };
+        mongoQuery["prices.sizeId"] = {
+          $in: sizeIdArray
+        };
       }
     }
-
     if (spiceLevels) {
-      const spiceLevelArray = spiceLevels
-        .split(",")
-        .map((value) => parseInt(value, 10))
-        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 5);
-
+      const spiceLevelArray = spiceLevels.split(",").map(value => parseInt(value, 10)).filter(value => Number.isInteger(value) && value >= 0 && value <= 5);
       if (spiceLevelArray.length > 0) {
-        mongoQuery.spiceLevel = { $in: spiceLevelArray };
+        mongoQuery.spiceLevel = {
+          $in: spiceLevelArray
+        };
       }
     }
-
     if (minPrice || maxPrice) {
       const priceCond = {};
       if (minPrice) priceCond.$gte = parseFloat(minPrice);
       if (maxPrice) priceCond.$lte = parseFloat(maxPrice);
-
       mongoQuery.prices = {
-        $elemMatch: { price: priceCond },
+        $elemMatch: {
+          price: priceCond
+        }
       };
     }
-
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
-
-    const sortConfig =
-      sortBy === "price_low"
-        ? { "prices.0.price": 1, name: 1 }
-        : sortBy === "price_high"
-          ? { "prices.0.price": -1, name: 1 }
-          : sortBy === "popular"
-            ? { orderCount: -1, name: 1 }
-            : { displayOrder: 1, name: 1 };
-
-    const menuItemSelect = isAdmin
-      ? "name description image thumbnail category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices"
-      : "name description image thumbnail category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
-
+    const sortConfig = sortBy === "price_low" ? {
+      "prices.0.price": 1,
+      name: 1
+    } : sortBy === "price_high" ? {
+      "prices.0.price": -1,
+      name: 1
+    } : sortBy === "popular" ? {
+      orderCount: -1,
+      name: 1
+    } : {
+      displayOrder: 1,
+      name: 1
+    };
+    const menuItemSelect = isAdmin ? "name description image thumbnail category station ingredients allergens spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags nutritionalInfo orderCount seasonal discount prices" : "name description image thumbnail category spiceLevel preparationTime isVegetarian isNonVegetarian isVegan isGlutenFree isAvailable isActive displayOrder tags orderCount discount prices";
     const cacheKey = `${MENU_CACHE_PREFIX}items:${req.tenantId || "public"}:${responseView}:${getApiBaseUrl(req)}:${req.originalUrl}`;
-    const payload = await getOrSetCache(
-      cacheKey,
-      MENU_ITEMS_CACHE_TTL_MS,
-      async () => {
-        let menuItemsQuery = MenuItem.find(mongoQuery)
-          .select(menuItemSelect)
-          .populate("category", "name")
-          .populate("prices.sizeId", "name code")
-          .sort(query ? { name: 1 } : sortConfig)
-          .skip(skip)
-          .limit(limitNum)
-          .lean();
-
-        if (isAdmin) {
-          menuItemsQuery = menuItemsQuery.populate("station", "name stationType status");
-        }
-
-        const [menuItems, total] = await Promise.all([
-          menuItemsQuery,
-          MenuItem.countDocuments(mongoQuery),
-        ]);
-
-        return {
-          success: true,
-          count: menuItems.length,
-          total,
-          pagination: {
-            page: pageNum,
-            pages: Math.ceil(total / limitNum),
-          },
-          data: menuItems.map((item) =>
-            shapeMenuItemForResponse(req, item, responseView),
-          ),
-        };
-      },
-    );
-
+    const payload = await getOrSetCache(cacheKey, MENU_ITEMS_CACHE_TTL_MS, async () => {
+      let menuItemsQuery = MenuItem.find(mongoQuery).select(menuItemSelect).populate("category", "name").populate("prices.sizeId", "name code").sort(query ? {
+        name: 1
+      } : sortConfig).skip(skip).limit(limitNum).lean();
+      if (isAdmin) {
+        menuItemsQuery = menuItemsQuery.populate("station", "name stationType status");
+      }
+      const [menuItems, total] = await Promise.all([menuItemsQuery, MenuItem.countDocuments(mongoQuery)]);
+      return {
+        success: true,
+        count: menuItems.length,
+        total,
+        pagination: {
+          page: pageNum,
+          pages: Math.ceil(total / limitNum)
+        },
+        data: menuItems.map(item => shapeMenuItemForResponse(req, item, responseView))
+      };
+    });
     return res.status(200).json(payload);
   } catch (error) {
     logger.error("Get menu items error:", error);
     return res.status(500).json({
       success: false,
       message: "Server error fetching menu items",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
-
 exports.getMenuFilterOptions = async (req, res) => {
   try {
     const baseQuery = {
       isActive: true,
-      isAvailable: true,
+      isAvailable: true
     };
-
     const cacheKey = `${MENU_CACHE_PREFIX}filters:${req.tenantId || "public"}`;
-    const data = await getOrSetCache(
-      cacheKey,
-      MENU_FILTERS_CACHE_TTL_MS,
-      async () => {
-        const [sizes, tagStats, priceRange, spiceStats, dietaryCounts] =
-          await Promise.all([
-            Size.find({ isActive: true })
-              .sort({ name: 1 })
-              .select("_id name code")
-              .lean(),
-            MenuItem.aggregate([
-              { $match: baseQuery },
-              { $unwind: "$tags" },
-              {
-                $group: {
-                  _id: { $toLower: "$tags" },
-                  count: { $sum: 1 },
-                  label: { $first: "$tags" },
-                },
-              },
-              { $sort: { count: -1, label: 1 } },
-              { $limit: 12 },
-            ]),
-            MenuItem.aggregate([
-              { $match: baseQuery },
-              { $unwind: "$prices" },
-              {
-                $group: {
-                  _id: null,
-                  minPrice: { $min: "$prices.price" },
-                  maxPrice: { $max: "$prices.price" },
-                },
-              },
-            ]),
-            MenuItem.aggregate([
-              { $match: baseQuery },
-              {
-                $group: {
-                  _id: "$spiceLevel",
-                  count: { $sum: 1 },
-                },
-              },
-              { $sort: { _id: 1 } },
-            ]),
-            MenuItem.aggregate([
-              { $match: baseQuery },
-              {
-                $group: {
-                  _id: null,
-                  vegetarian: {
-                    $sum: { $cond: [{ $eq: ["$isVegetarian", true] }, 1, 0] },
-                  },
-                  vegan: {
-                    $sum: { $cond: [{ $eq: ["$isVegan", true] }, 1, 0] },
-                  },
-                  nonVegetarian: {
-                    $sum: {
-                      $cond: [{ $eq: ["$isNonVegetarian", true] }, 1, 0],
-                    },
-                  },
-                  glutenFree: {
-                    $sum: { $cond: [{ $eq: ["$isGlutenFree", true] }, 1, 0] },
-                  },
-                },
-              },
-            ]),
-          ]);
-
-        return {
-          sizes,
-          popularTags: tagStats.map((tag) => ({
-            value: tag.label,
-            count: tag.count,
-          })),
-          priceRange: {
-            min: priceRange[0]?.minPrice || 0,
-            max: priceRange[0]?.maxPrice || 0,
+    const data = await getOrSetCache(cacheKey, MENU_FILTERS_CACHE_TTL_MS, async () => {
+      const [sizes, tagStats, priceRange, spiceStats, dietaryCounts] = await Promise.all([Size.find({
+        isActive: true
+      }).sort({
+        name: 1
+      }).select("_id name code").lean(), MenuItem.aggregate([{
+        $match: baseQuery
+      }, {
+        $unwind: "$tags"
+      }, {
+        $group: {
+          _id: {
+            $toLower: "$tags"
           },
-          spiceLevels: spiceStats.map((entry) => ({
-            level: entry._id ?? 0,
-            count: entry.count,
-          })),
-          dietary: dietaryCounts[0] || {
-            vegetarian: 0,
-            vegan: 0,
-            nonVegetarian: 0,
-            glutenFree: 0,
+          count: {
+            $sum: 1
           },
-        };
-      },
-    );
-
+          label: {
+            $first: "$tags"
+          }
+        }
+      }, {
+        $sort: {
+          count: -1,
+          label: 1
+        }
+      }, {
+        $limit: 12
+      }]), MenuItem.aggregate([{
+        $match: baseQuery
+      }, {
+        $unwind: "$prices"
+      }, {
+        $group: {
+          _id: null,
+          minPrice: {
+            $min: "$prices.price"
+          },
+          maxPrice: {
+            $max: "$prices.price"
+          }
+        }
+      }]), MenuItem.aggregate([{
+        $match: baseQuery
+      }, {
+        $group: {
+          _id: "$spiceLevel",
+          count: {
+            $sum: 1
+          }
+        }
+      }, {
+        $sort: {
+          _id: 1
+        }
+      }]), MenuItem.aggregate([{
+        $match: baseQuery
+      }, {
+        $group: {
+          _id: null,
+          vegetarian: {
+            $sum: {
+              $cond: [{
+                $eq: ["$isVegetarian", true]
+              }, 1, 0]
+            }
+          },
+          vegan: {
+            $sum: {
+              $cond: [{
+                $eq: ["$isVegan", true]
+              }, 1, 0]
+            }
+          },
+          nonVegetarian: {
+            $sum: {
+              $cond: [{
+                $eq: ["$isNonVegetarian", true]
+              }, 1, 0]
+            }
+          },
+          glutenFree: {
+            $sum: {
+              $cond: [{
+                $eq: ["$isGlutenFree", true]
+              }, 1, 0]
+            }
+          }
+        }
+      }])]);
+      return {
+        sizes,
+        popularTags: tagStats.map(tag => ({
+          value: tag.label,
+          count: tag.count
+        })),
+        priceRange: {
+          min: priceRange[0]?.minPrice || 0,
+          max: priceRange[0]?.maxPrice || 0
+        },
+        spiceLevels: spiceStats.map(entry => ({
+          level: entry._id ?? 0,
+          count: entry.count
+        })),
+        dietary: dietaryCounts[0] || {
+          vegetarian: 0,
+          vegan: 0,
+          nonVegetarian: 0,
+          glutenFree: 0
+        }
+      };
+    });
     return res.status(200).json({
       success: true,
-      data,
+      data
     });
   } catch (error) {
     logger.error("Get menu filter options error:", error);
     return res.status(500).json({
       success: false,
       message: "Server error fetching menu filter options",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
-
 exports.getMenuItem = async (req, res) => {
   try {
-    const menuItem = await MenuItem.findById(req.params.id)
-      .populate("category", "name")
-      .populate("createdBy", "name")
-      .populate("updatedBy", "name")
-      .lean();
-
+    const menuItem = await MenuItem.findById(req.params.id).populate("category", "name").populate("createdBy", "name").populate("updatedBy", "name").lean();
     if (!menuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
     delete menuItem.__v;
-
     if (menuItem.prices && Array.isArray(menuItem.prices)) {
-      menuItem.prices = menuItem.prices.map((price) => ({
+      menuItem.prices = menuItem.prices.map(price => ({
         size: price.sizeId,
         price: price.price,
-        ...(price.costPrice && { costPrice: price.costPrice }),
+        ...(price.costPrice && {
+          costPrice: price.costPrice
+        })
       }));
     }
     const imageAssets = buildImageAssets(req, "menu-item", menuItem._id, menuItem);
     menuItem.image = imageAssets.image;
     menuItem.thumbnail = imageAssets.thumbnail;
     menuItem.activeDiscount = getActiveDiscount(menuItem.discount);
-
     res.status(200).json({
       success: true,
       message: "Item Fetched successfully!",
-      data: menuItem,
+      data: menuItem
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.updateMenuItem = async (req, res) => {
   try {
-    let updateData = { ...req.body, updatedBy: req.user.id };
-
+    let updateData = {
+      ...req.body,
+      updatedBy: req.user.id
+    };
     delete updateData.station;
-
-    const safeParseArray = (value) => {
+    const safeParseArray = value => {
       if (value === undefined || value === null || value === "") {
         return [];
       }
-
       if (Array.isArray(value)) {
         return value;
       }
-
       if (typeof value === "string") {
         value = value.trim();
-
         if (value === "") {
           return [];
         }
-
         if (value.startsWith("[")) {
           try {
             return JSON.parse(value);
@@ -1502,60 +1266,42 @@ exports.updateMenuItem = async (req, res) => {
             logger.error("JSON parse error, trying comma separation");
           }
         }
-
         if (value.includes(",")) {
-          return value
-            .split(",")
-            .map((item) => item.trim())
-            .filter((item) => item !== "");
+          return value.split(",").map(item => item.trim()).filter(item => item !== "");
         }
-
         return [value];
       }
-
       return [value];
     };
-
     const parseJsonObject = (value, fieldName) => {
       if (value === undefined || value === null || value === "") {
         return null;
       }
-
       if (typeof value === "object" && !Array.isArray(value)) {
         return value;
       }
-
       if (Array.isArray(value)) {
         return value;
       }
-
       if (typeof value === "string") {
         value = value.trim();
-
         if (value === "") {
           return null;
         }
-
         try {
           return JSON.parse(value);
         } catch (error) {
           throw new Error(`Invalid JSON format for ${fieldName}`);
         }
       }
-
       return value;
     };
-
     try {
       updateData.ingredients = safeParseArray(updateData.ingredients);
       updateData.allergens = safeParseArray(updateData.allergens);
       updateData.tags = safeParseArray(updateData.tags);
-
       updateData.prices = parseJsonObject(updateData.prices, "prices");
-      updateData.nutritionalInfo = parseJsonObject(
-        updateData.nutritionalInfo,
-        "nutritionalInfo",
-      );
+      updateData.nutritionalInfo = parseJsonObject(updateData.nutritionalInfo, "nutritionalInfo");
       if (Object.prototype.hasOwnProperty.call(updateData, "seasonal")) {
         updateData.seasonal = normalizeSeasonalData(updateData.seasonal);
       }
@@ -1565,177 +1311,130 @@ exports.updateMenuItem = async (req, res) => {
     } catch (error) {
       return res.status(400).json({
         success: false,
-        message: error.message,
+        message: error.message
       });
     }
-
-    const existingMenuItem = await MenuItem.findById(req.params.id).select(
-      "_id name category prices image thumbnail imagePublicId thumbnailPublicId imageProvider isAvailable isActive",
-    );
-
+    const existingMenuItem = await MenuItem.findById(req.params.id).select("_id name category prices image thumbnail imagePublicId thumbnailPublicId imageProvider isAvailable isActive");
     if (!existingMenuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
-
     const categoryId = updateData.category || existingMenuItem.category;
     const category = await getCategoryWithStation(categoryId);
-
     if (!category) {
       return res.status(400).json({
         success: false,
-        message: "Category not found",
+        message: "Category not found"
       });
     }
-
     if (!category.kitchenStation) {
       return res.status(400).json({
         success: false,
-        message: "Selected category does not have a kitchen station",
+        message: "Selected category does not have a kitchen station"
       });
     }
-
     updateData.station = category.kitchenStation;
-
     if (updateData.isVegetarian !== undefined) {
-      updateData.isVegetarian =
-        updateData.isVegetarian === "true" || updateData.isVegetarian === true;
+      updateData.isVegetarian = updateData.isVegetarian === "true" || updateData.isVegetarian === true;
     }
-
     if (updateData.isNonVegetarian !== undefined) {
-      updateData.isNonVegetarian =
-        updateData.isNonVegetarian === "true" ||
-        updateData.isNonVegetarian === true;
+      updateData.isNonVegetarian = updateData.isNonVegetarian === "true" || updateData.isNonVegetarian === true;
     }
-
     if (updateData.isVegan !== undefined) {
-      updateData.isVegan =
-        updateData.isVegan === "true" || updateData.isVegan === true;
+      updateData.isVegan = updateData.isVegan === "true" || updateData.isVegan === true;
     }
-
     if (updateData.isGlutenFree !== undefined) {
-      updateData.isGlutenFree =
-        updateData.isGlutenFree === "true" || updateData.isGlutenFree === true;
+      updateData.isGlutenFree = updateData.isGlutenFree === "true" || updateData.isGlutenFree === true;
     }
-
     if (updateData.isAvailable !== undefined) {
-      updateData.isAvailable =
-        updateData.isAvailable === "true" || updateData.isAvailable === true;
+      updateData.isAvailable = updateData.isAvailable === "true" || updateData.isAvailable === true;
     }
-
     if (updateData.isActive !== undefined) {
-      updateData.isActive =
-        updateData.isActive === "true" || updateData.isActive === true;
+      updateData.isActive = updateData.isActive === "true" || updateData.isActive === true;
     }
-
     if (updateData.spiceLevel) {
       updateData.spiceLevel = parseInt(updateData.spiceLevel);
     }
-
     if (updateData.preparationTime !== undefined) {
       const preparationTime = parseInt(updateData.preparationTime, 10);
       if (isNaN(preparationTime) || preparationTime < 1) {
         return res.status(400).json({
           success: false,
-          message: "Preparation time must be at least 1 minute",
+          message: "Preparation time must be at least 1 minute"
         });
       }
       updateData.preparationTime = preparationTime;
     }
-
     if (updateData.displayOrder) {
       updateData.displayOrder = parseInt(updateData.displayOrder);
     }
-
     if (updateData.prices) {
       if (!Array.isArray(updateData.prices)) {
         return res.status(400).json({
           success: false,
-          message: "Prices must be an array",
+          message: "Prices must be an array"
         });
       }
-
       const requestedSizeIds = [];
-
       for (const price of updateData.prices) {
         if (!price.sizeId || price.price === undefined || price.price === null) {
           return res.status(400).json({
             success: false,
-            message: "Each price must have size and price fields",
+            message: "Each price must have size and price fields"
           });
         }
-
         requestedSizeIds.push(String(price.sizeId));
-
         const priceValue = parseFloat(price.price);
         if (isNaN(priceValue) || priceValue <= 0) {
           return res.status(400).json({
             success: false,
-            message: `Invalid price for size ${price.sizeId}: must be a positive number`,
+            message: `Invalid price for size ${price.sizeId}: must be a positive number`
           });
         }
         price.price = priceValue;
-
         if (price.costPrice !== undefined) {
           const costPriceValue = parseFloat(price.costPrice);
           if (isNaN(costPriceValue) || costPriceValue < 0) {
             return res.status(400).json({
               success: false,
-              message: `Invalid cost price for size ${price.sizeId}: must be a non-negative number`,
+              message: `Invalid cost price for size ${price.sizeId}: must be a non-negative number`
             });
           }
           price.costPrice = costPriceValue;
         }
       }
-
       try {
         const uniqueSizeIds = [...new Set(requestedSizeIds)];
-        const existingSizes = await Size.find({ _id: { $in: uniqueSizeIds } })
-          .select("_id")
-          .lean();
-        const existingSizeIds = new Set(
-          existingSizes.map((size) => String(size._id)),
-        );
-        const invalidSizeId = uniqueSizeIds.find(
-          (sizeId) => !existingSizeIds.has(sizeId),
-        );
-
+        const existingSizes = await Size.find({
+          _id: {
+            $in: uniqueSizeIds
+          }
+        }).select("_id").lean();
+        const existingSizeIds = new Set(existingSizes.map(size => String(size._id)));
+        const invalidSizeId = uniqueSizeIds.find(sizeId => !existingSizeIds.has(sizeId));
         if (invalidSizeId) {
           return res.status(400).json({
             success: false,
-            message: `Invalid size ID: ${invalidSizeId}`,
+            message: `Invalid size ID: ${invalidSizeId}`
           });
         }
       } catch (error) {
-        const castErrorValue =
-          error?.name === "CastError" ? error.value : requestedSizeIds[0];
-
+        const castErrorValue = error?.name === "CastError" ? error.value : requestedSizeIds[0];
         return res.status(400).json({
           success: false,
-          message: `Invalid size ID format: ${castErrorValue}`,
+          message: `Invalid size ID format: ${castErrorValue}`
         });
       }
-
       if (existingMenuItem) {
-        const oldPricesBySize = new Map(
-          existingMenuItem.prices.map((price) => [
-            String(price.sizeId),
-            price,
-          ]),
-        );
+        const oldPricesBySize = new Map(existingMenuItem.prices.map(price => [String(price.sizeId), price]));
         const priceHistoryEntries = [];
-
         for (const newPrice of updateData.prices) {
           const oldPriceObj = oldPricesBySize.get(String(newPrice.sizeId));
-
           if (oldPriceObj && oldPriceObj.price !== newPrice.price) {
-            const changeType =
-              oldPriceObj.price < newPrice.price ? "increase" : "decrease";
-            const changePercentage =
-              ((newPrice.price - oldPriceObj.price) / oldPriceObj.price) * 100;
-
+            const changeType = oldPriceObj.price < newPrice.price ? "increase" : "decrease";
+            const changePercentage = (newPrice.price - oldPriceObj.price) / oldPriceObj.price * 100;
             priceHistoryEntries.push({
               menuItem: req.params.id,
               sizeId: newPrice.sizeId,
@@ -1745,7 +1444,7 @@ exports.updateMenuItem = async (req, res) => {
               changePercentage: Math.round(changePercentage * 100) / 100,
               changedBy: req.user.id,
               reason: "Manual update via edit form",
-              changedAt: new Date(),
+              changedAt: new Date()
             });
           } else if (!oldPriceObj) {
             priceHistoryEntries.push({
@@ -1757,31 +1456,27 @@ exports.updateMenuItem = async (req, res) => {
               changePercentage: 100,
               changedBy: req.user.id,
               reason: "New size added via edit form",
-              changedAt: new Date(),
+              changedAt: new Date()
             });
           }
         }
-
         if (priceHistoryEntries.length > 0) {
           await PriceHistory.insertMany(priceHistoryEntries);
         }
       }
     }
-
     if (req.file) {
       if (!req.file.url) {
         return res.status(400).json({
           success: false,
-          message: "Image upload failed - no Cloudinary URL received",
+          message: "Image upload failed - no Cloudinary URL received"
         });
       }
-
       updateData.image = req.file.url;
       updateData.thumbnail = req.file.thumbnailUrl;
       updateData.imagePublicId = req.file.publicId;
       updateData.thumbnailPublicId = req.file.thumbnailPublicId;
       updateData.imageProvider = req.file.storageProvider || "cloudinary";
-
       if (existingMenuItem?.image || existingMenuItem?.thumbnail) {
         try {
           await deleteImageVariants({
@@ -1789,7 +1484,7 @@ exports.updateMenuItem = async (req, res) => {
             thumbnail: existingMenuItem.thumbnail,
             imagePublicId: existingMenuItem.imagePublicId,
             thumbnailPublicId: existingMenuItem.thumbnailPublicId,
-            provider: existingMenuItem.imageProvider,
+            provider: existingMenuItem.imageProvider
           });
           logger.info("Deleted old Cloudinary image:", existingMenuItem.image);
         } catch (err) {
@@ -1797,271 +1492,222 @@ exports.updateMenuItem = async (req, res) => {
         }
       }
     }
-
-    const menuItem = await MenuItem.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true, runValidators: true },
-    )
-      .populate("category", "name")
-      .populate("prices.sizeId", "name code")
-      .populate("station", "name stationType status");
-
+    const menuItem = await MenuItem.findByIdAndUpdate(req.params.id, updateData, {
+      new: true,
+      runValidators: true
+    }).populate("category", "name").populate("prices.sizeId", "name code").populate("station", "name stationType status");
     if (!menuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
-
     invalidateMenuReadCaches();
-
     if (updateData.isAvailable !== undefined && existingMenuItem.isAvailable !== menuItem.isAvailable) {
       await notifyMenuVisibilityChange({
         menuItem,
         field: "isAvailable",
         enabled: menuItem.isAvailable,
-        actorId: req.user.id,
+        actorId: req.user.id
       });
     }
-
     if (updateData.isActive !== undefined && existingMenuItem.isActive !== menuItem.isActive) {
       await notifyMenuVisibilityChange({
         menuItem,
         field: "isActive",
         enabled: menuItem.isActive,
-        actorId: req.user.id,
+        actorId: req.user.id
       });
     }
-
     res.status(200).json({
       success: true,
       message: "Menu item updated successfully",
-      data: shapeMenuItemForResponse(req, menuItem.toObject(), "admin"),
+      data: shapeMenuItemForResponse(req, menuItem.toObject(), "admin")
     });
   } catch (error) {
     logger.error("Update menu item error:", error);
-
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
         message: "Validation error",
-        errors: Object.values(error.errors).map((err) => err.message),
+        errors: Object.values(error.errors).map(err => err.message)
       });
     }
-
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "Menu item with this name already exists in this category",
+        message: "Menu item with this name already exists in this category"
       });
     }
-
     if (error.name === "CastError") {
       return res.status(400).json({
         success: false,
-        message: `Invalid ${error.path}: ${error.value}`,
+        message: `Invalid ${error.path}: ${error.value}`
       });
     }
-
     res.status(500).json({
       success: false,
       message: "Server error updating menu item",
-      error: process.env.NODE_ENV === "development" ? error.message : undefined,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };
-
 exports.toggleMenuItemAvailability = async (req, res) => {
   try {
     const menuItem = await MenuItem.findById(req.params.id);
-
     if (!menuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
-
     menuItem.isAvailable = !menuItem.isAvailable;
     menuItem.updatedBy = req.user.id;
     await menuItem.save();
-
     await menuItem.populate("updatedBy", "name");
-
     invalidateMenuReadCaches();
-
     await notifyMenuVisibilityChange({
       menuItem,
       field: "isAvailable",
       enabled: menuItem.isAvailable,
-      actorId: req.user.id,
+      actorId: req.user.id
     });
-
     res.status(200).json({
       success: true,
-      message: `Menu item ${
-        menuItem.isAvailable ? "available" : "unavailable"
-      } successfully`,
+      message: `Menu item ${menuItem.isAvailable ? "available" : "unavailable"} successfully`
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getCoupons = async (req, res) => {
   try {
-    const { activeOnly } = req.query;
+    const {
+      activeOnly
+    } = req.query;
     const query = {};
-
     if (activeOnly === "true") {
       query.isActive = true;
     } else if (activeOnly === "false") {
       query.isActive = false;
     }
-
-    const coupons = await Coupon.find(query)
-      .populate("createdBy", "name")
-      .populate("updatedBy", "name")
-      .sort({ createdAt: -1 })
-      .lean();
-
+    const coupons = await Coupon.find(query).populate("createdBy", "name").populate("updatedBy", "name").sort({
+      createdAt: -1
+    }).lean();
     return res.status(200).json({
       success: true,
       count: coupons.length,
-      data: coupons,
+      data: coupons
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch coupons",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.createCoupon = async (req, res) => {
   try {
     const payload = {
       ...req.body,
       code: String(req.body.code || "").trim().toUpperCase(),
       createdBy: req.user.id,
-      updatedBy: req.user.id,
+      updatedBy: req.user.id
     };
-
     const coupon = await Coupon.create(payload);
-
     invalidateMenuReadCaches();
-
     return res.status(201).json({
       success: true,
       message: "Coupon created successfully",
-      data: coupon,
+      data: coupon
     });
   } catch (error) {
     return res.status(error.code === 11000 ? 409 : 400).json({
       success: false,
-      message:
-        error.code === 11000 ? "Coupon code already exists" : "Failed to create coupon",
-      error: error.message,
+      message: error.code === 11000 ? "Coupon code already exists" : "Failed to create coupon",
+      error: error.message
     });
   }
 };
-
 exports.updateCoupon = async (req, res) => {
   try {
     const payload = {
       ...req.body,
-      updatedBy: req.user.id,
+      updatedBy: req.user.id
     };
-
     if (payload.code) {
       payload.code = String(payload.code).trim().toUpperCase();
     }
-
     const coupon = await Coupon.findByIdAndUpdate(req.params.id, payload, {
       new: true,
-      runValidators: true,
+      runValidators: true
     });
-
     if (!coupon) {
       return res.status(404).json({
         success: false,
-        message: "Coupon not found",
+        message: "Coupon not found"
       });
     }
-
     invalidateMenuReadCaches();
-
     return res.status(200).json({
       success: true,
       message: "Coupon updated successfully",
-      data: coupon,
+      data: coupon
     });
   } catch (error) {
     return res.status(error.code === 11000 ? 409 : 400).json({
       success: false,
-      message:
-        error.code === 11000 ? "Coupon code already exists" : "Failed to update coupon",
-      error: error.message,
+      message: error.code === 11000 ? "Coupon code already exists" : "Failed to update coupon",
+      error: error.message
     });
   }
 };
-
 exports.toggleCouponStatus = async (req, res) => {
   try {
     const coupon = await Coupon.findById(req.params.id);
-
     if (!coupon) {
       return res.status(404).json({
         success: false,
-        message: "Coupon not found",
+        message: "Coupon not found"
       });
     }
-
     coupon.isActive = !coupon.isActive;
     coupon.updatedBy = req.user.id;
     await coupon.save();
-
     invalidateMenuReadCaches();
-
     return res.status(200).json({
       success: true,
       message: `Coupon ${coupon.isActive ? "activated" : "deactivated"} successfully`,
-      data: coupon,
+      data: coupon
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: "Failed to toggle coupon status",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.deleteMenuItem = async (req, res) => {
   try {
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);
-
     if (!menuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
-
     invalidateMenuReadCaches();
-
     res.status(200).json({
       success: true,
-      message: "Menu item deleted successfully",
+      message: "Menu item deleted successfully"
     });
-
     if (menuItem.image || menuItem.thumbnail) {
       setImmediate(() => {
         deleteImageVariants({
@@ -2069,12 +1715,12 @@ exports.deleteMenuItem = async (req, res) => {
           thumbnail: menuItem.thumbnail,
           imagePublicId: menuItem.imagePublicId,
           thumbnailPublicId: menuItem.thumbnailPublicId,
-          provider: menuItem.imageProvider,
-        }).catch((error) => {
+          provider: menuItem.imageProvider
+        }).catch(error => {
           logger.warn("Failed to delete menu item image asset", {
             menuItemId: menuItem._id,
             imagePublicId: menuItem.imagePublicId,
-            error: error.message,
+            error: error.message
           });
         });
       });
@@ -2084,31 +1730,32 @@ exports.deleteMenuItem = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getMenuStatistics = async (req, res) => {
   try {
-    const [
-      totalItems,
-      availableItems,
-      categoriesCount,
-      vegetarianCount,
-      nonVegetarianCount,
-      veganCount,
-      glutenFreeCount,
-    ] = await Promise.all([
-      MenuItem.countDocuments({ isActive: true }),
-      MenuItem.countDocuments({ isActive: true, isAvailable: true }),
-      Category.countDocuments({ isActive: true }),
-      MenuItem.countDocuments({ isActive: true, isVegetarian: true }),
-      MenuItem.countDocuments({ isActive: true, isNonVegetarian: true }),
-      MenuItem.countDocuments({ isActive: true, isVegan: true }),
-      MenuItem.countDocuments({ isActive: true, isGlutenFree: true }),
-    ]);
-
+    const [totalItems, availableItems, categoriesCount, vegetarianCount, nonVegetarianCount, veganCount, glutenFreeCount] = await Promise.all([MenuItem.countDocuments({
+      isActive: true
+    }), MenuItem.countDocuments({
+      isActive: true,
+      isAvailable: true
+    }), Category.countDocuments({
+      isActive: true
+    }), MenuItem.countDocuments({
+      isActive: true,
+      isVegetarian: true
+    }), MenuItem.countDocuments({
+      isActive: true,
+      isNonVegetarian: true
+    }), MenuItem.countDocuments({
+      isActive: true,
+      isVegan: true
+    }), MenuItem.countDocuments({
+      isActive: true,
+      isGlutenFree: true
+    })]);
     res.status(200).json({
       success: true,
       data: {
@@ -2120,39 +1767,44 @@ exports.getMenuStatistics = async (req, res) => {
           vegetarian: vegetarianCount,
           nonVegetarian: nonVegetarianCount,
           vegan: veganCount,
-          glutenFree: glutenFreeCount,
-        },
-      },
+          glutenFree: glutenFreeCount
+        }
+      }
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.bulkUpdateMenuItems = async (req, res) => {
   try {
-    const { updates, action } = req.body;
-
+    const {
+      updates,
+      action
+    } = req.body;
     if (!updates || !Array.isArray(updates) || updates.length === 0) {
       return res.status(400).json({
         success: false,
-        message: "Updates array is required",
+        message: "Updates array is required"
       });
     }
-
-    const results = { successful: 0, failed: 0, errors: [], rows: [] };
+    const results = {
+      successful: 0,
+      failed: 0,
+      errors: [],
+      rows: []
+    };
     const addRowResult = ({
       menuItemId = "",
       itemName = "",
       status = "failed",
       actionLabel = action,
       size = "",
-      reason = "",
+      reason = ""
     }) => {
       results.rows.push({
         menuItemId,
@@ -2160,10 +1812,9 @@ exports.bulkUpdateMenuItems = async (req, res) => {
         status,
         action: actionLabel,
         size,
-        reason,
+        reason
       });
     };
-
     for (const update of updates) {
       try {
         const {
@@ -2174,9 +1825,8 @@ exports.bulkUpdateMenuItems = async (req, res) => {
           isAvailable,
           isActive,
           categoryId,
-          reason,
+          reason
         } = update;
-
         const menuItem = await MenuItem.findById(menuItemId);
         if (!menuItem) {
           results.failed++;
@@ -2188,11 +1838,10 @@ exports.bulkUpdateMenuItems = async (req, res) => {
             status: "failed",
             actionLabel: action,
             size: sizeId || "",
-            reason,
+            reason
           });
           continue;
         }
-
         switch (action) {
           case "updatePrices":
             if (!sizeId) {
@@ -2206,12 +1855,11 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                   status: "failed",
                   actionLabel: "failed",
                   size: "",
-                  reason,
+                  reason
                 });
               }
               continue;
             }
-
             const sizeDoc = await Size.findById(sizeId);
             if (!sizeDoc) {
               results.failed++;
@@ -2224,12 +1872,11 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                   status: "failed",
                   actionLabel: "failed",
                   size: sizeId,
-                  reason,
+                  reason
                 });
               }
               continue;
             }
-
             if (newPrice === undefined || newPrice === null || newPrice === "") {
               results.failed++;
               {
@@ -2241,12 +1888,11 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                   status: "failed",
                   actionLabel: "failed",
                   size: sizeDoc.code || sizeDoc.name,
-                  reason,
+                  reason
                 });
               }
               continue;
             }
-
             const parsedNewPrice = parseFloat(newPrice);
             if (Number.isNaN(parsedNewPrice) || parsedNewPrice <= 0) {
               results.failed++;
@@ -2259,45 +1905,30 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                   status: "failed",
                   actionLabel: "failed",
                   size: sizeDoc.code || sizeDoc.name,
-                  reason,
+                  reason
                 });
               }
               continue;
             }
-
-            const priceIndex = menuItem.prices.findIndex((p) =>
-              p.sizeId.equals(sizeDoc._id),
-            );
+            const priceIndex = menuItem.prices.findIndex(p => p.sizeId.equals(sizeDoc._id));
             let oldPrice = 0;
             let actionLabel = "created";
-
             if (priceIndex !== -1) {
               oldPrice = menuItem.prices[priceIndex].price;
               menuItem.prices[priceIndex].price = parsedNewPrice;
-              if (costPrice !== undefined)
-                menuItem.prices[priceIndex].costPrice = parseFloat(costPrice);
+              if (costPrice !== undefined) menuItem.prices[priceIndex].costPrice = parseFloat(costPrice);
               actionLabel = "updated";
             } else {
               menuItem.prices.push({
                 sizeId: sizeDoc._id,
                 price: parsedNewPrice,
-                costPrice:
-                  costPrice !== undefined ? parseFloat(costPrice) : undefined,
+                costPrice: costPrice !== undefined ? parseFloat(costPrice) : undefined
               });
             }
-
             menuItem.updatedBy = req.user.id;
             await menuItem.save();
-
-            const changeType =
-              oldPrice === 0
-                ? "initial"
-                : oldPrice < parsedNewPrice
-                  ? "increase"
-                  : "decrease";
-            const changePercentage =
-              oldPrice > 0 ? ((parsedNewPrice - oldPrice) / oldPrice) * 100 : 100;
-
+            const changeType = oldPrice === 0 ? "initial" : oldPrice < parsedNewPrice ? "increase" : "decrease";
+            const changePercentage = oldPrice > 0 ? (parsedNewPrice - oldPrice) / oldPrice * 100 : 100;
             await PriceHistory.create({
               menuItem: menuItem._id,
               sizeId: sizeDoc._id,
@@ -2306,12 +1937,9 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               changeType,
               changePercentage: Math.round(changePercentage * 100) / 100,
               changedBy: req.user.id,
-              reason:
-                reason ||
-                (priceIndex === -1 ? "New size added" : "Bulk price update"),
-              changedAt: new Date(),
+              reason: reason || (priceIndex === -1 ? "New size added" : "Bulk price update"),
+              changedAt: new Date()
             });
-
             results.successful++;
             addRowResult({
               menuItemId,
@@ -2319,19 +1947,15 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               status: "success",
               actionLabel,
               size: sizeDoc.code || sizeDoc.name,
-              reason:
-                actionLabel === "updated"
-                  ? `Price updated from ${oldPrice} to ${parsedNewPrice}`
-                  : `New size price added at ${parsedNewPrice}`,
+              reason: actionLabel === "updated" ? `Price updated from ${oldPrice} to ${parsedNewPrice}` : `New size price added at ${parsedNewPrice}`
             });
             break;
-
           case "updateAvailability":
             let availabilitySizeLabel = "All sizes";
             let availabilityReason = `Item availability updated to ${isAvailable ? "available" : "unavailable"}`;
             if (sizeId) {
               const sizeDoc = await Size.findOne({
-                code: sizeId.toUpperCase(),
+                code: sizeId.toUpperCase()
               });
               if (!sizeDoc) {
                 results.failed++;
@@ -2344,14 +1968,12 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                     status: "failed",
                     actionLabel: "failed",
                     size: sizeId,
-                    reason,
+                    reason
                   });
                 }
                 continue;
               }
-              const priceObj = menuItem.prices.find((p) =>
-                p.sizeId.equals(sizeDoc._id),
-              );
+              const priceObj = menuItem.prices.find(p => p.sizeId.equals(sizeDoc._id));
               if (priceObj) {
                 priceObj.isAvailable = isAvailable;
               }
@@ -2369,16 +1991,15 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               status: "success",
               actionLabel: "updated",
               size: availabilitySizeLabel,
-              reason: availabilityReason,
+              reason: availabilityReason
             });
             break;
-
           case "updateStatus":
             let statusSizeLabel = "All sizes";
             let statusReason = `Item status updated to ${isActive ? "active" : "inactive"}`;
             if (sizeId) {
               const sizeDoc = await Size.findOne({
-                code: sizeId.toUpperCase(),
+                code: sizeId.toUpperCase()
               });
               if (!sizeDoc) {
                 results.failed++;
@@ -2391,14 +2012,12 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                     status: "failed",
                     actionLabel: "failed",
                     size: sizeId,
-                    reason,
+                    reason
                   });
                 }
                 continue;
               }
-              const priceObj = menuItem.prices.find((p) =>
-                p.sizeId.equals(sizeDoc._id),
-              );
+              const priceObj = menuItem.prices.find(p => p.sizeId.equals(sizeDoc._id));
               if (priceObj) {
                 priceObj.isActive = isActive;
               }
@@ -2416,10 +2035,9 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               status: "success",
               actionLabel: "updated",
               size: statusSizeLabel,
-              reason: statusReason,
+              reason: statusReason
             });
             break;
-
           case "updateCategories":
             menuItem.category = categoryId;
             menuItem.updatedBy = req.user.id;
@@ -2431,10 +2049,9 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               status: "success",
               actionLabel: "updated",
               size: "All sizes",
-              reason: `Category updated successfully`,
+              reason: `Category updated successfully`
             });
             break;
-
           default:
             results.failed++;
             {
@@ -2446,7 +2063,7 @@ exports.bulkUpdateMenuItems = async (req, res) => {
                 status: "failed",
                 actionLabel: "failed",
                 size: sizeId || "",
-                reason,
+                reason
               });
             }
         }
@@ -2461,379 +2078,320 @@ exports.bulkUpdateMenuItems = async (req, res) => {
             status: "failed",
             actionLabel: "failed",
             size: update.sizeId || "",
-            reason: error.message,
+            reason: error.message
           });
         }
       }
     }
-
     res.status(200).json({
       success: true,
       message: `Bulk ${action} completed`,
-      data: results,
+      data: results
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Server error during bulk operation",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getSeasonalItems = async (req, res) => {
   try {
     const currentDate = new Date();
-
     const seasonalItems = await MenuItem.find({
       "seasonal.isSeasonal": true,
-      $or: [
-        {
-          "seasonal.startDate": { $lte: currentDate },
-          "seasonal.endDate": { $gte: currentDate },
+      $or: [{
+        "seasonal.startDate": {
+          $lte: currentDate
         },
-        {
-          "seasonal.startDate": { $exists: false },
-          "seasonal.endDate": { $exists: false },
+        "seasonal.endDate": {
+          $gte: currentDate
+        }
+      }, {
+        "seasonal.startDate": {
+          $exists: false
         },
-      ],
-    })
-      .populate("category", "name")
-      .populate("prices.sizeId", "name code")
-      .sort({ "seasonal.startDate": 1, displayOrder: 1 })
-      .lean();
-
-    const formattedItems = seasonalItems.map((item) => {
+        "seasonal.endDate": {
+          $exists: false
+        }
+      }]
+    }).populate("category", "name").populate("prices.sizeId", "name code").sort({
+      "seasonal.startDate": 1,
+      displayOrder: 1
+    }).lean();
+    const formattedItems = seasonalItems.map(item => {
       const imageAssets = buildImageAssets(req, "menu-item", item._id, item);
       item.image = imageAssets.image;
       item.thumbnail = imageAssets.thumbnail;
-
       if (Array.isArray(item.prices)) {
-        item.prices = item.prices.map((price) => ({
+        item.prices = item.prices.map(price => ({
           price: price.price,
           costPrice: price.costPrice,
-          size: price.sizeId,
+          size: price.sizeId
         }));
       }
-
       return item;
     });
-
     res.status(200).json({
       success: true,
       count: formattedItems.length,
-      data: formattedItems,
+      data: formattedItems
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch seasonal items",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getPriceHistory = async (req, res) => {
   try {
-    const { period = "all", sizeId } = req.query;
+    const {
+      period = "all",
+      sizeId
+    } = req.query;
     const now = new Date();
-
     let dateFilter = {};
     switch (period) {
       case "week":
         dateFilter.changedAt = {
-          $gte: new Date(now.setDate(now.getDate() - 7)),
+          $gte: new Date(now.setDate(now.getDate() - 7))
         };
         break;
       case "month":
         dateFilter.changedAt = {
-          $gte: new Date(now.setMonth(now.getMonth() - 1)),
+          $gte: new Date(now.setMonth(now.getMonth() - 1))
         };
         break;
       case "quarter":
         dateFilter.changedAt = {
-          $gte: new Date(now.setMonth(now.getMonth() - 3)),
+          $gte: new Date(now.setMonth(now.getMonth() - 3))
         };
         break;
       case "year":
         dateFilter.changedAt = {
-          $gte: new Date(now.setFullYear(now.getFullYear() - 1)),
+          $gte: new Date(now.setFullYear(now.getFullYear() - 1))
         };
         break;
       default:
         break;
     }
-
     const query = {
       menuItem: req.params.id,
-      ...dateFilter,
+      ...dateFilter
     };
-
     if (sizeId) {
       query.sizeId = sizeId;
     }
-
-    const priceHistory = await PriceHistory.find(query)
-      .populate("changedBy", "name email")
-      .populate("sizeId", "name code")
-      .sort({ changedAt: -1 })
-      .lean();
-
-    const menuItem = await MenuItem.findById(req.params.id)
-      .select("name category")
-      .populate("category", "name")
-      .lean();
-
+    const priceHistory = await PriceHistory.find(query).populate("changedBy", "name email").populate("sizeId", "name code").sort({
+      changedAt: -1
+    }).lean();
+    const menuItem = await MenuItem.findById(req.params.id).select("name category").populate("category", "name").lean();
     if (!menuItem) {
       return res.status(404).json({
         success: false,
-        message: "Menu item not found",
+        message: "Menu item not found"
       });
     }
-
-    const formattedHistory = priceHistory.map((h) => ({
+    const formattedHistory = priceHistory.map(h => ({
       id: h._id,
-      size: h.sizeId
-        ? {
-            id: h.sizeId._id,
-            name: h.sizeId.name,
-            code: h.sizeId.code,
-          }
-        : null,
+      size: h.sizeId ? {
+        id: h.sizeId._id,
+        name: h.sizeId.name,
+        code: h.sizeId.code
+      } : null,
       oldPrice: h.oldPrice,
       newPrice: h.newPrice,
       changeType: h.changeType,
       changePercentage: h.changePercentage,
-      changedBy: h.changedBy
-        ? {
-            id: h.changedBy._id,
-            name: h.changedBy.name,
-          }
-        : null,
+      changedBy: h.changedBy ? {
+        id: h.changedBy._id,
+        name: h.changedBy.name
+      } : null,
       changedAt: h.changedAt,
-      reason: h.reason,
+      reason: h.reason
     }));
-
     res.status(200).json({
       success: true,
       data: {
         menuItem: {
           id: menuItem._id,
           name: menuItem.name,
-          category: menuItem.category?.name || null,
+          category: menuItem.category?.name || null
         },
-        history: formattedHistory,
-      },
+        history: formattedHistory
+      }
     });
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch price history",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.getAllPriceChanges = async (req, res) => {
   try {
-    const { startDate, endDate, changeType, page = 1, limit = 20 } = req.query;
-
+    const {
+      startDate,
+      endDate,
+      changeType,
+      page = 1,
+      limit = 20
+    } = req.query;
     let filter = {};
     if (startDate || endDate) {
       filter.changedAt = {};
       if (startDate) filter.changedAt.$gte = new Date(startDate);
       if (endDate) filter.changedAt.$lte = new Date(endDate);
     }
-
     if (changeType) {
       filter.changeType = changeType;
     }
-
     const pageNum = Number(page);
     const limitNum = Number(limit);
     const skip = (pageNum - 1) * limitNum;
-
-    const [priceChanges, total] = await Promise.all([
-      PriceHistory.find(filter)
-        .populate("menuItem", "name")
-        .populate("sizeId", "name code")
-        .populate("changedBy", "name email")
-        .sort({ changedAt: -1 })
-        .skip(skip)
-        .limit(limitNum)
-        .lean(),
-
-      PriceHistory.countDocuments(filter),
-    ]);
-
-    const formattedData = priceChanges.map((p) => ({
+    const [priceChanges, total] = await Promise.all([PriceHistory.find(filter).populate("menuItem", "name").populate("sizeId", "name code").populate("changedBy", "name email").sort({
+      changedAt: -1
+    }).skip(skip).limit(limitNum).lean(), PriceHistory.countDocuments(filter)]);
+    const formattedData = priceChanges.map(p => ({
       id: p._id,
-      menuItem: p.menuItem
-        ? {
-            id: p.menuItem._id,
-            name: p.menuItem.name,
-          }
-        : null,
-      size: p.sizeId
-        ? {
-            id: p.sizeId._id,
-            name: p.sizeId.name,
-            code: p.sizeId.code,
-          }
-        : null,
+      menuItem: p.menuItem ? {
+        id: p.menuItem._id,
+        name: p.menuItem.name
+      } : null,
+      size: p.sizeId ? {
+        id: p.sizeId._id,
+        name: p.sizeId.name,
+        code: p.sizeId.code
+      } : null,
       oldPrice: p.oldPrice,
       newPrice: p.newPrice,
       changeType: p.changeType,
       changePercentage: p.changePercentage,
-      changedBy: p.changedBy
-        ? {
-            id: p.changedBy._id,
-            name: p.changedBy.name,
-          }
-        : null,
+      changedBy: p.changedBy ? {
+        id: p.changedBy._id,
+        name: p.changedBy.name
+      } : null,
       changedAt: p.changedAt,
-      reason: p.reason,
+      reason: p.reason
     }));
-
     res.status(200).json({
       success: true,
       count: formattedData.length,
       total,
       pagination: {
         page: pageNum,
-        pages: Math.ceil(total / limitNum),
+        pages: Math.ceil(total / limitNum)
       },
-      data: formattedData,
+      data: formattedData
     });
   } catch (error) {
     res.status(500).json({
       success: false,
       message: "Failed to fetch price changes",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.exportMenuItems = async (req, res) => {
   try {
     const {
       category,
       itemIds,
       availableOnly = "false",
-      activeOnly = "true",
+      activeOnly = "true"
     } = req.query;
-
-    let query = { isActive: activeOnly === "true" };
+    let query = {
+      isActive: activeOnly === "true"
+    };
     if (category) query.category = category;
     if (availableOnly === "true") query.isAvailable = true;
     if (itemIds) {
       query._id = {
-        $in: String(itemIds)
-          .split(",")
-          .map((id) => id.trim())
-          .filter(Boolean),
+        $in: String(itemIds).split(",").map(id => id.trim()).filter(Boolean)
       };
     }
-
-    const menuItems = await MenuItem.find(query)
-      .populate({
-        path: "prices.sizeId",
-        select: "name code",
-      })
-      .populate("category", "name")
-      .sort({ category: 1, displayOrder: 1 });
-
+    const menuItems = await MenuItem.find(query).populate({
+      path: "prices.sizeId",
+      select: "name code"
+    }).populate("category", "name").sort({
+      category: 1,
+      displayOrder: 1
+    });
     const csvData = generateExportData(menuItems);
-
     res.setHeader("Content-Type", "text/csv");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=menu-export-${Date.now()}.csv`,
-    );
-
+    res.setHeader("Content-Disposition", `attachment; filename=menu-export-${Date.now()}.csv`);
     res.send(csvData);
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Export failed",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.downloadImportTemplate = async (req, res) => {
   try {
     const csvTemplate = generateCSVTemplate();
-
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      "attachment; filename=menu-import-template.csv",
-    );
-
+    res.setHeader("Content-Disposition", "attachment; filename=menu-import-template.csv");
     res.status(200).send(csvTemplate);
   } catch (error) {
     logger.error(error);
     res.status(500).json({
       success: false,
       message: "Failed to generate template",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 exports.bulkImportMenuItems = async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({
         success: false,
-        message: "CSV file is required for import",
+        message: "CSV file is required for import"
       });
     }
-
     const fileBuffer = req.file.buffer;
-
     const results = {
       created: 0,
       updated: 0,
       failed: 0,
       errors: [],
-      rows: [],
+      rows: []
     };
-
     const rows = await parseCSV(fileBuffer);
     const categoryCache = new Map();
     const sizeCache = new Map();
-    const escapeRegExp = (value = "") =>
-      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const getRowValue = (row, aliases = []) => {
       for (const alias of aliases) {
         if (!Object.prototype.hasOwnProperty.call(row, alias)) {
           continue;
         }
-
         const value = row[alias];
         if (value === undefined || value === null) {
           continue;
         }
-
         const stringValue = String(value).trim();
         if (stringValue !== "") {
           return stringValue;
         }
       }
-
       return "";
     };
     const parseBoolean = (value, fallback = false) => {
       if (value === undefined || value === null || value === "") {
         return fallback;
       }
-
       const normalized = String(value).trim().toLowerCase();
       if (["true", "1", "yes", "y"].includes(normalized)) {
         return true;
@@ -2841,7 +2399,6 @@ exports.bulkImportMenuItems = async (req, res) => {
       if (["false", "0", "no", "n"].includes(normalized)) {
         return false;
       }
-
       return fallback;
     };
     const addRowResult = ({
@@ -2851,7 +2408,7 @@ exports.bulkImportMenuItems = async (req, res) => {
       size = "",
       status = "failed",
       action = "failed",
-      reason = "",
+      reason = ""
     }) => {
       results.rows.push({
         rowNumber,
@@ -2860,124 +2417,88 @@ exports.bulkImportMenuItems = async (req, res) => {
         size,
         status,
         action,
-        reason,
+        reason
       });
     };
     const parseArrayField = (value, fieldName) => {
       if (value === undefined || value === null || value === "") {
         return [];
       }
-
       if (Array.isArray(value)) {
         return value;
       }
-
       const normalized = String(value).trim();
       if (!normalized) {
         return [];
       }
-
       if (normalized.startsWith("[")) {
         let parsed;
-
         try {
           parsed = JSON.parse(normalized);
         } catch (error) {
           throw new Error(`${fieldName} must be a valid JSON array`);
         }
-
         if (!Array.isArray(parsed)) {
           throw new Error(`${fieldName} must be a JSON array`);
         }
-
         return parsed;
       }
-
-      return normalized
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+      return normalized.split(",").map(item => item.trim()).filter(Boolean);
     };
-    const resolveSize = async (sizeValue) => {
+    const resolveSize = async sizeValue => {
       const cacheKey = String(sizeValue || "").trim().toLowerCase();
       if (!cacheKey) {
         return null;
       }
-
       if (sizeCache.has(cacheKey)) {
         return sizeCache.get(cacheKey);
       }
-
       let sizeDoc;
       if (/^[a-f\d]{24}$/i.test(cacheKey)) {
         sizeDoc = await Size.findById(cacheKey).select("_id name code").lean();
       }
-
       if (!sizeDoc) {
         sizeDoc = await Size.findOne({
-          $or: [
-            { code: String(sizeValue).trim().toUpperCase() },
-            { name: new RegExp(`^${escapeRegExp(sizeValue)}$`, "i") },
-          ],
-        })
-          .select("_id name code")
-          .lean();
+          $or: [{
+            code: String(sizeValue).trim().toUpperCase()
+          }, {
+            name: new RegExp(`^${escapeRegExp(sizeValue)}$`, "i")
+          }]
+        }).select("_id name code").lean();
       }
-
       sizeCache.set(cacheKey, sizeDoc || null);
       return sizeDoc || null;
     };
-    const resolveCategory = async (categoryValue) => {
+    const resolveCategory = async categoryValue => {
       const cacheKey = String(categoryValue || "").trim().toLowerCase();
       if (!cacheKey) {
         return null;
       }
-
       if (categoryCache.has(cacheKey)) {
         return categoryCache.get(cacheKey);
       }
-
       let categoryDoc;
       if (/^[a-f\d]{24}$/i.test(cacheKey)) {
-        categoryDoc = await Category.findById(cacheKey)
-          .select("_id name kitchenStation")
-          .lean();
+        categoryDoc = await Category.findById(cacheKey).select("_id name kitchenStation").lean();
       }
-
       if (!categoryDoc) {
         categoryDoc = await Category.findOne({
-          name: new RegExp(`^${escapeRegExp(categoryValue)}$`, "i"),
-        })
-          .select("_id name kitchenStation")
-          .lean();
+          name: new RegExp(`^${escapeRegExp(categoryValue)}$`, "i")
+        }).select("_id name kitchenStation").lean();
       }
-
       categoryCache.set(cacheKey, categoryDoc || null);
       return categoryDoc || null;
     };
-
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
       try {
         const name = getRowValue(row, ["name", "Name"]);
         const description = getRowValue(row, ["description", "Description"]);
-        const categoryValue = getRowValue(row, [
-          "category",
-          "categoryId",
-          "categoryName",
-          "Category",
-        ]);
-        const sizeValue = getRowValue(row, [
-          "size",
-          "sizeId",
-          "sizeCode",
-          "Size",
-        ]);
+        const categoryValue = getRowValue(row, ["category", "categoryId", "categoryName", "Category"]);
+        const sizeValue = getRowValue(row, ["size", "sizeId", "sizeCode", "Size"]);
         const priceValue = getRowValue(row, ["price", "Price"]);
-
         if (!name || !categoryValue || !sizeValue) {
-          const reason =
-            "Missing required fields. Required columns are name, category, size, and price.";
+          const reason = "Missing required fields. Required columns are name, category, size, and price.";
           results.failed++;
           results.errors.push(`Row ${rowNumber}: ${reason}`);
           addRowResult({
@@ -2987,11 +2508,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeValue,
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
           continue;
         }
-
         if (!priceValue || Number.isNaN(Number(priceValue)) || Number(priceValue) <= 0) {
           const reason = `Invalid price '${priceValue}' for '${name}'`;
           results.failed++;
@@ -3003,11 +2523,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeValue,
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
           continue;
         }
-
         const sizeDoc = await resolveSize(sizeValue);
         if (!sizeDoc) {
           const reason = `Size '${sizeValue}' was not found. Use a size ID, code, or exact name.`;
@@ -3020,17 +2539,13 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeValue,
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
           continue;
         }
-
         const categoryDoc = await resolveCategory(categoryValue);
-
         if (!categoryDoc || !categoryDoc.kitchenStation) {
-          const reason = !categoryDoc
-            ? `Category '${categoryValue}' was not found. Use a category ID or exact name.`
-            : `Kitchen station not configured for category '${categoryDoc.name || categoryValue}'.`;
+          const reason = !categoryDoc ? `Category '${categoryValue}' was not found. Use a category ID or exact name.` : `Kitchen station not configured for category '${categoryDoc.name || categoryValue}'.`;
           results.failed++;
           results.errors.push(`Row ${rowNumber}: ${reason}`);
           addRowResult({
@@ -3040,11 +2555,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeDoc.code || sizeDoc.name || sizeValue,
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
           continue;
         }
-
         const ingredients = parseArrayField(row.ingredients, "ingredients");
         const allergens = parseArrayField(row.allergens, "allergens");
         const tags = parseArrayField(row.tags, "tags");
@@ -3052,17 +2566,16 @@ exports.bulkImportMenuItems = async (req, res) => {
           isSeasonal: getRowValue(row, ["isSeasonal", "seasonal"]),
           startDate: row.startDate,
           endDate: row.endDate,
-          seasonName: row.seasonName,
+          seasonName: row.seasonName
         });
-
-        let menuItem = await MenuItem.findOne({ name });
-
+        let menuItem = await MenuItem.findOne({
+          name
+        });
         const priceRow = {
           sizeId: sizeDoc._id,
           price: Number(priceValue),
-          costPrice: Number(row.costPrice) || 0,
+          costPrice: Number(row.costPrice) || 0
         };
-
         if (menuItem) {
           menuItem.name = name;
           menuItem.description = description || "";
@@ -3072,46 +2585,30 @@ exports.bulkImportMenuItems = async (req, res) => {
             calories: Number(row.calories) || 0,
             protein: Number(row.protein) || 0,
             carbs: Number(row.carbs) || 0,
-            fat: Number(row.fat) || 0,
+            fat: Number(row.fat) || 0
           };
           menuItem.displayOrder = Number(row.displayOrder) || 0;
           menuItem.spiceLevel = Number(row.spiceLevel) || 0;
-          menuItem.preparationTime = Math.max(
-            1,
-            Number(row.preparationTime) || 15,
-          );
-          menuItem.isVegetarian = parseBoolean(
-            getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"]),
-          );
+          menuItem.preparationTime = Math.max(1, Number(row.preparationTime) || 15);
+          menuItem.isVegetarian = parseBoolean(getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"]));
           menuItem.isNonVegetarian = parseBoolean(row.isNonVegetarian);
           menuItem.isVegan = parseBoolean(row.isVegan);
           menuItem.isGlutenFree = parseBoolean(row.isGlutenFree);
-          menuItem.isAvailable =
-            row.isAvailable === undefined || row.isAvailable === ""
-              ? menuItem.isAvailable
-              : parseBoolean(row.isAvailable, menuItem.isAvailable);
-          menuItem.isActive =
-            row.isActive === undefined || row.isActive === ""
-              ? menuItem.isActive
-              : parseBoolean(row.isActive, menuItem.isActive);
+          menuItem.isAvailable = row.isAvailable === undefined || row.isAvailable === "" ? menuItem.isAvailable : parseBoolean(row.isAvailable, menuItem.isAvailable);
+          menuItem.isActive = row.isActive === undefined || row.isActive === "" ? menuItem.isActive : parseBoolean(row.isActive, menuItem.isActive);
           menuItem.ingredients = ingredients;
           menuItem.allergens = allergens;
           menuItem.tags = tags;
           menuItem.seasonal = seasonal;
-
-          const existingPriceIndex = menuItem.prices.findIndex((price) =>
-            String(price.sizeId) === String(sizeDoc._id),
-          );
-
+          const existingPriceIndex = menuItem.prices.findIndex(price => String(price.sizeId) === String(sizeDoc._id));
           if (existingPriceIndex >= 0) {
             menuItem.prices[existingPriceIndex] = {
               ...menuItem.prices[existingPriceIndex].toObject(),
-              ...priceRow,
+              ...priceRow
             };
           } else {
             menuItem.prices.push(priceRow);
           }
-
           menuItem.updatedBy = req.user.id;
           await menuItem.save();
           results.updated++;
@@ -3122,7 +2619,7 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeDoc.code || sizeDoc.name || sizeValue,
             status: "success",
             action: "updated",
-            reason: "Menu item updated successfully",
+            reason: "Menu item updated successfully"
           });
         } else {
           menuItem = new MenuItem({
@@ -3134,34 +2631,25 @@ exports.bulkImportMenuItems = async (req, res) => {
               calories: Number(row.calories) || 0,
               protein: Number(row.protein) || 0,
               carbs: Number(row.carbs) || 0,
-              fat: Number(row.fat) || 0,
+              fat: Number(row.fat) || 0
             },
             displayOrder: Number(row.displayOrder) || 0,
             spiceLevel: Number(row.spiceLevel) || 0,
-            preparationTime: Math.max(
-              1,
-              Number(row.preparationTime) || 15,
-            ),
-            isVegetarian: parseBoolean(
-              getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"]),
-            ),
+            preparationTime: Math.max(1, Number(row.preparationTime) || 15),
+            isVegetarian: parseBoolean(getRowValue(row, ["isVegetarian", "isVeg", "vegetarian"])),
             isNonVegetarian: parseBoolean(row.isNonVegetarian),
             isVegan: parseBoolean(row.isVegan),
             isGlutenFree: parseBoolean(row.isGlutenFree),
             isAvailable: parseBoolean(row.isAvailable, true),
-            isActive:
-              row.isActive === undefined || row.isActive === ""
-                ? true
-                : parseBoolean(row.isActive, true),
+            isActive: row.isActive === undefined || row.isActive === "" ? true : parseBoolean(row.isActive, true),
             ingredients,
             allergens,
             tags,
             seasonal,
             prices: [priceRow],
             createdBy: req.user.id,
-            updatedBy: req.user.id,
+            updatedBy: req.user.id
           });
-
           await menuItem.save();
           results.created++;
           addRowResult({
@@ -3171,7 +2659,7 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeDoc.code || sizeDoc.name || sizeValue,
             status: "success",
             action: "created",
-            reason: "Menu item created successfully",
+            reason: "Menu item created successfully"
           });
         }
       } catch (err) {
@@ -3180,7 +2668,6 @@ exports.bulkImportMenuItems = async (req, res) => {
           const field = Object.keys(err.keyPattern || {})[0] || "field";
           const value = err.keyValue?.[field] || row.name;
           const reason = `Menu item with ${field} '${value}' already exists`;
-
           results.errors.push(`Row ${rowNumber}: ${reason}`);
           addRowResult({
             rowNumber,
@@ -3189,7 +2676,7 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: row.size || row.sizeId || row.sizeCode || "",
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
         } else {
           const reason = `Failed to import '${row.name || "item"}': ${err.message}`;
@@ -3201,23 +2688,22 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: row.size || row.sizeId || row.sizeCode || "",
             status: "failed",
             action: "failed",
-            reason,
+            reason
           });
         }
       }
     }
-
     return res.status(200).json({
       success: true,
       message: "Bulk Import Completed",
-      data: results,
+      data: results
     });
   } catch (error) {
     logger.error(error);
     return res.status(500).json({
       success: false,
       message: "Import failed",
-      error: error.message,
+      error: error.message
     });
   }
 };

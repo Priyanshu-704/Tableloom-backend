@@ -1,20 +1,22 @@
-const { logger } = require("./logger.js");
+const {
+  logger
+} = require("./logger.js");
 const nodemailer = require("nodemailer");
-require("dotenv").config({ quiet: true });
-
+require("dotenv").config({
+  quiet: true
+});
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
   auth: {
     user: process.env.EMAIL_USERNAME,
-    pass: process.env.EMAIL_PASSWORD,
+    pass: process.env.EMAIL_PASSWORD
   },
   tls: {
-    rejectUnauthorized: false,
-  },
+    rejectUnauthorized: false
+  }
 });
-
 const sendStaffCredentials = async (email, name, password, role) => {
   const mailOptions = {
     from: process.env.EMAIL_FROM,
@@ -47,9 +49,8 @@ const sendStaffCredentials = async (email, name, password, role) => {
           </p>
         </div>
       </div>
-    `,
+    `
   };
-
   try {
     await transporter.sendMail(mailOptions);
     logger.info(`Credentials email sent to ${email}`);
@@ -59,10 +60,8 @@ const sendStaffCredentials = async (email, name, password, role) => {
     return false;
   }
 };
-
 const sendPasswordResetEmail = async (email, resetToken) => {
   const resetUrl = `${process.env.FRONTEND_URL}/admin/reset-password/${resetToken}`;
-
   const mailOptions = {
     from: process.env.EMAIL_FROM,
     to: email,
@@ -88,9 +87,8 @@ const sendPasswordResetEmail = async (email, resetToken) => {
           </p>
         </div>
       </div>
-    `,
+    `
   };
-
   try {
     await transporter.sendMail(mailOptions);
     return true;
@@ -99,8 +97,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     return false;
   }
 };
-
 module.exports = {
   sendStaffCredentials,
-  sendPasswordResetEmail,
+  sendPasswordResetEmail
 };

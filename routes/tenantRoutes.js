@@ -6,18 +6,17 @@ const {
   getTenants,
   getTenantOverview,
   updateTenantStatus,
-  verifyTenant,
+  verifyTenant
 } = require("../controllers/tenantController");
-const { protect, authorize } = require("../middleware/auth");
-
+const {
+  protect,
+  requireRole
+} = require("../middleware/auth");
 router.post("/register", registerTenant);
-
-router.use(protect, authorize("super_admin"));
-
+router.use(protect, requireRole("super_admin"));
 router.get("/", getTenants);
 router.post("/", createTenant);
 router.get("/:id/overview", getTenantOverview);
 router.patch("/:id/verify", verifyTenant);
 router.patch("/:id/status", updateTenantStatus);
-
 module.exports = router;

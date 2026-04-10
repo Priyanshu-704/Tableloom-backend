@@ -1,15 +1,15 @@
-const { logger } = require("./logger.js");
+const {
+  logger
+} = require("./logger.js");
 const cron = require("node-cron");
 const kitchenManager = require("./kitchenManager");
 const AppSetting = require("../models/AppSetting");
-
 const DEFAULT_CONFIG = {
   enabled: true,
   intervalMinutes: 5,
   notifyOnDelay: true,
-  criticalThresholdMinutes: 15,
+  criticalThresholdMinutes: 15
 };
-
 class DelayMonitor {
   constructor() {
     this.task = null;
@@ -17,31 +17,23 @@ class DelayMonitor {
     this.lastCheck = null;
     this.lastError = null;
     this.lastRunSummary = null;
-    this.config = { ...DEFAULT_CONFIG };
+    this.config = {
+      ...DEFAULT_CONFIG
+    };
   }
-
   async loadConfig() {
-    const settings = await AppSetting.findOne({ key: "app-settings" }).lean();
+    const settings = await AppSetting.findOne({
+      key: "app-settings"
+    }).lean();
     return {
       ...DEFAULT_CONFIG,
       ...(settings?.operations?.delayMonitor || {}),
-      intervalMinutes: Math.min(
-        59,
-        Math.max(
-          1,
-          Number(
-            settings?.operations?.delayMonitor?.intervalMinutes ||
-              DEFAULT_CONFIG.intervalMinutes
-          )
-        )
-      ),
+      intervalMinutes: Math.min(59, Math.max(1, Number(settings?.operations?.delayMonitor?.intervalMinutes || DEFAULT_CONFIG.intervalMinutes)))
     };
   }
-
   getCronExpression(intervalMinutes) {
     return `*/${intervalMinutes} * * * *`;
   }
-
   async runCheck(trigger = "scheduled") {
     try {
       const delayedOrders = await kitchenManager.checkDelayedOrders();
@@ -50,7 +42,7 @@ class DelayMonitor {
       this.lastRunSummary = {
         trigger,
         delayedOrdersFound: delayedOrders.length,
-        checkedAt: this.lastCheck,
+        checkedAt: this.lastCheck
       };
       return delayedOrders;
     } catch (error) {
@@ -59,36 +51,26 @@ class DelayMonitor {
       throw error;
     }
   }
-
   async syncWithSettings() {
     this.config = await this.loadConfig();
-
     if (this.task) {
       this.task.stop();
       this.task.destroy();
       this.task = null;
     }
-
     if (!this.config.enabled) {
       this.isRunning = false;
       return this.getStatus();
     }
-
-    this.task = cron.schedule(
-      this.getCronExpression(this.config.intervalMinutes),
-      async () => {
-        await this.runCheck("scheduled");
-      }
-    );
-
+    this.task = cron.schedule(this.getCronExpression(this.config.intervalMinutes), async () => {
+      await this.runCheck("scheduled");
+    });
     this.isRunning = true;
     return this.getStatus();
   }
-
   async start() {
     return this.syncWithSettings();
   }
-
   stop() {
     if (this.task) {
       this.task.stop();
@@ -97,7 +79,6 @@ class DelayMonitor {
     }
     this.isRunning = false;
   }
-
   getStatus() {
     return {
       isRunning: this.isRunning,
@@ -105,9 +86,8 @@ class DelayMonitor {
       intervalMinutes: this.config.intervalMinutes,
       lastCheck: this.lastCheck,
       lastError: this.lastError,
-      lastRunSummary: this.lastRunSummary,
+      lastRunSummary: this.lastRunSummary
     };
   }
 }
-
 module.exports = new DelayMonitor();

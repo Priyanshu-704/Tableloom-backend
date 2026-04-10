@@ -1,86 +1,30 @@
 const express = require("express");
 const router = express.Router();
 const {
-  requireTenant,
-  blockSuperAdminTenantAccess,
+  requireTenantScope,
+  enforceSuperAdminTenantReadOnly
 } = require("../middleware/tenant");
-
 router.use("/tenants", require("./tenantRoutes"));
 router.use("/users", require("./userRoutes"));
 router.use("/permissions", require("./permissionRoutes"));
 router.use("/support", require("./supportRoutes"));
-
-router.use("/menu", requireTenant, blockSuperAdminTenantAccess, require("./menuRoutes"));
-router.use(
-  "/inventory",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./inventoryRoutes")
-);
-router.use("/tables", requireTenant, blockSuperAdminTenantAccess, require("./tableRoutes"));
-
-router.use(
-  "/customers",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./customerRoutes")
-);
-
-router.use("/cart", requireTenant, blockSuperAdminTenantAccess, require("./cartRoutes"));
-router.use("/orders", requireTenant, blockSuperAdminTenantAccess, require("./orderRoutes"));
-router.use(
-  "/feedback",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./feedbackRoutes")
-);
-
-router.use(
-  "/waiter-calls",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./waiterCallRoutes")
-);
-router.use("/kitchen", requireTenant, blockSuperAdminTenantAccess, require("./kitchenRoutes"));
-router.use(
-  "/kitchen-stations",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./kitchenStationRoutes")
-);
-
-router.use("/images", requireTenant, blockSuperAdminTenantAccess, require("./imageRoutes"));
-
-router.use("/bills", requireTenant, blockSuperAdminTenantAccess, require("./billRoutes"));
-router.use(
-  "/notifications",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./notificationRoutes")
-);
-router.use(
-  "/push-notifications",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./pushNotificationRoutes")
-);
+router.use("/admin-requests", require("./supportRoutes"));
+router.use("/menu", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./menuRoutes"));
+router.use("/inventory", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./inventoryRoutes"));
+router.use("/tables", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./tableRoutes"));
+router.use("/customers", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./customerRoutes"));
+router.use("/cart", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./cartRoutes"));
+router.use("/orders", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./orderRoutes"));
+router.use("/feedback", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./feedbackRoutes"));
+router.use("/waiter-calls", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./waiterCallRoutes"));
+router.use("/kitchen", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./kitchenRoutes"));
+router.use("/kitchen-stations", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./kitchenStationRoutes"));
+router.use("/images", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./imageRoutes"));
+router.use("/bills", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./billRoutes"));
+router.use("/notifications", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./notificationRoutes"));
+router.use("/push-notifications", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./pushNotificationRoutes"));
 router.use("/settings", require("./settingsRoutes"));
-router.use(
-  "/dashboard",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./dashboardRoutes")
-);
-router.use(
-  "/reports",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./reportRoutes")
-);
-router.use(
-  "/backups",
-  requireTenant,
-  blockSuperAdminTenantAccess,
-  require("./backupRoutes")
-);
+router.use("/dashboard", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./dashboardRoutes"));
+router.use("/reports", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./reportRoutes"));
+router.use("/backups", requireTenantScope, enforceSuperAdminTenantReadOnly, require("./backupRoutes"));
 module.exports = router;

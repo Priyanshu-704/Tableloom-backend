@@ -1,97 +1,103 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
-
 const INVENTORY_UNITS = ["kg", "pieces", "gram", "milligram", "liter", "ton"];
-
 const inventoryItemSchema = new mongoose.Schema({
   ingredientName: {
     type: String,
     required: true,
     trim: true,
-    maxlength: 120,
+    maxlength: 120
   },
-  relatedMenuItems: [
-    {
-      menuItem: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "MenuItem",
-        required: true,
-      },
-      quantityRequired: {
-        type: Number,
-        min: 0,
-        default: 1,
-      },
+  relatedMenuItems: [{
+    menuItem: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MenuItem",
+      required: true
     },
-  ],
+    quantityRequired: {
+      type: Number,
+      min: 0,
+      default: 1
+    }
+  }],
   menuItem: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "MenuItem",
+    ref: "MenuItem"
   },
   sku: {
     type: String,
     trim: true,
     uppercase: true,
-    sparse: true,
+    sparse: true
   },
   unit: {
     type: String,
     trim: true,
     enum: INVENTORY_UNITS,
     default: "pieces",
-    maxlength: 20,
+    maxlength: 20
   },
   currentStock: {
     type: Number,
     required: true,
     min: 0,
-    default: 0,
+    default: 0
   },
   minimumStock: {
     type: Number,
     min: 0,
-    default: 5,
+    default: 5
   },
   reorderQuantity: {
     type: Number,
     min: 0,
-    default: 10,
+    default: 10
   },
   notes: {
     type: String,
     trim: true,
-    maxlength: 500,
+    maxlength: 500
   },
   lastRestockedAt: {
     type: Date,
-    default: null,
+    default: null
   },
   lastAdjustedAt: {
     type: Date,
-    default: Date.now,
+    default: Date.now
   },
   isActive: {
     type: Boolean,
-    default: true,
+    default: true
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    required: true
   },
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-  },
+    ref: "User"
+  }
 }, {
-  timestamps: true,
+  timestamps: true
 });
-
-inventoryItemSchema.index({ tenantId: 1, ingredientName: 1 }, { unique: true });
-inventoryItemSchema.index(
-  { tenantId: 1, sku: 1 },
-  { unique: true, partialFilterExpression: { sku: { $type: "string" } } }
-);
+inventoryItemSchema.index({
+  tenantId: 1,
+  ingredientName: 1
+}, {
+  unique: true
+});
+inventoryItemSchema.index({
+  tenantId: 1,
+  sku: 1
+}, {
+  unique: true,
+  partialFilterExpression: {
+    sku: {
+      $type: "string"
+    }
+  }
+});
 inventoryItemSchema.plugin(tenantScoped);
-
 module.exports = mongoose.model("InventoryItem", inventoryItemSchema);

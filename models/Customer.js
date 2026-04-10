@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const tenantScoped = require("../plugins/tenantScoped");
-
 const customerSchema = new mongoose.Schema({
   sessionId: {
     type: String,
@@ -29,10 +28,7 @@ const customerSchema = new mongoose.Schema({
     type: String,
     trim: true,
     lowercase: true,
-    match: [
-      /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-      'Please add a valid email'
-    ],
+    match: [/^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/, 'Please add a valid email'],
     index: true
   },
   sessionStatus: {
@@ -100,15 +96,15 @@ const customerSchema = new mongoose.Schema({
   billEmailSentAt: Date,
   retainSessionData: {
     type: Boolean,
-    default: true  
+    default: true
   },
   retainUntil: {
     type: Date,
-    default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) 
+    default: () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
   },
   isAccessibleForBilling: {
     type: Boolean,
-    default: true  
+    default: true
   },
   closedBy: {
     type: mongoose.Schema.ObjectId,
@@ -156,84 +152,70 @@ const customerSchema = new mongoose.Schema({
     default: Date.now
   }
 });
-
 customerSchema.plugin(tenantScoped);
-customerSchema.index({ tenantId: 1, sessionStart: -1, isActive: 1, sessionStatus: 1 });
-customerSchema.index({ tenantId: 1, sessionEnd: -1, sessionStatus: 1, isActive: 1 });
-customerSchema.pre('save', function() {
+customerSchema.index({
+  tenantId: 1,
+  sessionStart: -1,
+  isActive: 1,
+  sessionStatus: 1
+});
+customerSchema.index({
+  tenantId: 1,
+  sessionEnd: -1,
+  sessionStatus: 1,
+  isActive: 1
+});
+customerSchema.pre('save', function () {
   this.updatedAt = Date.now();
 });
-
-
-customerSchema.pre('save', function() {
-
+customerSchema.pre('save', function () {
   if (this.isActive && this.sessionStatus === 'active') {
     this.lastActivity = new Date();
   }
 });
-
-customerSchema.virtual('sessionDuration').get(function() {
+customerSchema.virtual('sessionDuration').get(function () {
   if (!this.sessionEnd) return null;
-  return Math.round((this.sessionEnd - this.sessionStart) / 60000); 
+  return Math.round((this.sessionEnd - this.sessionStart) / 60000);
 });
-
-customerSchema.virtual('hasActiveBill').get(function() {
+customerSchema.virtual('hasActiveBill').get(function () {
   return this.billGenerated && this.lastBillId && !this.billGeneratedAt;
 });
-
-customerSchema.virtual('isTimedOut').get(function() {
+customerSchema.virtual('isTimedOut').get(function () {
   if (!this.isActive || this.sessionStatus !== 'active') return false;
-  
   const timeoutMinutes = 30;
   const timeoutTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
   return this.lastActivity < timeoutTime;
 });
-
-
-customerSchema.virtual('isPaymentComplete').get(function() {
+customerSchema.virtual('isPaymentComplete').get(function () {
   return this.paymentStatus === 'paid' && this.sessionStatus === 'completed';
 });
-
-customerSchema.methods.canAccessForBilling = function() {
+customerSchema.methods.canAccessForBilling = function () {
   const now = new Date();
-  
-  
-  if (this.isActive && 
-      (this.sessionStatus === 'active' || this.sessionStatus === 'payment_pending')) {
+  if (this.isActive && (this.sessionStatus === 'active' || this.sessionStatus === 'payment_pending')) {
     return true;
   }
-  
-
-  if (this.sessionStatus === 'completed' && 
-      this.retainSessionData && 
-      this.retainUntil && 
-      this.retainUntil > now) {
+  if (this.sessionStatus === 'completed' && this.retainSessionData && this.retainUntil && this.retainUntil > now) {
     return true;
   }
-
   if (this.isAccessibleForBilling) {
     return true;
   }
-  
   return false;
 };
-
-
-customerSchema.methods.getBillingSummary = async function() {
+customerSchema.methods.getBillingSummary = async function () {
   const Order = mongoose.model('Order');
-  
   const orders = await Order.find({
     customer: this._id,
-    paymentStatus: { $ne: 'paid' }
+    paymentStatus: {
+      $ne: 'paid'
+    }
   });
-  
   let subtotal = 0;
   let taxAmount = 0;
   let serviceCharge = 0;
   let discountAmount = 0;
   let totalAmount = 0;
   let itemCount = 0;
-  
   orders.forEach(order => {
     subtotal += order.subtotal || 0;
     taxAmount += order.taxAmount || 0;
@@ -242,7 +224,6 @@ customerSchema.methods.getBillingSummary = async function() {
     totalAmount += order.totalAmount || 0;
     itemCount += order.items?.length || 0;
   });
-  
   return {
     orderCount: orders.length,
     itemCount,
@@ -255,80 +236,95 @@ customerSchema.methods.getBillingSummary = async function() {
     hasPendingPayment: totalAmount > 0
   };
 };
-
-
-customerSchema.methods.markAsPaid = async function(paymentData) {
+customerSchema.methods.markAsPaid = async function (paymentData) {
   this.sessionStatus = 'completed';
   this.sessionEnd = new Date();
   this.paymentMethod = paymentData.method || 'online';
   this.paymentStatus = 'paid';
   this.paymentReference = paymentData.transactionId;
   this.totalAmount = paymentData.amount || this.totalAmount;
-  
   if (this.totalAmount) {
     this.totalSpent += this.totalAmount;
   }
-  
-
   this.retainSessionData = true;
-  this.retainUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); 
+  this.retainUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   this.isAccessibleForBilling = true;
-  
   return this.save();
 };
-
-customerSchema.statics.findForBilling = function(sessionId) {
+customerSchema.statics.findForBilling = function (sessionId) {
   return this.findOne({
     sessionId,
-    $or: [
-      { 
-        isActive: true, 
-        sessionStatus: { $in: ['active', 'payment_pending'] } 
-      },
-      { 
-        retainSessionData: true,
-        retainUntil: { $gt: new Date() }
-      },
-      {
-        isAccessibleForBilling: true
+    $or: [{
+      isActive: true,
+      sessionStatus: {
+        $in: ['active', 'payment_pending']
       }
-    ]
+    }, {
+      retainSessionData: true,
+      retainUntil: {
+        $gt: new Date()
+      }
+    }, {
+      isAccessibleForBilling: true
+    }]
   });
 };
-
-
-customerSchema.statics.cleanupOldSessions = async function(days = 7) {
+customerSchema.statics.cleanupOldSessions = async function (days = 7) {
   const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  
-  return this.updateMany(
-    {
-      sessionStatus: 'completed',
-      sessionEnd: { $lt: cutoffDate },
-      retainSessionData: true
+  return this.updateMany({
+    sessionStatus: 'completed',
+    sessionEnd: {
+      $lt: cutoffDate
     },
-    {
-      $set: {
-        retainSessionData: false,
-        isAccessibleForBilling: false
-      },
-      $unset: {
-        retainUntil: 1
-      }
+    retainSessionData: true
+  }, {
+    $set: {
+      retainSessionData: false,
+      isAccessibleForBilling: false
+    },
+    $unset: {
+      retainUntil: 1
     }
-  );
+  });
 };
-
-customerSchema.index({ sessionStatus: 1 });
-customerSchema.index({ sessionStart: -1 });
-customerSchema.index({ lastActivity: -1 });
-customerSchema.index({ sessionEnd: -1 });
-customerSchema.index({ paymentStatus: 1 });
-customerSchema.index({ retainSessionData: 1 });
-customerSchema.index({ retainUntil: 1 });
-customerSchema.index({ isAccessibleForBilling: 1 });
-customerSchema.index({ sessionStatus: 1, isActive: 1 });
-customerSchema.index({ sessionId: 1, isActive: 1 });
-customerSchema.index({ sessionId: 1, retainSessionData: 1 });
-customerSchema.index({ sessionId: 1, isAccessibleForBilling: 1 });
-
+customerSchema.index({
+  sessionStatus: 1
+});
+customerSchema.index({
+  sessionStart: -1
+});
+customerSchema.index({
+  lastActivity: -1
+});
+customerSchema.index({
+  sessionEnd: -1
+});
+customerSchema.index({
+  paymentStatus: 1
+});
+customerSchema.index({
+  retainSessionData: 1
+});
+customerSchema.index({
+  retainUntil: 1
+});
+customerSchema.index({
+  isAccessibleForBilling: 1
+});
+customerSchema.index({
+  sessionStatus: 1,
+  isActive: 1
+});
+customerSchema.index({
+  sessionId: 1,
+  isActive: 1
+});
+customerSchema.index({
+  sessionId: 1,
+  retainSessionData: 1
+});
+customerSchema.index({
+  sessionId: 1,
+  isAccessibleForBilling: 1
+});
 module.exports = mongoose.model('Customer', customerSchema);

@@ -8,5 +8,4 @@ class AppError extends Error {
     this.details = options.details;
   }
 }
-
 module.exports = AppError;

@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const tenantScoped = require("../plugins/tenantScoped");
-
 const kitchenOrderSchema = new mongoose.Schema({
   order: {
     type: mongoose.Schema.ObjectId,
@@ -57,10 +56,10 @@ const kitchenOrderSchema = new mongoose.Schema({
     stationName: String,
     startTime: Date,
     readyTime: Date,
-    timer: Number, // in seconds
+    timer: Number,
     preparationTime: {
       type: Number,
-      min: 1,
+      min: 1
     },
     estimatedCompletion: Date,
     allergens: [String],
@@ -68,15 +67,15 @@ const kitchenOrderSchema = new mongoose.Schema({
     colorCode: String,
     delayStatus: {
       type: String,
-      default: "on_time",
+      default: "on_time"
     },
     delayColor: String,
     delayMinutes: {
       type: Number,
       default: 0,
-      min: 0,
+      min: 0
     },
-    lastDelayCheck: Date,
+    lastDelayCheck: Date
   }],
   overallStatus: {
     type: String,
@@ -84,7 +83,7 @@ const kitchenOrderSchema = new mongoose.Schema({
     default: 'pending'
   },
   progress: {
-    type: Number, // percentage
+    type: Number,
     default: 0,
     min: 0,
     max: 100
@@ -110,9 +109,9 @@ const kitchenOrderSchema = new mongoose.Schema({
     served: Date
   },
   timeMetrics: {
-    acceptTime: Number, // seconds from received to accepted
-    preparationTime: Number, // seconds from accepted to completed
-    totalTime: Number // seconds from received to served
+    acceptTime: Number,
+    preparationTime: Number,
+    totalTime: Number
   },
   notes: {
     type: String,
@@ -135,22 +134,13 @@ const kitchenOrderSchema = new mongoose.Schema({
     default: Date.now
   }
 });
-
 kitchenOrderSchema.plugin(tenantScoped);
-
-// Update timestamps and progress
-kitchenOrderSchema.pre('save', function() {
+kitchenOrderSchema.pre('save', function () {
   this.updatedAt = Date.now();
-  
-  // Calculate progress percentage
   if (this.items && this.items.length > 0) {
-    const completedItems = this.items.filter(item => 
-      ['ready', 'served'].includes(item.status)
-    ).length;
-    this.progress = Math.round((completedItems / this.items.length) * 100);
+    const completedItems = this.items.filter(item => ['ready', 'served'].includes(item.status)).length;
+    this.progress = Math.round(completedItems / this.items.length * 100);
   }
-  
-  // Update overall status based on items
   if (this.items && this.items.length > 0) {
     if (this.items.every(item => item.status === 'served')) {
       this.overallStatus = 'completed';
@@ -160,14 +150,21 @@ kitchenOrderSchema.pre('save', function() {
       this.overallStatus = 'in_progress';
     }
   }
-  
 });
-
-// Create indexes
-kitchenOrderSchema.index({ order: 1 });
-kitchenOrderSchema.index({ overallStatus: 1 });
-kitchenOrderSchema.index({ priority: 1, createdAt: 1 });
-kitchenOrderSchema.index({ 'items.status': 1 });
-kitchenOrderSchema.index({ createdAt: -1 });
-
+kitchenOrderSchema.index({
+  order: 1
+});
+kitchenOrderSchema.index({
+  overallStatus: 1
+});
+kitchenOrderSchema.index({
+  priority: 1,
+  createdAt: 1
+});
+kitchenOrderSchema.index({
+  'items.status': 1
+});
+kitchenOrderSchema.index({
+  createdAt: -1
+});
 module.exports = mongoose.model('KitchenOrder', kitchenOrderSchema);

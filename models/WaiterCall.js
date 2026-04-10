@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
 const tenantScoped = require("../plugins/tenantScoped");
-
 const waiterCallSchema = new mongoose.Schema({
   callId: {
     type: String,
@@ -115,10 +114,10 @@ const waiterCallSchema = new mongoose.Schema({
     type: String
   },
   responseTime: {
-    type: Number // in seconds
+    type: Number
   },
   resolutionTime: {
-    type: Number // in seconds
+    type: Number
   },
   createdAt: {
     type: Date,
@@ -129,29 +128,35 @@ const waiterCallSchema = new mongoose.Schema({
     default: Date.now
   }
 });
-
 waiterCallSchema.plugin(tenantScoped);
-
-// Update the updatedAt field before saving
-waiterCallSchema.pre('save', function() {
+waiterCallSchema.pre('save', function () {
   this.updatedAt = Date.now();
-});   
-
-// Generate call ID before validation so required check passes.
-waiterCallSchema.pre('validate', function() {
+});
+waiterCallSchema.pre('validate', function () {
   if (this.isNew && !this.callId) {
     const timestamp = Date.now().toString().slice(-6);
     const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     this.callId = `CALL-${timestamp}${random}`;
   }
 });
-
-// Create indexes for better performance
-waiterCallSchema.index({ sessionId: 1 });
-waiterCallSchema.index({ table: 1 });
-waiterCallSchema.index({ status: 1 });
-waiterCallSchema.index({ assignedTo: 1, status: 1 });
-waiterCallSchema.index({ createdAt: -1 });
-waiterCallSchema.index({ priority: 1, createdAt: 1 });
-
+waiterCallSchema.index({
+  sessionId: 1
+});
+waiterCallSchema.index({
+  table: 1
+});
+waiterCallSchema.index({
+  status: 1
+});
+waiterCallSchema.index({
+  assignedTo: 1,
+  status: 1
+});
+waiterCallSchema.index({
+  createdAt: -1
+});
+waiterCallSchema.index({
+  priority: 1,
+  createdAt: 1
+});
 module.exports = mongoose.model('WaiterCall', waiterCallSchema);

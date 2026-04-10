@@ -1,11 +1,10 @@
 const mongoose = require('mongoose');
 const tenantScoped = require("../plugins/tenantScoped");
-
 const feedbackSchema = new mongoose.Schema({
   customer: {
     type: mongoose.Schema.ObjectId,
     ref: 'Customer',
-    required: true 
+    required: true
   },
   order: {
     type: mongoose.Schema.ObjectId,
@@ -54,11 +53,7 @@ const feedbackSchema = new mongoose.Schema({
   },
   categories: [{
     type: String,
-    enum: [
-      'food_quality', 'service_speed', 'staff_friendliness', 
-      'cleanliness', 'value_for_money', 'atmosphere',
-      'menu_variety', 'waiting_time', 'order_accuracy'
-    ]
+    enum: ['food_quality', 'service_speed', 'staff_friendliness', 'cleanliness', 'value_for_money', 'atmosphere', 'menu_variety', 'waiting_time', 'order_accuracy']
   }],
   sentiment: {
     type: String,
@@ -101,7 +96,7 @@ const feedbackSchema = new mongoose.Schema({
     enum: ['business', 'casual_dining', 'celebration', 'date', 'family', 'quick_meal']
   },
   waitTime: {
-    type: Number // in minutes
+    type: Number
   },
   response: {
     message: String,
@@ -152,28 +147,18 @@ const feedbackSchema = new mongoose.Schema({
     default: Date.now
   }
 });
-
 feedbackSchema.plugin(tenantScoped);
-
-// Update the updatedAt field before saving
-feedbackSchema.pre('save', function() {
+feedbackSchema.pre('save', function () {
   this.updatedAt = Date.now();
-  
-  // Auto-detect sentiment based on ratings and comments
   if (this.isModified('ratings') || this.isModified('comments')) {
     this.detectSentiment();
   }
-  
-  // Auto-assign priority
   if (this.isModified('ratings') || this.isModified('comments')) {
     this.assignPriority();
   }
 });
-
-// Method to detect sentiment
-feedbackSchema.methods.detectSentiment = function() {
+feedbackSchema.methods.detectSentiment = function () {
   const overallRating = this.ratings.overall;
-  
   if (overallRating >= 4) {
     this.sentiment = 'positive';
   } else if (overallRating <= 2) {
@@ -181,16 +166,12 @@ feedbackSchema.methods.detectSentiment = function() {
   } else {
     this.sentiment = 'neutral';
   }
-  
-  // Additional sentiment analysis based on comments
   if (this.comments) {
     const positiveWords = ['great', 'excellent', 'amazing', 'wonderful', 'good', 'love', 'perfect'];
     const negativeWords = ['bad', 'terrible', 'awful', 'horrible', 'disappointing', 'poor'];
-    
     const comment = this.comments.toLowerCase();
     const positiveCount = positiveWords.filter(word => comment.includes(word)).length;
     const negativeCount = negativeWords.filter(word => comment.includes(word)).length;
-    
     if (negativeCount > positiveCount) {
       this.sentiment = 'negative';
     } else if (positiveCount > negativeCount) {
@@ -198,9 +179,7 @@ feedbackSchema.methods.detectSentiment = function() {
     }
   }
 };
-
-// Method to assign priority
-feedbackSchema.methods.assignPriority = function() {
+feedbackSchema.methods.assignPriority = function () {
   if (this.ratings.overall <= 2 || this.sentiment === 'negative') {
     this.priority = 'high';
     this.followUpRequired = true;
@@ -210,15 +189,28 @@ feedbackSchema.methods.assignPriority = function() {
     this.priority = 'low';
   }
 };
-
-// Create indexes for better performance
-feedbackSchema.index({ order: 1 });
-feedbackSchema.index({ customer: 1 });
-feedbackSchema.index({ sessionId: 1 });
-feedbackSchema.index({ sentiment: 1 });
-feedbackSchema.index({ status: 1 });
-feedbackSchema.index({ priority: 1 });
-feedbackSchema.index({ createdAt: -1 });
-feedbackSchema.index({ 'ratings.overall': 1 });
-
+feedbackSchema.index({
+  order: 1
+});
+feedbackSchema.index({
+  customer: 1
+});
+feedbackSchema.index({
+  sessionId: 1
+});
+feedbackSchema.index({
+  sentiment: 1
+});
+feedbackSchema.index({
+  status: 1
+});
+feedbackSchema.index({
+  priority: 1
+});
+feedbackSchema.index({
+  createdAt: -1
+});
+feedbackSchema.index({
+  'ratings.overall': 1
+});
 module.exports = mongoose.model('Feedback', feedbackSchema);
