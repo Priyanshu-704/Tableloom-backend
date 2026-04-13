@@ -5,7 +5,7 @@ const {
 exports.parseCSV = fileBuffer => {
   return new Promise((resolve, reject) => {
     const results = [];
-    const readableStream = Readable.from(fileBuffer.toString());
+    const readableStream = Readable.from([fileBuffer]);
     readableStream.pipe(csv()).on("data", data => results.push(data)).on("end", () => resolve(results)).on("error", error => reject(error));
   });
 };

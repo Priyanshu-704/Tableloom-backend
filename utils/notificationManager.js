@@ -9,6 +9,9 @@ const {
   getCurrentTenantId
 } = require("./tenantContext");
 class NotificationManager {
+  constructor() {
+    this.cleanupTimer = null;
+  }
   shapeAction(action = {}) {
     if (!action) {
       return null;
@@ -945,9 +948,13 @@ class NotificationManager {
   }
   async scheduleCleanup() {
     try {
-      setInterval(async () => {
+      if (this.cleanupTimer) {
+        return;
+      }
+      this.cleanupTimer = setInterval(async () => {
         await this.cleanupExpiredNotifications();
       }, 60 * 60 * 1000);
+      this.cleanupTimer.unref?.();
     } catch (error) {
       logger.error("Schedule cleanup failed:", error);
     }

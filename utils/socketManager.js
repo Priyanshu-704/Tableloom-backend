@@ -119,8 +119,17 @@ const startCleanupTask = () => {
       logger.error("Notification cleanup error:", error.message);
     }
   }, 60 * 60 * 1000);
+  cleanupInterval.unref?.();
+};
+const stopCleanupTask = () => {
+  if (!cleanupInterval) return;
+  clearInterval(cleanupInterval);
+  cleanupInterval = null;
 };
 exports.initializeSocket = server => {
+  if (io) {
+    return io;
+  }
   const socketIo = require("socket.io");
   io = socketIo(server, {
     cors: {
@@ -136,6 +145,15 @@ exports.initializeSocket = server => {
   return io;
 };
 exports.setupNotificationSystem = startCleanupTask;
+exports.shutdownSocket = async () => {
+  stopCleanupTask();
+  if (!io) {
+    return;
+  }
+  const currentIo = io;
+  io = null;
+  await new Promise(resolve => currentIo.close(() => resolve()));
+};
 exports.getIO = () => {
   if (!io) {
     throw new Error("Socket.io not initialized");

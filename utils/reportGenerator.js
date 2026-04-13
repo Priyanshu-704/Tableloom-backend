@@ -6,8 +6,11 @@ const ExcelJS = require("exceljs");
 const PDFDocument = require("pdfkit");
 const sharp = require("sharp");
 const REPORT_TTL_MS = 1000 * 60 * 60 * 6;
+const REPORT_CLEANUP_INTERVAL_MS = Math.max(Number(process.env.REPORT_CLEANUP_INTERVAL_MS || 15 * 60 * 1000), 60 * 1000);
+const MAX_REGISTERED_REPORTS = Math.max(Number(process.env.MAX_REGISTERED_REPORTS || 200), 25);
 const REPORT_OUTPUT_DIR = path.join(os.tmpdir(), "quickbite-generated-reports");
 const reportRegistry = new Map();
+let cleanupTimer = null;
 const XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const PDF_FONT_REGULAR_NAME = "ReportRegular";
 const PDF_FONT_BOLD_NAME = "ReportBold";
@@ -1126,6 +1129,29 @@ const cleanupExpiredReports = () => {
     reportRegistry.delete(reportId);
   }
 };
+const evictOverflowReports = () => {
+  while (reportRegistry.size > MAX_REGISTERED_REPORTS) {
+    const oldestEntry = reportRegistry.entries().next().value;
+    if (!oldestEntry) {
+      break;
+    }
+    const [reportId, reportMeta] = oldestEntry;
+    if (fs.existsSync(reportMeta.filePath)) {
+      fs.unlinkSync(reportMeta.filePath);
+    }
+    reportRegistry.delete(reportId);
+  }
+};
+const ensureCleanupTimer = () => {
+  if (cleanupTimer) {
+    return;
+  }
+  cleanupTimer = setInterval(() => {
+    cleanupExpiredReports();
+    evictOverflowReports();
+  }, REPORT_CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref?.();
+};
 const registerReportFile = ({
   tenantId,
   format,
@@ -1133,6 +1159,7 @@ const registerReportFile = ({
   filename,
   contentType
 }) => {
+  ensureCleanupTimer();
   cleanupExpiredReports();
   const reportId = crypto.randomBytes(16).toString("hex");
   reportRegistry.set(reportId, {
@@ -1143,6 +1170,7 @@ const registerReportFile = ({
     contentType,
     createdAt: Date.now()
   });
+  evictOverflowReports();
   return reportId;
 };
 const generateAnalyticsReport = async ({
@@ -1211,6 +1239,7 @@ const generateAnalyticsReport = async ({
   };
 };
 const getGeneratedReport = reportId => {
+  ensureCleanupTimer();
   cleanupExpiredReports();
   return reportRegistry.get(reportId) || null;
 };

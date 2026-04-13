@@ -2369,6 +2369,7 @@ exports.bulkImportMenuItems = async (req, res) => {
       rows: []
     };
     const rows = await parseCSV(fileBuffer);
+    req.file.buffer = undefined;
     const categoryCache = new Map();
     const sizeCache = new Map();
     const escapeRegExp = (value = "") => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2705,5 +2706,9 @@ exports.bulkImportMenuItems = async (req, res) => {
       message: "Import failed",
       error: error.message
     });
+  } finally {
+    if (req.file) {
+      req.file.buffer = undefined;
+    }
   }
 };

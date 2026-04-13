@@ -59,6 +59,7 @@ const createImageUploadHandler = ({
         req.file.thumbnail = uploaded.thumbnail;
         req.file.storageProvider = uploaded.provider;
         req.file.resourceType = "image";
+        req.file.buffer = undefined;
         logger.info("Image processed successfully", {
           provider: uploaded.provider,
           original: uploaded.imagePublicId,

@@ -1,6 +1,5 @@
 const express = require("express");
 const router = express.Router();
-const multer = require("multer");
 const {
   getInventoryItems,
   createInventoryItem,
@@ -13,12 +12,12 @@ const {
   protect,
   hasPermission
 } = require("../middleware/auth");
-const upload = multer({
-  storage: multer.memoryStorage()
-});
+const {
+  handleCSVUpload
+} = require("../utils/uploadMiddleware");
 router.use(protect);
 router.get("/", hasPermission("INVENTORY_VIEW_ALL"), getInventoryItems);
-router.post("/bulk-upload", hasPermission("INVENTORY_CREATE"), upload.single("file"), bulkUploadInventory);
+router.post("/bulk-upload", hasPermission("INVENTORY_CREATE"), handleCSVUpload, bulkUploadInventory);
 router.post("/", hasPermission("INVENTORY_CREATE"), createInventoryItem);
 router.put("/:id", hasPermission("INVENTORY_EDIT"), updateInventoryItem);
 router.patch("/:id/adjust", hasPermission("INVENTORY_ADJUST"), adjustInventoryStock);

@@ -9,6 +9,7 @@ const {
 } = require("./tenantContext");
 const rolePermissionsCache = new Map();
 const ROLE_PERMISSIONS_CACHE_TTL_MS = Number(process.env.ROLE_PERMISSIONS_CACHE_TTL_MS || 30000);
+const MAX_ROLE_PERMISSION_CACHE_ENTRIES = Math.max(Number(process.env.ROLE_PERMISSION_CACHE_MAX_ENTRIES || 200), 25);
 const LEGACY_PERMISSION_GROUPS = {
   all: AllPermissions,
   users: [Permissions.USER_VIEW_ALL, Permissions.USER_CREATE, Permissions.USER_EDIT, Permissions.USER_DELETE, Permissions.USER_CHANGE_STATUS, Permissions.USER_CHANGE_ROLE, Permissions.USER_MANAGE_PERMISSIONS],
@@ -55,23 +56,41 @@ const getSettingsDocument = async () => AppSetting.findOne({
   tenantId: getCurrentTenantId()
 }).lean();
 const getCachedRolePermissionsMap = tenantId => {
+  const now = Date.now();
   const cacheKey = String(tenantId || "global");
   const cached = rolePermissionsCache.get(cacheKey);
   if (!cached) {
     return null;
   }
-  if (cached.expiresAt <= Date.now()) {
+  if (cached.expiresAt <= now) {
     rolePermissionsCache.delete(cacheKey);
     return null;
   }
+  rolePermissionsCache.delete(cacheKey);
+  rolePermissionsCache.set(cacheKey, cached);
   return cached.value;
 };
 const setCachedRolePermissionsMap = (tenantId, value) => {
   const cacheKey = String(tenantId || "global");
+  for (const [key, entry] of rolePermissionsCache.entries()) {
+    if (!entry || entry.expiresAt <= Date.now()) {
+      rolePermissionsCache.delete(key);
+    }
+  }
+  if (rolePermissionsCache.has(cacheKey)) {
+    rolePermissionsCache.delete(cacheKey);
+  }
   rolePermissionsCache.set(cacheKey, {
     value,
     expiresAt: Date.now() + ROLE_PERMISSIONS_CACHE_TTL_MS
   });
+  while (rolePermissionsCache.size > MAX_ROLE_PERMISSION_CACHE_ENTRIES) {
+    const oldestKey = rolePermissionsCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    rolePermissionsCache.delete(oldestKey);
+  }
   return value;
 };
 const buildRolePermissionsMap = async () => {

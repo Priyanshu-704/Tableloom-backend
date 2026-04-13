@@ -21,6 +21,7 @@ const currencySymbols = {
   AUD: "A$"
 };
 const taxSettingsCache = new Map();
+const MAX_TAX_SETTINGS_CACHE_ENTRIES = Math.max(Number(process.env.TAX_SETTINGS_CACHE_MAX_ENTRIES || 200), 25);
 const roundCurrency = value => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 const clampMoney = value => Math.max(roundCurrency(value), 0);
 const normalizeTaxSettings = (settings = {}) => {
@@ -37,24 +38,43 @@ const getCachedTaxSettings = tenantId => {
   if (!tenantId) {
     return null;
   }
-  const cached = taxSettingsCache.get(String(tenantId));
+  const cacheKey = String(tenantId);
+  const cached = taxSettingsCache.get(cacheKey);
   if (!cached) {
     return null;
   }
   if (cached.expiresAt < Date.now()) {
-    taxSettingsCache.delete(String(tenantId));
+    taxSettingsCache.delete(cacheKey);
     return null;
   }
+  taxSettingsCache.delete(cacheKey);
+  taxSettingsCache.set(cacheKey, cached);
   return cached.value;
 };
 const setCachedTaxSettings = (tenantId, value) => {
   if (!tenantId) {
     return;
   }
-  taxSettingsCache.set(String(tenantId), {
+  const cacheKey = String(tenantId);
+  for (const [key, entry] of taxSettingsCache.entries()) {
+    if (!entry || entry.expiresAt < Date.now()) {
+      taxSettingsCache.delete(key);
+    }
+  }
+  if (taxSettingsCache.has(cacheKey)) {
+    taxSettingsCache.delete(cacheKey);
+  }
+  taxSettingsCache.set(cacheKey, {
     value,
     expiresAt: Date.now() + TAX_SETTINGS_CACHE_TTL_MS
   });
+  while (taxSettingsCache.size > MAX_TAX_SETTINGS_CACHE_ENTRIES) {
+    const oldestKey = taxSettingsCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    taxSettingsCache.delete(oldestKey);
+  }
 };
 const invalidateTenantTaxSettings = tenantId => {
   if (!tenantId) {

@@ -35,7 +35,7 @@ const normalizeInventoryUnit = (value = "pieces") => {
 const isSupportedInventoryUnit = (value = "") => INVENTORY_UNITS.includes(normalizeInventoryUnit(value));
 const parseCsvBuffer = buffer => new Promise((resolve, reject) => {
   const rows = [];
-  Readable.from(buffer.toString("utf8")).pipe(csvParser()).on("data", row => rows.push(row)).on("end", () => resolve(rows)).on("error", reject);
+  Readable.from([buffer]).pipe(csvParser()).on("data", row => rows.push(row)).on("end", () => resolve(rows)).on("error", reject);
 });
 const readCsvField = (row = {}, keys = []) => {
   const normalizedRow = Object.entries(row || {}).reduce((accumulator, [key, value]) => {
@@ -526,6 +526,7 @@ exports.bulkUploadInventory = async (req, res) => {
   }
   try {
     const rows = await parseCsvBuffer(req.file.buffer);
+    req.file.buffer = undefined;
     const stats = {
       fileName: req.file.originalname || "inventory-upload.csv",
       processedAt: new Date().toISOString(),
@@ -647,6 +648,10 @@ exports.bulkUploadInventory = async (req, res) => {
       message: "Failed to process inventory CSV upload",
       error: error.message
     });
+  } finally {
+    if (req.file) {
+      req.file.buffer = undefined;
+    }
   }
 };
 exports.deleteInventoryItem = async (req, res) => {

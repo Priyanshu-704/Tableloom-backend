@@ -6,7 +6,8 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const mongoose = require("mongoose");
 const {
-  initializeSocket
+  initializeSocket,
+  shutdownSocket
 } = require("./utils/socketManager");
 const cookieParser = require("cookie-parser");
 const delayMonitor = require("./utils/delayMonitor");
@@ -144,15 +145,25 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 const PORT = process.env.PORT || 5000;
 const DB_RETRY_DELAY_MS = 5000;
+let isShuttingDown = false;
 const bootstrapServices = async () => {
-  while (mongoose.connection.readyState !== 1) {
+  while (!isShuttingDown && mongoose.connection.readyState !== 1) {
     try {
       await connectDB();
     } catch (error) {
+      if (isShuttingDown) {
+        return;
+      }
       logger.warn(`Retrying MongoDB connection in ${DB_RETRY_DELAY_MS / 1000}s...`);
-      await new Promise(resolve => setTimeout(resolve, DB_RETRY_DELAY_MS));
+      await new Promise(resolve => {
+        const retryTimer = setTimeout(resolve, DB_RETRY_DELAY_MS);
+        retryTimer.unref?.();
+      });
       continue;
     }
+  }
+  if (isShuttingDown) {
+    return;
   }
   delayMonitor.start().catch(error => {
     logger.error("Failed to start delay monitor:", error.message);
@@ -168,15 +179,35 @@ const startServer = () => {
   });
 };
 startServer();
-process.on("SIGTERM", () => {
+const shutdown = async signal => {
+  if (isShuttingDown) {
+    return;
+  }
+  isShuttingDown = true;
   delayMonitor.stop();
-  server.close(() => {
-    logger.info("HTTP server closed");
+  logger.info(`Received ${signal}. Shutting down gracefully...`);
+  await shutdownSocket().catch(error => {
+    logger.error("Socket shutdown failed:", error.message);
+  });
+  await new Promise(resolve => {
+    server.close(() => {
+      logger.info("HTTP server closed");
+      resolve();
+    });
+  });
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.connection.close().catch(error => {
+      logger.error("MongoDB shutdown failed:", error.message);
+    });
+  }
+};
+process.once("SIGTERM", () => {
+  shutdown("SIGTERM").catch(error => {
+    logger.error("Shutdown failed:", error.message);
   });
 });
-process.on("SIGINT", () => {
-  delayMonitor.stop();
-  server.close(() => {
-    logger.info("HTTP server closed");
+process.once("SIGINT", () => {
+  shutdown("SIGINT").catch(error => {
+    logger.error("Shutdown failed:", error.message);
   });
 });
