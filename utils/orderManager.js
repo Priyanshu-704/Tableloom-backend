@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const Order = require("../models/Order");
 const Customer = require("../models/Customer");
 const Table = require("../models/Table");
@@ -9,45 +7,55 @@ const Size = require("../models/Size");
 const notificationManager = require("./notificationManager");
 const socketManager = require("./socketManager");
 const kitchenManager = require("./kitchenManager");
-const {
-  orderStatusColors
-} = require("../utils/statusColors");
+const { orderStatusColors } = require("../utils/statusColors");
 const User = require("../models/User");
 const Bill = require("../models/Bill");
-const {
-  buildTenantImageAssetUrl
-} = require("./assetUrl");
+const { buildTenantImageAssetUrl } = require("./assetUrl");
 const {
   calculatePricingBreakdown,
-  getTenantTaxSettings
+  getTenantTaxSettings,
 } = require("./taxCalculator");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
-const transformMenuItemData = menuItem => {
+const transformMenuItemData = (menuItem) => {
   if (!menuItem) return null;
   const menuItemObj = menuItem.toObject ? menuItem.toObject() : menuItem;
   if (menuItemObj.image || menuItemObj.thumbnail) {
-    menuItemObj.image = buildTenantImageAssetUrl(null, `/images/menu-item/${menuItemObj._id}`);
-    menuItemObj.thumbnail = buildTenantImageAssetUrl(null, `/images/menu-item/${menuItemObj._id}`, {
-      variant: "thumbnail"
-    });
+    menuItemObj.image = buildTenantImageAssetUrl(
+      null,
+      `/images/menu-item/${menuItemObj._id}`,
+    );
+    menuItemObj.thumbnail = buildTenantImageAssetUrl(
+      null,
+      `/images/menu-item/${menuItemObj._id}`,
+      {
+        variant: "thumbnail",
+      },
+    );
   }
   if (menuItemObj.prices && Array.isArray(menuItemObj.prices)) {
-    menuItemObj.prices = menuItemObj.prices.map(price => ({
+    menuItemObj.prices = menuItemObj.prices.map((price) => ({
       _id: price._id,
       price: price.price,
-      sizeId: price.sizeId ? {
-        _id: price.sizeId._id,
-        name: price.sizeId.name,
-        code: price.sizeId.code
-      } : null,
-      costPrice: price.costPrice || null
+      sizeId: price.sizeId
+        ? {
+            _id: price.sizeId._id,
+            name: price.sizeId.name,
+            code: price.sizeId.code,
+          }
+        : null,
+      costPrice: price.costPrice || null,
     }));
   }
   return menuItemObj;
 };
-const notifyCustomerSession = async (sessionId, title, message, orderObj = {}) => {
+const notifyCustomerSession = async (
+  sessionId,
+  title,
+  message,
+  orderObj = {},
+) => {
   if (!sessionId) {
     return;
   }
@@ -63,25 +71,25 @@ const notifyCustomerSession = async (sessionId, title, message, orderObj = {}) =
       metadata: {
         orderId: orderObj?._id || null,
         orderNumber: orderObj?.orderNumber || "",
-        status: orderObj?.status || ""
-      }
+        status: orderObj?.status || "",
+      },
     });
   } catch (error) {
     logger.error("Failed to create order notification:", error);
   }
 };
-const getOrderTaxSettings = order => ({
+const getOrderTaxSettings = (order) => ({
   taxRate: Number(order?.taxRate || 0),
   serviceCharge: Number(order?.serviceChargeRate || 0),
   taxInclusive: Boolean(order?.taxInclusive),
   currency: order?.currency || "INR",
-  currencySymbol: order?.currencySymbol || "₹"
+  currencySymbol: order?.currencySymbol || "₹",
 });
 const applyOrderPricing = (order, settings) => {
   const pricingBreakdown = calculatePricingBreakdown({
     subtotal: order.subtotal,
     discountAmount: order.discountAmount,
-    settings
+    settings,
   });
   order.taxAmount = pricingBreakdown.taxAmount;
   order.taxRate = pricingBreakdown.taxRate;
@@ -93,9 +101,20 @@ const applyOrderPricing = (order, settings) => {
   order.totalAmount = pricingBreakdown.totalAmount;
   return pricingBreakdown;
 };
-const getPreparationBaselineTime = order => order?.preparationStartedAt || order?.orderConfirmedAt || order?.orderPlacedAt || order?.createdAt || new Date();
-const recalculateOrderTiming = async order => {
-  const menuItemIds = [...new Set((order?.items || []).map(item => String(item?.menuItem || "")).filter(Boolean))];
+const getPreparationBaselineTime = (order) =>
+  order?.preparationStartedAt ||
+  order?.orderConfirmedAt ||
+  order?.orderPlacedAt ||
+  order?.createdAt ||
+  new Date();
+const recalculateOrderTiming = async (order) => {
+  const menuItemIds = [
+    ...new Set(
+      (order?.items || [])
+        .map((item) => String(item?.menuItem || ""))
+        .filter(Boolean),
+    ),
+  ];
   if (menuItemIds.length === 0) {
     order.preparationTime = 0;
     order.estimatedReadyTime = undefined;
@@ -103,16 +122,29 @@ const recalculateOrderTiming = async order => {
   }
   const menuItems = await MenuItem.find({
     _id: {
-      $in: menuItemIds
-    }
-  }).select("_id preparationTime").lean();
-  const preparationTimeById = new Map(menuItems.map(item => [String(item._id), Math.max(1, Number(item.preparationTime || 0))]));
-  const maxPreparationTime = Math.max(...order.items.map(item => preparationTimeById.get(String(item.menuItem)) || 15));
+      $in: menuItemIds,
+    },
+  })
+    .select("_id preparationTime")
+    .lean();
+  const preparationTimeById = new Map(
+    menuItems.map((item) => [
+      String(item._id),
+      Math.max(1, Number(item.preparationTime || 0)),
+    ]),
+  );
+  const maxPreparationTime = Math.max(
+    ...order.items.map(
+      (item) => preparationTimeById.get(String(item.menuItem)) || 15,
+    ),
+  );
   const baselineTime = new Date(getPreparationBaselineTime(order));
   order.preparationTime = maxPreparationTime;
-  order.estimatedReadyTime = new Date(baselineTime.getTime() + maxPreparationTime * 60000);
+  order.estimatedReadyTime = new Date(
+    baselineTime.getTime() + maxPreparationTime * 60000,
+  );
 };
-const syncPendingSessionBillIfNeeded = async sessionId => {
+const syncPendingSessionBillIfNeeded = async (sessionId) => {
   if (!sessionId) {
     return;
   }
@@ -120,9 +152,11 @@ const syncPendingSessionBillIfNeeded = async sessionId => {
     sessionId,
     paymentStatus: "pending",
     billStatus: {
-      $in: ["draft", "sent", "viewed"]
-    }
-  }).select("_id").lean();
+      $in: ["draft", "sent", "viewed"],
+    },
+  })
+    .select("_id")
+    .lean();
   if (!existingPendingBill) {
     return;
   }
@@ -138,7 +172,7 @@ exports.createOrder = async (sessionId, orderData) => {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
-      sessionStatus: "active"
+      sessionStatus: "active",
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
@@ -159,12 +193,15 @@ exports.createOrder = async (sessionId, orderData) => {
       const menuItem = await MenuItem.findOne({
         _id: item.menuItem,
         isActive: true,
-        isAvailable: true
+        isAvailable: true,
       }).populate("prices.sizeId", "name code");
       if (!menuItem) {
         throw new Error(`Menu item not available for item at index ${index}`);
       }
-      const sizePrice = menuItem.prices.find(price => price.sizeId && price.sizeId._id.toString() === item.size.toString());
+      const sizePrice = menuItem.prices.find(
+        (price) =>
+          price.sizeId && price.sizeId._id.toString() === item.size.toString(),
+      );
       if (!sizePrice) {
         throw new Error(`Selected size not available for ${menuItem.name}`);
       }
@@ -179,8 +216,8 @@ exports.createOrder = async (sessionId, orderData) => {
         itemStatus: "pending",
         sizeDetails: {
           name: sizePrice.sizeId.name,
-          code: sizePrice.sizeId.code
-        }
+          code: sizePrice.sizeId.code,
+        },
       };
     });
     const orderItems = await Promise.all(validationPromises);
@@ -190,7 +227,7 @@ exports.createOrder = async (sessionId, orderData) => {
     const pricingBreakdown = calculatePricingBreakdown({
       subtotal,
       discountAmount,
-      settings: tenantTaxSettings
+      settings: tenantTaxSettings,
     });
     const order = await Order.create({
       orderNumber: `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
@@ -210,7 +247,7 @@ exports.createOrder = async (sessionId, orderData) => {
       currencySymbol: pricingBreakdown.currencySymbol,
       specialInstructions: orderData.specialInstructions || "",
       orderType: "dine-in",
-      status: "pending"
+      status: "pending",
     });
     await recalculateOrderTiming(order);
     await order.save();
@@ -221,10 +258,13 @@ exports.createOrder = async (sessionId, orderData) => {
     await customer.table.save();
     await order.populate("customer", "sessionId name phone email");
     await order.populate("table", "tableNumber tableName capacity location");
-    await order.populate("items.menuItem", "name description image thumbnail category tags nutritionalInfo");
+    await order.populate(
+      "items.menuItem",
+      "name description image thumbnail category tags nutritionalInfo",
+    );
     const orderObj = order.toObject();
     if (orderObj.items && Array.isArray(orderObj.items)) {
-      orderObj.items = orderObj.items.map(item => {
+      orderObj.items = orderObj.items.map((item) => {
         if (item.menuItem) {
           item.menuItem = transformMenuItemData(item.menuItem);
         }
@@ -236,7 +276,12 @@ exports.createOrder = async (sessionId, orderData) => {
     if (customer.sessionId) {
       logger.info(`Emitting new order to customer: ${customer.sessionId}`);
       socketManager.emitOrderStatusToCustomer(customer.sessionId, orderObj);
-      await notifyCustomerSession(customer.sessionId, `Order #${orderObj.orderNumber || ""} placed`, "Your order has been placed successfully.", orderObj);
+      await notifyCustomerSession(
+        customer.sessionId,
+        `Order #${orderObj.orderNumber || ""} placed`,
+        "Your order has been placed successfully.",
+        orderObj,
+      );
     }
     try {
       await notificationManager.createNotification({
@@ -249,27 +294,33 @@ exports.createOrder = async (sessionId, orderData) => {
         relatedTo: orderObj._id,
         relatedModel: "Order",
         actionRequired: true,
-        actions: [{
-          label: "View Orders",
-          type: "link",
-          action: "/dashboard/orders",
-          color: "primary"
-        }],
+        actions: [
+          {
+            label: "View Orders",
+            type: "link",
+            action: "/dashboard/orders",
+            color: "primary",
+          },
+        ],
         metadata: {
           orderId: orderObj._id,
           orderNumber: orderObj.orderNumber,
-          tableNumber: customer.table?.tableNumber || orderObj.table?.tableNumber || "",
+          tableNumber:
+            customer.table?.tableNumber || orderObj.table?.tableNumber || "",
           customerName: customer.name || orderObj.customer?.name || "Customer",
-          status: orderObj.status
-        }
+          status: orderObj.status,
+        },
       });
     } catch (notificationError) {
-      logger.error("Failed to create admin order placement notification:", notificationError);
+      logger.error(
+        "Failed to create admin order placement notification:",
+        notificationError,
+      );
     }
     const kitchenOrder = await kitchenManager.createKitchenOrder(order._id);
     const response = {
       ...orderObj,
-      kitchenOrderId: kitchenOrder._id
+      kitchenOrderId: kitchenOrder._id,
     };
     await syncPendingSessionBillIfNeeded(customer.sessionId);
     return response;
@@ -288,7 +339,9 @@ exports.addItemsToOrder = async (orderId, newItems) => {
     }
     const validationPromises = newItems.map(async (item, index) => {
       if (!item.menuItem) {
-        throw new Error(`Menu item ID is required for new item at index ${index}`);
+        throw new Error(
+          `Menu item ID is required for new item at index ${index}`,
+        );
       }
       if (!item.size) {
         throw new Error(`Size is required for new item at index ${index}`);
@@ -296,12 +349,17 @@ exports.addItemsToOrder = async (orderId, newItems) => {
       const menuItem = await MenuItem.findOne({
         _id: item.menuItem,
         isActive: true,
-        isAvailable: true
+        isAvailable: true,
       }).populate("prices.sizeId", "name code");
       if (!menuItem) {
-        throw new Error(`Menu item not available for new item at index ${index}`);
+        throw new Error(
+          `Menu item not available for new item at index ${index}`,
+        );
       }
-      const sizePrice = menuItem.prices.find(price => price.sizeId && price.sizeId._id.toString() === item.size.toString());
+      const sizePrice = menuItem.prices.find(
+        (price) =>
+          price.sizeId && price.sizeId._id.toString() === item.size.toString(),
+      );
       if (!sizePrice) {
         throw new Error(`Selected size not available for ${menuItem.name}`);
       }
@@ -316,13 +374,16 @@ exports.addItemsToOrder = async (orderId, newItems) => {
         itemStatus: "pending",
         sizeDetails: {
           name: sizePrice.sizeId.name,
-          code: sizePrice.sizeId.code
-        }
+          code: sizePrice.sizeId.code,
+        },
       };
     });
     const newOrderItems = await Promise.all(validationPromises);
     order.items.push(...newOrderItems);
-    order.subtotal = order.items.reduce((total, item) => total + item.totalPrice, 0);
+    order.subtotal = order.items.reduce(
+      (total, item) => total + item.totalPrice,
+      0,
+    );
     applyOrderPricing(order, getOrderTaxSettings(order));
     await recalculateOrderTiming(order);
     await order.save();
@@ -332,10 +393,15 @@ exports.addItemsToOrder = async (orderId, newItems) => {
     socketManager.emitOrderStatusUpdate(orderObj);
     if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
-      await notifyCustomerSession(order.sessionId, `Order #${orderObj.orderNumber || ""} updated`, "Your order has been updated.", orderObj);
+      await notifyCustomerSession(
+        order.sessionId,
+        `Order #${orderObj.orderNumber || ""} updated`,
+        "Your order has been updated.",
+        orderObj,
+      );
     }
     if (orderObj.items && Array.isArray(orderObj.items)) {
-      orderObj.items = orderObj.items.map(item => {
+      orderObj.items = orderObj.items.map((item) => {
         if (item.menuItem) {
           item.menuItem = transformMenuItemData(item.menuItem);
         }
@@ -368,7 +434,10 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
       item.quantity = newQuantity;
       item.totalPrice = item.unitPrice * newQuantity;
     }
-    order.subtotal = order.items.reduce((total, item) => total + item.totalPrice, 0);
+    order.subtotal = order.items.reduce(
+      (total, item) => total + item.totalPrice,
+      0,
+    );
     applyOrderPricing(order, getOrderTaxSettings(order));
     await recalculateOrderTiming(order);
     await order.save();
@@ -378,10 +447,15 @@ exports.updateOrderItemQuantity = async (orderId, itemId, newQuantity) => {
     socketManager.emitOrderStatusUpdate(orderObj);
     if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
-      await notifyCustomerSession(order.sessionId, `Order #${orderObj.orderNumber || ""} updated`, "Your order has been updated.", orderObj);
+      await notifyCustomerSession(
+        order.sessionId,
+        `Order #${orderObj.orderNumber || ""} updated`,
+        "Your order has been updated.",
+        orderObj,
+      );
     }
     if (orderObj.items && Array.isArray(orderObj.items)) {
-      orderObj.items = orderObj.items.map(item => {
+      orderObj.items = orderObj.items.map((item) => {
         if (item.menuItem) {
           item.menuItem = transformMenuItemData(item.menuItem);
         }
@@ -405,7 +479,10 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
       throw new Error("Cannot modify order in current status");
     }
     order.items.pull(itemId);
-    order.subtotal = order.items.reduce((total, item) => total + item.totalPrice, 0);
+    order.subtotal = order.items.reduce(
+      (total, item) => total + item.totalPrice,
+      0,
+    );
     applyOrderPricing(order, getOrderTaxSettings(order));
     await recalculateOrderTiming(order);
     await order.save();
@@ -415,10 +492,15 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
     socketManager.emitOrderStatusUpdate(orderObj);
     if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
-      await notifyCustomerSession(order.sessionId, `Order #${orderObj.orderNumber || ""} updated`, "An item has been removed from your order.", orderObj);
+      await notifyCustomerSession(
+        order.sessionId,
+        `Order #${orderObj.orderNumber || ""} updated`,
+        "An item has been removed from your order.",
+        orderObj,
+      );
     }
     if (orderObj.items && Array.isArray(orderObj.items)) {
-      orderObj.items = orderObj.items.map(item => {
+      orderObj.items = orderObj.items.map((item) => {
         if (item.menuItem) {
           item.menuItem = transformMenuItemData(item.menuItem);
         }
@@ -432,7 +514,12 @@ exports.removeItemFromOrder = async (orderId, itemId) => {
     throw error;
   }
 };
-exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = "") => {
+exports.updateOrderStatus = async (
+  orderId,
+  newStatus,
+  userId = null,
+  notes = "",
+) => {
   try {
     const order = await Order.findById(orderId);
     if (!order) {
@@ -447,14 +534,37 @@ exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = ""
       userRole = user.role;
     }
     const rolePermissions = {
-      chef: ["confirmed", "preparing", "ready", "cancelled", "served", "completed"],
+      chef: [
+        "confirmed",
+        "preparing",
+        "ready",
+        "cancelled",
+        "served",
+        "completed",
+      ],
       staff: ["confirmed", "cancelled", "served", "completed"],
-      manager: ["confirmed", "preparing", "ready", "served", "completed", "cancelled"],
-      admin: ["confirmed", "preparing", "ready", "served", "completed", "cancelled"]
+      manager: [
+        "confirmed",
+        "preparing",
+        "ready",
+        "served",
+        "completed",
+        "cancelled",
+      ],
+      admin: [
+        "confirmed",
+        "preparing",
+        "ready",
+        "served",
+        "completed",
+        "cancelled",
+      ],
     };
     if (userRole && rolePermissions[userRole]) {
       if (!rolePermissions[userRole].includes(newStatus)) {
-        throw new Error(`${userRole} role cannot update status to ${newStatus}`);
+        throw new Error(
+          `${userRole} role cannot update status to ${newStatus}`,
+        );
       }
     }
     const validTransitions = {
@@ -464,10 +574,12 @@ exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = ""
       ready: ["served"],
       served: ["completed"],
       completed: [],
-      cancelled: []
+      cancelled: [],
     };
     if (!validTransitions[order.status]?.includes(newStatus)) {
-      throw new Error(`Invalid status transition from ${order.status} to ${newStatus}`);
+      throw new Error(
+        `Invalid status transition from ${order.status} to ${newStatus}`,
+      );
     }
     order.status = newStatus;
     order.lastUpdatedBy = userId;
@@ -499,7 +611,10 @@ exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = ""
         order.cancellationReason = notes;
         break;
     }
-    if (["confirmed", "preparing"].includes(newStatus) || !order.preparationTime) {
+    if (
+      ["confirmed", "preparing"].includes(newStatus) ||
+      !order.preparationTime
+    ) {
       await recalculateOrderTiming(order);
     }
     if (["ready", "served", "completed"].includes(newStatus)) {
@@ -521,11 +636,11 @@ exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = ""
     const orderObj = order.toObject();
     orderObj.statusColor = orderStatusColors[orderObj.status];
     if (orderObj.items && Array.isArray(orderObj.items)) {
-      orderObj.items = orderObj.items.map(item => {
+      orderObj.items = orderObj.items.map((item) => {
         const itemObj = {
           ...item,
           sizeName: item.sizeName || null,
-          size: item.size || null
+          size: item.size || null,
         };
         if (item.menuItem) {
           itemObj.menuItem = transformMenuItemData(item.menuItem);
@@ -539,7 +654,12 @@ exports.updateOrderStatus = async (orderId, newStatus, userId = null, notes = ""
     }
     if (order.sessionId) {
       socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
-      await notifyCustomerSession(order.sessionId, `Order #${orderObj.orderNumber || ""} status`, `Your order is now ${String(newStatus || "").replace(/_/g, " ")}.`, orderObj);
+      await notifyCustomerSession(
+        order.sessionId,
+        `Order #${orderObj.orderNumber || ""} status`,
+        `Your order is now ${String(newStatus || "").replace(/_/g, " ")}.`,
+        orderObj,
+      );
     }
     return orderObj;
   } catch (error) {
@@ -554,7 +674,9 @@ exports.processPayment = async (orderId, paymentData) => {
       throw new Error("Order not found");
     }
     if (order.status !== "pending" && order.status !== "served") {
-      throw new Error(`Payment only allowed for completed orders. Current status: ${order.status}`);
+      throw new Error(
+        `Payment only allowed for completed orders. Current status: ${order.status}`,
+      );
     }
     if (order.paymentStatus === "paid") {
       throw new Error("Order is already paid");
@@ -565,17 +687,17 @@ exports.processPayment = async (orderId, paymentData) => {
       transactionId: paymentData.transactionId,
       paymentGateway: paymentData.gateway,
       paidAmount: paymentData.amount || order.totalAmount,
-      paidAt: new Date()
+      paidAt: new Date(),
     };
     if (order.customer) {
       await Customer.findByIdAndUpdate(order.customer, {
         $inc: {
-          totalSpent: order.totalAmount
+          totalSpent: order.totalAmount,
         },
         $set: {
           paymentStatus: "paid",
-          sessionStatus: "payment_completed"
-        }
+          sessionStatus: "payment_completed",
+        },
       });
     }
     await order.save();
@@ -591,13 +713,23 @@ exports.getOrdersByStatus = async (status, page = 1, limit = 20) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
     const orders = await Order.find({
-      status
-    }).populate("customer", "name sessionId").populate("table", "tableNumber tableName").populate("items.menuItem", "name description image thumbnail preparationTime").sort({
-      orderPlacedAt: 1
-    }).skip(skip).limit(limitNum).lean();
-    const transformedOrders = orders.map(order => {
+      status,
+    })
+      .populate("customer", "name sessionId")
+      .populate("table", "tableNumber tableName")
+      .populate(
+        "items.menuItem",
+        "name description image thumbnail preparationTime",
+      )
+      .sort({
+        orderPlacedAt: 1,
+      })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+    const transformedOrders = orders.map((order) => {
       if (order.items && Array.isArray(order.items)) {
-        order.items = order.items.map(item => {
+        order.items = order.items.map((item) => {
           if (item.menuItem) {
             item.menuItem = transformMenuItemData(item.menuItem);
           }
@@ -607,15 +739,15 @@ exports.getOrdersByStatus = async (status, page = 1, limit = 20) => {
       return order;
     });
     const total = await Order.countDocuments({
-      status
+      status,
     });
     return {
       orders: transformedOrders,
       pagination: {
         page: pageNum,
         pages: Math.ceil(total / limitNum),
-        total
-      }
+        total,
+      },
     };
   } catch (error) {
     logger.error("Get orders by status failed:", error);
@@ -625,17 +757,22 @@ exports.getOrdersByStatus = async (status, page = 1, limit = 20) => {
 exports.getOrdersByTable = async (tableId, status = null) => {
   try {
     let query = {
-      table: tableId
+      table: tableId,
     };
     if (status) {
       query.status = status;
     }
-    const orders = await Order.find(query).populate("customer", "name sessionId").populate("table", "tableNumber tableName").populate("items.menuItem", "name description image thumbnail").sort({
-      orderPlacedAt: -1
-    }).lean();
-    const transformedOrders = orders.map(order => {
+    const orders = await Order.find(query)
+      .populate("customer", "name sessionId")
+      .populate("table", "tableNumber tableName")
+      .populate("items.menuItem", "name description image thumbnail")
+      .sort({
+        orderPlacedAt: -1,
+      })
+      .lean();
+    const transformedOrders = orders.map((order) => {
       if (order.items && Array.isArray(order.items)) {
-        order.items = order.items.map(item => {
+        order.items = order.items.map((item) => {
           if (item.menuItem) {
             item.menuItem = transformMenuItemData(item.menuItem);
           }
@@ -650,14 +787,14 @@ exports.getOrdersByTable = async (tableId, status = null) => {
     throw error;
   }
 };
-exports.getSessionBillSummary = async sessionId => {
+exports.getSessionBillSummary = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
@@ -665,17 +802,24 @@ exports.getSessionBillSummary = async sessionId => {
     const orders = await Order.find({
       customer: customer._id,
       status: {
-        $in: ["completed", "served", "pending", "confirmed", "preparing", "ready"]
-      }
+        $in: [
+          "completed",
+          "served",
+          "pending",
+          "confirmed",
+          "preparing",
+          "ready",
+        ],
+      },
     }).sort({
-      orderPlacedAt: 1
+      orderPlacedAt: 1,
     });
     let subtotal = 0;
     let taxAmount = 0;
     let serviceCharge = 0;
     let discountAmount = 0;
     let totalAmount = 0;
-    orders.forEach(order => {
+    orders.forEach((order) => {
       subtotal += order.subtotal || 0;
       taxAmount += order.taxAmount || 0;
       serviceCharge += order.serviceCharge || 0;
@@ -684,14 +828,14 @@ exports.getSessionBillSummary = async sessionId => {
     });
     const existingBill = await Bill.findOne({
       sessionId,
-      paymentStatus: "pending"
+      paymentStatus: "pending",
     });
     return {
       session: {
         id: customer._id,
         sessionId: customer.sessionId,
         table: customer.table,
-        startTime: customer.sessionStart
+        startTime: customer.sessionStart,
       },
       summary: {
         orderCount: orders.length,
@@ -700,11 +844,16 @@ exports.getSessionBillSummary = async sessionId => {
         serviceCharge,
         discountAmount,
         totalAmount,
-        itemsCount: orders.reduce((total, order) => total + order.items.length, 0)
+        itemsCount: orders.reduce(
+          (total, order) => total + order.items.length,
+          0,
+        ),
       },
       hasExistingBill: !!existingBill,
       existingBillId: existingBill?._id,
-      canGenerateBill: customer.sessionStatus === "active" || customer.sessionStatus === "payment_pending"
+      canGenerateBill:
+        customer.sessionStatus === "active" ||
+        customer.sessionStatus === "payment_pending",
     };
   } catch (error) {
     throw error;

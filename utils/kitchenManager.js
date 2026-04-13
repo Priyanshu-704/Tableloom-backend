@@ -1,40 +1,46 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const KitchenOrder = require("../models/KitchenOrder");
 const KitchenStation = require("../models/KitchenStation");
 const Order = require("../models/Order");
-const {
-  getIO
-} = require("./socketManager");
-const {
-  kitchenItemStatusColors
-} = require("../utils/statusColors");
+const { getIO } = require("./socketManager");
+const { kitchenItemStatusColors } = require("../utils/statusColors");
 const notificationManager = require("./notificationManager");
-const {
-  emitDelayedOrderAlert
-} = require("./socketManager");
+const { emitDelayedOrderAlert } = require("./socketManager");
 const mongoose = require("mongoose");
-const ORDER_STATUS_FLOW = ["pending", "confirmed", "preparing", "ready", "served", "completed"];
+const ORDER_STATUS_FLOW = [
+  "pending",
+  "confirmed",
+  "preparing",
+  "ready",
+  "served",
+  "completed",
+];
 const deriveOrderStatusFromKitchenItems = (items = []) => {
-  const activeItems = items.filter(item => item?.status !== "cancelled");
+  const activeItems = items.filter((item) => item?.status !== "cancelled");
   if (activeItems.length === 0) {
     return null;
   }
-  if (activeItems.every(item => item.status === "served")) {
+  if (activeItems.every((item) => item.status === "served")) {
     return "served";
   }
-  if (activeItems.every(item => ["ready", "served"].includes(item.status))) {
+  if (activeItems.every((item) => ["ready", "served"].includes(item.status))) {
     return "ready";
   }
-  if (activeItems.some(item => ["preparing", "ready", "served"].includes(item.status))) {
+  if (
+    activeItems.some((item) =>
+      ["preparing", "ready", "served"].includes(item.status),
+    )
+  ) {
     return "preparing";
   }
   return null;
 };
-const syncParentOrderStatusFromKitchenOrder = async kitchenOrder => {
-  const targetStatus = deriveOrderStatusFromKitchenItems(kitchenOrder?.items || []);
-  const orderId = kitchenOrder?.order?._id || kitchenOrder?.order || kitchenOrder?._id;
+const syncParentOrderStatusFromKitchenOrder = async (kitchenOrder) => {
+  const targetStatus = deriveOrderStatusFromKitchenItems(
+    kitchenOrder?.items || [],
+  );
+  const orderId =
+    kitchenOrder?.order?._id || kitchenOrder?.order || kitchenOrder?._id;
   if (!targetStatus || !orderId) {
     return;
   }
@@ -44,79 +50,102 @@ const syncParentOrderStatusFromKitchenOrder = async kitchenOrder => {
   }
   const currentIndex = ORDER_STATUS_FLOW.indexOf(order.status);
   const targetIndex = ORDER_STATUS_FLOW.indexOf(targetStatus);
-  if (currentIndex === -1 || targetIndex === -1 || currentIndex >= targetIndex) {
+  if (
+    currentIndex === -1 ||
+    targetIndex === -1 ||
+    currentIndex >= targetIndex
+  ) {
     return;
   }
   const orderManager = require("./orderManager");
   for (let index = currentIndex + 1; index <= targetIndex; index += 1) {
-    await orderManager.updateOrderStatus(orderId, ORDER_STATUS_FLOW[index], null, "Synced from kitchen workflow");
+    await orderManager.updateOrderStatus(
+      orderId,
+      ORDER_STATUS_FLOW[index],
+      null,
+      "Synced from kitchen workflow",
+    );
   }
 };
-exports.createKitchenOrder = async orderId => {
+exports.createKitchenOrder = async (orderId) => {
   try {
-    const order = await Order.findById(orderId).populate({
-      path: "customer",
-      select: "name"
-    }).populate({
-      path: "table",
-      select: "tableNumber"
-    }).populate({
-      path: "items.menuItem",
-      select: "name preparationTime allergens station",
-      populate: {
-        path: "station",
-        select: "name stationType colorCode"
-      }
-    });
+    const order = await Order.findById(orderId)
+      .populate({
+        path: "customer",
+        select: "name",
+      })
+      .populate({
+        path: "table",
+        select: "tableNumber",
+      })
+      .populate({
+        path: "items.menuItem",
+        select: "name preparationTime allergens station",
+        populate: {
+          path: "station",
+          select: "name stationType colorCode",
+        },
+      });
     if (!order) {
       throw new Error("Order not found");
     }
     const existingKitchenOrder = await KitchenOrder.findOne({
-      order: orderId
+      order: orderId,
     });
     if (existingKitchenOrder) {
       return existingKitchenOrder;
     }
     const stationLoadUpdates = new Map();
-    const kitchenItems = await Promise.all(order.items.map(async item => {
-      const menuItem = item.menuItem;
-      const preparationTime = menuItem.preparationTime || 15;
-      const estimatedCompletion = new Date(Date.now() + preparationTime * 60000);
-      if (!menuItem.station || !menuItem.station._id) {
-        throw new Error(`Invalid station for menu item: ${menuItem.name}`);
-      }
-      const kitchenItem = {
-        menuItem: menuItem._id,
-        menuItemName: menuItem.name,
-        quantity: item.quantity,
-        specialInstructions: item.specialInstructions || "",
-        station: menuItem.station._id,
-        stationName: menuItem.station.name,
-        allergens: menuItem.allergens || [],
-        status: "accepted",
-        colorCode: kitchenItemStatusColors.confirmed,
-        startTime: new Date(),
-        preparationTime: preparationTime,
-        estimatedCompletion: estimatedCompletion,
-        delayStatus: "on_time",
-        delayColor: "#4CAF50",
-        delayMinutes: 0,
-        lastDelayCheck: new Date()
-      };
-      const stationId = menuItem.station._id.toString() || menuItem.station.toString();
-      const currentLoad = stationLoadUpdates.get(stationId) || 0;
-      stationLoadUpdates.set(stationId, currentLoad + item.quantity);
-      return kitchenItem;
-    }));
-    const stationUpdatePromises = Array.from(stationLoadUpdates.entries()).map(([stationId, loadIncrease]) => {
-      return KitchenStation.findByIdAndUpdate(stationId, {
-        $inc: {
-          currentLoad: loadIncrease
+    const kitchenItems = await Promise.all(
+      order.items.map(async (item) => {
+        const menuItem = item.menuItem;
+        const preparationTime = menuItem.preparationTime || 15;
+        const estimatedCompletion = new Date(
+          Date.now() + preparationTime * 60000,
+        );
+        if (!menuItem.station || !menuItem.station._id) {
+          throw new Error(`Invalid station for menu item: ${menuItem.name}`);
         }
-      }, {
-        new: true
-      });
-    });
+        const kitchenItem = {
+          menuItem: menuItem._id,
+          menuItemName: menuItem.name,
+          quantity: item.quantity,
+          specialInstructions: item.specialInstructions || "",
+          station: menuItem.station._id,
+          stationName: menuItem.station.name,
+          allergens: menuItem.allergens || [],
+          status: "accepted",
+          colorCode: kitchenItemStatusColors.confirmed,
+          startTime: new Date(),
+          preparationTime: preparationTime,
+          estimatedCompletion: estimatedCompletion,
+          delayStatus: "on_time",
+          delayColor: "#4CAF50",
+          delayMinutes: 0,
+          lastDelayCheck: new Date(),
+        };
+        const stationId =
+          menuItem.station._id.toString() || menuItem.station.toString();
+        const currentLoad = stationLoadUpdates.get(stationId) || 0;
+        stationLoadUpdates.set(stationId, currentLoad + item.quantity);
+        return kitchenItem;
+      }),
+    );
+    const stationUpdatePromises = Array.from(stationLoadUpdates.entries()).map(
+      ([stationId, loadIncrease]) => {
+        return KitchenStation.findByIdAndUpdate(
+          stationId,
+          {
+            $inc: {
+              currentLoad: loadIncrease,
+            },
+          },
+          {
+            new: true,
+          },
+        );
+      },
+    );
     await Promise.all(stationUpdatePromises);
     const kitchenOrder = await KitchenOrder.create({
       _id: orderId,
@@ -129,30 +158,31 @@ exports.createKitchenOrder = async orderId => {
       priority: this.calculateOrderPriority(order),
       timers: {
         orderReceived: new Date(),
-        kitchenAccepted: new Date()
+        kitchenAccepted: new Date(),
       },
       timeMetrics: {
         acceptTime: 0,
         preparationTime: 0,
-        totalTime: 0
+        totalTime: 0,
       },
-      overallStatus: "in_progress"
+      overallStatus: "in_progress",
     });
     await kitchenOrder.populate({
       path: "items.station",
-      select: "name stationType colorCode currentLoad capacity"
+      select: "name stationType colorCode currentLoad capacity",
     });
     const stationAssignments = [];
     const stationItemsMap = new Map();
-    kitchenOrder.items.forEach(item => {
+    kitchenOrder.items.forEach((item) => {
       if (item.station) {
-        const stationId = item.station._id?.toString() || item.station.toString();
+        const stationId =
+          item.station._id?.toString() || item.station.toString();
         if (!stationItemsMap.has(stationId)) {
           stationItemsMap.set(stationId, {
             station: item.station._id || item.station,
             items: [],
             stationName: item.station.name,
-            stationType: item.station.stationType
+            stationType: item.station.stationType,
           });
         }
         stationItemsMap.get(stationId).items.push(item._id);
@@ -167,15 +197,20 @@ exports.createKitchenOrder = async orderId => {
       tableNumber: kitchenOrder.tableNumber,
       customerName: kitchenOrder.customerName,
       priority: kitchenOrder.priority,
-      orderType: kitchenOrder.orderType
+      orderType: kitchenOrder.orderType,
     };
     this.emitKitchenUpdate("new_order", kitchenOrder);
     this.emitStationUpdates();
-    logger.info(`KitchenOrder created successfully for Order #${order.orderNumber}`);
+    logger.info(
+      `KitchenOrder created successfully for Order #${order.orderNumber}`,
+    );
     logger.info(`Items assigned to stations:`, stationItemsMap);
     if (stationAssignments && stationAssignments.length > 0) {
       logger.info("Creating kitchen order notification...");
-      await notificationManager.createKitchenOrderNotification(orderData, stationAssignments);
+      await notificationManager.createKitchenOrderNotification(
+        orderData,
+        stationAssignments,
+      );
       logger.info("Kitchen order notification created successfully");
     }
     return kitchenOrder;
@@ -184,7 +219,7 @@ exports.createKitchenOrder = async orderId => {
     throw error;
   }
 };
-exports.calculateOrderPriority = order => {
+exports.calculateOrderPriority = (order) => {
   let priority = "normal";
   if (order.customer?.loyaltyTier === "vip") {
     priority = "vip";
@@ -197,7 +232,7 @@ exports.calculateOrderPriority = order => {
   }
   return priority;
 };
-exports.getColorCodeByAllergens = allergens => {
+exports.getColorCodeByAllergens = (allergens) => {
   if (!allergens || allergens.length === 0) return "#4CAF50";
   const allergenColors = {
     nuts: "#FF9800",
@@ -205,7 +240,7 @@ exports.getColorCodeByAllergens = allergens => {
     gluten: "#9C27B0",
     seafood: "#00BCD4",
     eggs: "#FFEB3B",
-    soy: "#795548"
+    soy: "#795548",
   };
   for (const allergen of allergens) {
     if (allergenColors[allergen.toLowerCase()]) {
@@ -214,9 +249,12 @@ exports.getColorCodeByAllergens = allergens => {
   }
   return "#F44336";
 };
-exports.assignToStations = async kitchenOrderId => {
+exports.assignToStations = async (kitchenOrderId) => {
   try {
-    const kitchenOrder = await KitchenOrder.findById(kitchenOrderId).populate("items.station", "name stationType currentLoad capacity");
+    const kitchenOrder = await KitchenOrder.findById(kitchenOrderId).populate(
+      "items.station",
+      "name stationType currentLoad capacity",
+    );
     if (!kitchenOrder) {
       throw new Error("Kitchen order not found");
     }
@@ -225,15 +263,17 @@ exports.assignToStations = async kitchenOrderId => {
       if (item.station) {
         await KitchenStation.findByIdAndUpdate(item.station._id, {
           $inc: {
-            currentLoad: item.quantity
-          }
+            currentLoad: item.quantity,
+          },
         });
-        let stationAssignment = stationAssignments.find(sa => sa.station.toString() === item.station._id.toString());
+        let stationAssignment = stationAssignments.find(
+          (sa) => sa.station.toString() === item.station._id.toString(),
+        );
         if (!stationAssignment) {
           stationAssignment = {
             station: item.station._id,
             items: [],
-            status: "pending"
+            status: "pending",
           };
           stationAssignments.push(stationAssignment);
         }
@@ -262,33 +302,51 @@ exports.markItemReady = async (kitchenOrderId, itemId) => {
     item.status = "ready";
     item.colorCode = kitchenItemStatusColors.ready;
     item.readyTime = new Date();
-    const allItemsReady = kitchenOrder.items.every(currentItem => currentItem._id.equals(item._id) ? true : ["ready", "served"].includes(currentItem.status));
+    const allItemsReady = kitchenOrder.items.every((currentItem) =>
+      currentItem._id.equals(item._id)
+        ? true
+        : ["ready", "served"].includes(currentItem.status),
+    );
     if (allItemsReady && !kitchenOrder.timers.completedCooking) {
       kitchenOrder.timers.completedCooking = new Date();
-      kitchenOrder.timeMetrics.preparationTime = Math.floor((kitchenOrder.timers.completedCooking - kitchenOrder.timers.kitchenAccepted) / 1000);
+      kitchenOrder.timeMetrics.preparationTime = Math.floor(
+        (kitchenOrder.timers.completedCooking -
+          kitchenOrder.timers.kitchenAccepted) /
+          1000,
+      );
     }
-    await Promise.all([kitchenOrder.save(), item.station ? KitchenStation.findByIdAndUpdate(item.station, {
-      $inc: {
-        currentLoad: -item.quantity
-      }
-    }) : Promise.resolve(null)]);
+    await Promise.all([
+      kitchenOrder.save(),
+      item.station
+        ? KitchenStation.findByIdAndUpdate(item.station, {
+            $inc: {
+              currentLoad: -item.quantity,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
     await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
     this.emitKitchenUpdate("item_ready", kitchenOrder);
-    notificationManager.createOrderReadyNotification({
-      _id: kitchenOrder._id,
-      orderNumber: kitchenOrder.orderNumber,
-      tableNumber: kitchenOrder.tableNumber,
-      kitchenStaff: item.assignedTo || null,
-      assignedWaiter: kitchenOrder.assignedWaiter || null
-    }, {
-      _id: item._id,
-      menuItemName: item.menuItemName,
-      quantity: item.quantity,
-      station: item.station,
-      readyTime: item.readyTime
-    }).catch(notifError => {
-      logger.error("Failed to create order ready notification:", notifError);
-    });
+    notificationManager
+      .createOrderReadyNotification(
+        {
+          _id: kitchenOrder._id,
+          orderNumber: kitchenOrder.orderNumber,
+          tableNumber: kitchenOrder.tableNumber,
+          kitchenStaff: item.assignedTo || null,
+          assignedWaiter: kitchenOrder.assignedWaiter || null,
+        },
+        {
+          _id: item._id,
+          menuItemName: item.menuItemName,
+          quantity: item.quantity,
+          station: item.station,
+          readyTime: item.readyTime,
+        },
+      )
+      .catch((notifError) => {
+        logger.error("Failed to create order ready notification:", notifError);
+      });
     this.emitExpediterNotification(kitchenOrder, item);
     return kitchenOrder;
   } catch (error) {
@@ -310,7 +368,9 @@ exports.markItemServed = async (kitchenOrderId, itemId) => {
     item.colorCode = kitchenItemStatusColors.served;
     if (!kitchenOrder.timers.served) {
       kitchenOrder.timers.served = new Date();
-      kitchenOrder.timeMetrics.totalTime = Math.floor((kitchenOrder.timers.served - kitchenOrder.timers.orderReceived) / 1000);
+      kitchenOrder.timeMetrics.totalTime = Math.floor(
+        (kitchenOrder.timers.served - kitchenOrder.timers.orderReceived) / 1000,
+      );
     }
     await kitchenOrder.save();
     await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
@@ -323,28 +383,44 @@ exports.markItemServed = async (kitchenOrderId, itemId) => {
 };
 exports.getKitchenDashboard = async (sortBy = "preparationTime") => {
   try {
-    const [pendingOrders, inProgressOrders, readyOrders, stations, todayStats, sortedPendingOrders] = await Promise.all([KitchenOrder.countDocuments({
-      overallStatus: "pending"
-    }), KitchenOrder.countDocuments({
-      overallStatus: "in_progress"
-    }), KitchenOrder.countDocuments({
-      overallStatus: "ready"
-    }), KitchenStation.find({
-      isActive: true
-    }).populate("assignedStaff.staff", "name").sort({
-      displayOrder: 1
-    }), this.getTodaysPerformance(), this.getSortedKitchenOrders(sortBy)]);
+    const [
+      pendingOrders,
+      inProgressOrders,
+      readyOrders,
+      stations,
+      todayStats,
+      sortedPendingOrders,
+    ] = await Promise.all([
+      KitchenOrder.countDocuments({
+        overallStatus: "pending",
+      }),
+      KitchenOrder.countDocuments({
+        overallStatus: "in_progress",
+      }),
+      KitchenOrder.countDocuments({
+        overallStatus: "ready",
+      }),
+      KitchenStation.find({
+        isActive: true,
+      })
+        .populate("assignedStaff.staff", "name")
+        .sort({
+          displayOrder: 1,
+        }),
+      this.getTodaysPerformance(),
+      this.getSortedKitchenOrders(sortBy),
+    ]);
     return {
       summary: {
         pending: pendingOrders,
         inProgress: inProgressOrders,
         ready: readyOrders,
-        totalActive: pendingOrders + inProgressOrders + readyOrders
+        totalActive: pendingOrders + inProgressOrders + readyOrders,
       },
       stations,
       todayStats,
       sortedOrders: sortedPendingOrders,
-      sortBy: sortBy
+      sortBy: sortBy,
     };
   } catch (error) {
     logger.error("Get kitchen dashboard failed:", error);
@@ -355,41 +431,51 @@ exports.getTodaysPerformance = async () => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const stats = await KitchenOrder.aggregate([{
-      $match: {
-        createdAt: {
-          $gte: today
+    const stats = await KitchenOrder.aggregate([
+      {
+        $match: {
+          createdAt: {
+            $gte: today,
+          },
+          overallStatus: "completed",
         },
-        overallStatus: "completed"
-      }
-    }, {
-      $group: {
-        _id: null,
-        totalOrders: {
-          $sum: 1
+      },
+      {
+        $group: {
+          _id: null,
+          totalOrders: {
+            $sum: 1,
+          },
+          avgPreparationTime: {
+            $avg: "$timeMetrics.preparationTime",
+          },
+          avgTotalTime: {
+            $avg: "$timeMetrics.totalTime",
+          },
+          onTimeOrders: {
+            $sum: {
+              $cond: [
+                {
+                  $lte: ["$timeMetrics.preparationTime", 1800],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         },
-        avgPreparationTime: {
-          $avg: "$timeMetrics.preparationTime"
-        },
-        avgTotalTime: {
-          $avg: "$timeMetrics.totalTime"
-        },
-        onTimeOrders: {
-          $sum: {
-            $cond: [{
-              $lte: ["$timeMetrics.preparationTime", 1800]
-            }, 1, 0]
-          }
-        }
-      }
-    }]);
+      },
+    ]);
     const result = stats[0] || {
       totalOrders: 0,
       avgPreparationTime: 0,
       avgTotalTime: 0,
-      onTimeOrders: 0
+      onTimeOrders: 0,
     };
-    result.onTimeRate = result.totalOrders > 0 ? result.onTimeOrders / result.totalOrders * 100 : 0;
+    result.onTimeRate =
+      result.totalOrders > 0
+        ? (result.onTimeOrders / result.totalOrders) * 100
+        : 0;
     return result;
   } catch (error) {
     logger.error("Get today performance failed:", error);
@@ -402,7 +488,7 @@ exports.emitKitchenUpdate = (event, data) => {
 };
 exports.emitStationUpdates = async () => {
   const stations = await KitchenStation.find({
-    isActive: true
+    isActive: true,
   });
   const io = getIO();
   io.to("kitchen-room").emit("stations_updated", stations);
@@ -414,25 +500,30 @@ exports.emitExpediterNotification = (kitchenOrder, item) => {
     tableNumber: kitchenOrder.tableNumber,
     itemName: item.menuItemName,
     quantity: item.quantity,
-    readyTime: item.readyTime
+    readyTime: item.readyTime,
   });
 };
-exports.calculateItemDelayStatus = item => {
+exports.calculateItemDelayStatus = (item) => {
   const preparationTime = Number(item?.preparationTime || 0);
-  const resolvedEstimatedCompletion = item?.estimatedCompletion ? new Date(item.estimatedCompletion) : item?.startTime && preparationTime > 0 ? new Date(new Date(item.startTime).getTime() + preparationTime * 60000) : null;
-  if (!resolvedEstimatedCompletion || Number.isNaN(resolvedEstimatedCompletion.getTime())) {
+  const resolvedEstimatedCompletion = item?.estimatedCompletion
+    ? new Date(item.estimatedCompletion)
+    : item?.startTime && preparationTime > 0
+      ? new Date(new Date(item.startTime).getTime() + preparationTime * 60000)
+      : null;
+  if (
+    !resolvedEstimatedCompletion ||
+    Number.isNaN(resolvedEstimatedCompletion.getTime())
+  ) {
     return {
       status: "on_time",
       color: "#4CAF50",
       delayMinutes: 0,
-      isDelayed: false
+      isDelayed: false,
     };
   }
   const now = new Date();
   const delayMinutes = Math.floor((now - resolvedEstimatedCompletion) / 60000);
-  const {
-    delayThresholds
-  } = require("../utils/statusColors");
+  const { delayThresholds } = require("../utils/statusColors");
   const timeRemaining = Math.floor((resolvedEstimatedCompletion - now) / 60000);
   if (timeRemaining <= 0) {
     if (delayMinutes >= delayThresholds.critical_delay) {
@@ -441,7 +532,7 @@ exports.calculateItemDelayStatus = item => {
         color: "#D32F2F",
         delayMinutes: delayMinutes,
         isDelayed: true,
-        severity: "critical"
+        severity: "critical",
       };
     } else {
       return {
@@ -449,7 +540,7 @@ exports.calculateItemDelayStatus = item => {
         color: "#F44336",
         delayMinutes: delayMinutes,
         isDelayed: true,
-        severity: "high"
+        severity: "high",
       };
     }
   } else if (timeRemaining <= delayThresholds.approaching_delay) {
@@ -458,7 +549,7 @@ exports.calculateItemDelayStatus = item => {
       color: "#FF9800",
       delayMinutes: timeRemaining,
       isDelayed: false,
-      severity: "warning"
+      severity: "warning",
     };
   } else {
     return {
@@ -466,7 +557,7 @@ exports.calculateItemDelayStatus = item => {
       color: "#4CAF50",
       delayMinutes: timeRemaining,
       isDelayed: false,
-      severity: "none"
+      severity: "none",
     };
   }
 };
@@ -475,15 +566,15 @@ exports.checkDelayedOrders = async () => {
     const delayedOrders = [];
     const kitchenOrders = await KitchenOrder.find({
       overallStatus: {
-        $in: ["pending", "in_progress"]
+        $in: ["pending", "in_progress"],
       },
       items: {
         $elemMatch: {
           status: {
-            $nin: ["ready", "served", "cancelled"]
-          }
-        }
-      }
+            $nin: ["ready", "served", "cancelled"],
+          },
+        },
+      },
     }).populate("items.station", "name");
     for (const order of kitchenOrders) {
       let orderHasDelayedItems = false;
@@ -503,7 +594,7 @@ exports.checkDelayedOrders = async () => {
             delayMinutes: delayStatus.delayMinutes,
             status: delayStatus.status,
             color: delayStatus.color,
-            estimatedCompletion: item.estimatedCompletion
+            estimatedCompletion: item.estimatedCompletion,
           });
           item.delayStatus = delayStatus.status;
           item.delayColor = delayStatus.color;
@@ -521,20 +612,27 @@ exports.checkDelayedOrders = async () => {
           maxDelayMinutes,
           delayedItems,
           priority: order.priority,
-          timers: order.timers
+          timers: order.timers,
         });
         try {
-          await notificationManager.createDelayedOrderNotification({
-            _id: order._id,
-            tenantId: order.tenantId,
-            orderNumber: order.orderNumber,
-            tableNumber: order.tableNumber,
-            customerName: order.customerName,
-            priority: order.priority,
-            createdAt: order.createdAt
-          }, maxDelayMinutes, delayedItems);
+          await notificationManager.createDelayedOrderNotification(
+            {
+              _id: order._id,
+              tenantId: order.tenantId,
+              orderNumber: order.orderNumber,
+              tableNumber: order.tableNumber,
+              customerName: order.customerName,
+              priority: order.priority,
+              createdAt: order.createdAt,
+            },
+            maxDelayMinutes,
+            delayedItems,
+          );
         } catch (notifError) {
-          logger.error("Failed to create delayed order notification:", notifError);
+          logger.error(
+            "Failed to create delayed order notification:",
+            notifError,
+          );
         }
         emitDelayedOrderAlert(order, maxDelayMinutes, delayedItems);
       }
@@ -550,17 +648,21 @@ exports.getDelayedOrdersSummary = async () => {
     const delayedOrders = await this.checkDelayedOrders();
     const summary = {
       totalDelayed: delayedOrders.length,
-      criticalDelays: delayedOrders.filter(order => order.maxDelayMinutes > 15).length,
-      warningDelays: delayedOrders.filter(order => order.maxDelayMinutes > 0 && order.maxDelayMinutes <= 15).length,
-      orders: delayedOrders.map(order => ({
+      criticalDelays: delayedOrders.filter(
+        (order) => order.maxDelayMinutes > 15,
+      ).length,
+      warningDelays: delayedOrders.filter(
+        (order) => order.maxDelayMinutes > 0 && order.maxDelayMinutes <= 15,
+      ).length,
+      orders: delayedOrders.map((order) => ({
         orderNumber: order.orderNumber,
         tableNumber: order.tableNumber,
         maxDelayMinutes: order.maxDelayMinutes,
         itemCount: order.delayedItems.length,
         priority: order.priority,
-        alertLevel: order.maxDelayMinutes > 15 ? "critical" : "warning"
+        alertLevel: order.maxDelayMinutes > 15 ? "critical" : "warning",
       })),
-      updatedAt: new Date()
+      updatedAt: new Date(),
     };
     return summary;
   } catch (error) {
@@ -570,7 +672,9 @@ exports.getDelayedOrdersSummary = async () => {
 };
 exports.updateItemWithDelayTracking = (item, preparationTime) => {
   const estimatedCompletion = new Date();
-  estimatedCompletion.setMinutes(estimatedCompletion.getMinutes() + preparationTime);
+  estimatedCompletion.setMinutes(
+    estimatedCompletion.getMinutes() + preparationTime,
+  );
   item.estimatedCompletion = estimatedCompletion;
   item.preparationTime = preparationTime;
   item.delayStatus = "on_time";
@@ -605,44 +709,64 @@ exports.startPreparingItem = async (kitchenOrderId, itemId) => {
     throw error;
   }
 };
-exports.getOrdersByStation = async (stationId, status = "pending", sortBy = "preparationTime") => {
+exports.getOrdersByStation = async (
+  stationId,
+  status = "pending",
+  sortBy = "preparationTime",
+) => {
   try {
     const orders = await KitchenOrder.find({
       "items.station": stationId,
       "items.status": status,
       overallStatus: {
-        $ne: "completed"
-      }
-    }).populate("items.station", "name stationType").populate("items.assignedTo", "name").lean();
-    const ordersWithDelay = orders.map(order => {
-      const stationItems = order.items.filter(item => item.station && item.station._id.toString() === stationId && item.status === status);
-      const itemsWithDelay = stationItems.map(item => {
+        $ne: "completed",
+      },
+    })
+      .populate("items.station", "name stationType")
+      .populate("items.assignedTo", "name")
+      .lean();
+    const ordersWithDelay = orders.map((order) => {
+      const stationItems = order.items.filter(
+        (item) =>
+          item.station &&
+          item.station._id.toString() === stationId &&
+          item.status === status,
+      );
+      const itemsWithDelay = stationItems.map((item) => {
         const delayStatus = this.calculateItemDelayStatus(item);
         return {
           ...item,
           delayStatus: delayStatus.status,
           delayColor: delayStatus.color,
           delayMinutes: delayStatus.delayMinutes,
-          isDelayed: delayStatus.isDelayed
+          isDelayed: delayStatus.isDelayed,
         };
       });
-      const maxDelay = Math.max(...itemsWithDelay.map(item => item.delayMinutes || 0));
-      const hasCriticalDelay = itemsWithDelay.some(item => item.delayStatus === "critical_delay");
-      const hasDelayedItems = itemsWithDelay.some(item => item.isDelayed);
+      const maxDelay = Math.max(
+        ...itemsWithDelay.map((item) => item.delayMinutes || 0),
+      );
+      const hasCriticalDelay = itemsWithDelay.some(
+        (item) => item.delayStatus === "critical_delay",
+      );
+      const hasDelayedItems = itemsWithDelay.some((item) => item.isDelayed);
       return {
         ...order,
         stationItems: itemsWithDelay,
         maxDelay,
         hasCriticalDelay,
         hasDelayedItems,
-        alertLevel: hasCriticalDelay ? "critical" : hasDelayedItems ? "warning" : "normal"
+        alertLevel: hasCriticalDelay
+          ? "critical"
+          : hasDelayedItems
+            ? "warning"
+            : "normal",
       };
     });
     const sortedOrders = ordersWithDelay.sort((a, b) => {
       const alertLevelOrder = {
         critical: 0,
         warning: 1,
-        normal: 2
+        normal: 2,
       };
       if (alertLevelOrder[a.alertLevel] !== alertLevelOrder[b.alertLevel]) {
         return alertLevelOrder[a.alertLevel] - alertLevelOrder[b.alertLevel];
@@ -654,39 +778,61 @@ exports.getOrdersByStation = async (stationId, status = "pending", sortBy = "pre
       const bStationItems = b.stationItems;
       if (aStationItems.length === 0 || bStationItems.length === 0) return 0;
       switch (sortBy) {
-        case "preparationTime":
-          {
-            const aAvgTime = aStationItems.reduce((sum, item) => sum + (item.preparationTime || 15), 0) / aStationItems.length;
-            const bAvgTime = bStationItems.reduce((sum, item) => sum + (item.preparationTime || 15), 0) / bStationItems.length;
-            return aAvgTime - bAvgTime;
-          }
-        case "estimatedCompletion":
-          {
-            const aEarliest = new Date(Math.min(...aStationItems.filter(item => item.estimatedCompletion).map(item => new Date(item.estimatedCompletion).getTime())));
-            const bEarliest = new Date(Math.min(...bStationItems.filter(item => item.estimatedCompletion).map(item => new Date(item.estimatedCompletion).getTime())));
-            return aEarliest - bEarliest;
-          }
+        case "preparationTime": {
+          const aAvgTime =
+            aStationItems.reduce(
+              (sum, item) => sum + (item.preparationTime || 15),
+              0,
+            ) / aStationItems.length;
+          const bAvgTime =
+            bStationItems.reduce(
+              (sum, item) => sum + (item.preparationTime || 15),
+              0,
+            ) / bStationItems.length;
+          return aAvgTime - bAvgTime;
+        }
+        case "estimatedCompletion": {
+          const aEarliest = new Date(
+            Math.min(
+              ...aStationItems
+                .filter((item) => item.estimatedCompletion)
+                .map((item) => new Date(item.estimatedCompletion).getTime()),
+            ),
+          );
+          const bEarliest = new Date(
+            Math.min(
+              ...bStationItems
+                .filter((item) => item.estimatedCompletion)
+                .map((item) => new Date(item.estimatedCompletion).getTime()),
+            ),
+          );
+          return aEarliest - bEarliest;
+        }
         case "createdAt":
           return new Date(a.createdAt) - new Date(b.createdAt);
-        case "quantity":
-          {
-            const aQuantity = aStationItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
-            const bQuantity = bStationItems.reduce((sum, item) => sum + (item.quantity || 0), 0);
-            return bQuantity - aQuantity;
-          }
+        case "quantity": {
+          const aQuantity = aStationItems.reduce(
+            (sum, item) => sum + (item.quantity || 0),
+            0,
+          );
+          const bQuantity = bStationItems.reduce(
+            (sum, item) => sum + (item.quantity || 0),
+            0,
+          );
+          return bQuantity - aQuantity;
+        }
         case "priority":
-        default:
-          {
-            const priorityOrder = {
-              vip: 0,
-              high: 1,
-              normal: 2
-            };
-            if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
-              return priorityOrder[a.priority] - priorityOrder[b.priority];
-            }
-            return new Date(a.createdAt) - new Date(b.createdAt);
+        default: {
+          const priorityOrder = {
+            vip: 0,
+            high: 1,
+            normal: 2,
+          };
+          if (priorityOrder[a.priority] !== priorityOrder[b.priority]) {
+            return priorityOrder[a.priority] - priorityOrder[b.priority];
           }
+          return new Date(a.createdAt) - new Date(b.createdAt);
+        }
       }
     });
     return sortedOrders;
@@ -699,36 +845,42 @@ exports.getSortedKitchenOrders = async (sortBy = "preparationTime") => {
   try {
     const query = {
       overallStatus: {
-        $ne: "completed"
-      }
+        $ne: "completed",
+      },
     };
-    const kitchenOrders = await KitchenOrder.find(query).populate("items.station", "name stationType colorCode").populate("items.assignedTo", "name").lean();
+    const kitchenOrders = await KitchenOrder.find(query)
+      .populate("items.station", "name stationType colorCode")
+      .populate("items.assignedTo", "name")
+      .lean();
     const sortedOrders = kitchenOrders.sort((a, b) => {
       switch (sortBy) {
-        case "preparationTime":
-          {
-            const aMin = Math.min(...a.items.map(i => i.preparationTime ?? 15));
-            const bMin = Math.min(...b.items.map(i => i.preparationTime ?? 15));
-            return aMin - bMin;
-          }
-        case "estimatedCompletion":
-          {
-            const aTimes = a.items.filter(i => i.estimatedCompletion).map(i => new Date(i.estimatedCompletion).getTime());
-            const bTimes = b.items.filter(i => i.estimatedCompletion).map(i => new Date(i.estimatedCompletion).getTime());
-            if (!aTimes.length && !bTimes.length) return 0;
-            if (!aTimes.length) return 1;
-            if (!bTimes.length) return -1;
-            return Math.min(...aTimes) - Math.min(...bTimes);
-          }
-        case "priority":
-          {
-            const priorityOrder = {
-              vip: 0,
-              high: 1,
-              normal: 2
-            };
-            return (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3);
-          }
+        case "preparationTime": {
+          const aMin = Math.min(...a.items.map((i) => i.preparationTime ?? 15));
+          const bMin = Math.min(...b.items.map((i) => i.preparationTime ?? 15));
+          return aMin - bMin;
+        }
+        case "estimatedCompletion": {
+          const aTimes = a.items
+            .filter((i) => i.estimatedCompletion)
+            .map((i) => new Date(i.estimatedCompletion).getTime());
+          const bTimes = b.items
+            .filter((i) => i.estimatedCompletion)
+            .map((i) => new Date(i.estimatedCompletion).getTime());
+          if (!aTimes.length && !bTimes.length) return 0;
+          if (!aTimes.length) return 1;
+          if (!bTimes.length) return -1;
+          return Math.min(...aTimes) - Math.min(...bTimes);
+        }
+        case "priority": {
+          const priorityOrder = {
+            vip: 0,
+            high: 1,
+            normal: 2,
+          };
+          return (
+            (priorityOrder[a.priority] ?? 3) - (priorityOrder[b.priority] ?? 3)
+          );
+        }
         case "createdAt":
         default:
           return new Date(a.createdAt) - new Date(b.createdAt);
@@ -740,7 +892,7 @@ exports.getSortedKitchenOrders = async (sortBy = "preparationTime") => {
     throw error;
   }
 };
-exports.getDelayedOrdersByStation = async stationId => {
+exports.getDelayedOrdersByStation = async (stationId) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(stationId)) {
       throw new Error("Invalid station ID format");
@@ -752,15 +904,17 @@ exports.getDelayedOrdersByStation = async stationId => {
     const orders = await KitchenOrder.find({
       "items.station": stationId,
       "items.status": {
-        $in: ["pending", "preparing"]
+        $in: ["pending", "preparing"],
       },
       overallStatus: {
-        $ne: "completed"
-      }
+        $ne: "completed",
+      },
     }).populate("items.station", "name");
     const delayedOrders = [];
     for (const order of orders) {
-      const stationItems = order.items.filter(item => item.station && item.station._id.toString() === stationId);
+      const stationItems = order.items.filter(
+        (item) => item.station && item.station._id.toString() === stationId,
+      );
       const delayedItems = [];
       let maxDelayMinutes = 0;
       for (const item of stationItems) {
@@ -770,7 +924,7 @@ exports.getDelayedOrdersByStation = async stationId => {
             menuItemName: item.menuItemName,
             delayMinutes: delayStatus.delayMinutes,
             status: delayStatus.status,
-            color: delayStatus.color
+            color: delayStatus.color,
           });
           maxDelayMinutes = Math.max(maxDelayMinutes, delayStatus.delayMinutes);
         }
@@ -783,7 +937,7 @@ exports.getDelayedOrdersByStation = async stationId => {
           maxDelayMinutes,
           delayedItems,
           itemCount: delayedItems.length,
-          priority: order.priority
+          priority: order.priority,
         });
       }
     }
@@ -795,11 +949,7 @@ exports.getDelayedOrdersByStation = async stationId => {
 };
 exports.updateStationItems = async (stationId, updateData) => {
   try {
-    const {
-      itemIds,
-      status,
-      staffId
-    } = updateData;
+    const { itemIds, status, staffId } = updateData;
     if (!mongoose.Types.ObjectId.isValid(stationId)) {
       throw new Error("Invalid station ID format");
     }
@@ -810,7 +960,9 @@ exports.updateStationItems = async (stationId, updateData) => {
     if (!Array.isArray(itemIds) || itemIds.length === 0) {
       throw new Error("Item IDs array is required");
     }
-    const validItemIds = itemIds.filter(id => mongoose.Types.ObjectId.isValid(id));
+    const validItemIds = itemIds.filter((id) =>
+      mongoose.Types.ObjectId.isValid(id),
+    );
     if (validItemIds.length === 0) {
       throw new Error("No valid item IDs provided");
     }
@@ -818,9 +970,9 @@ exports.updateStationItems = async (stationId, updateData) => {
     const updatedOrders = new Set();
     const kitchenOrders = await KitchenOrder.find({
       "items._id": {
-        $in: validItemIds
+        $in: validItemIds,
       },
-      "items.station": stationId
+      "items.station": stationId,
     });
     for (const order of kitchenOrders) {
       for (const itemId of validItemIds) {
@@ -835,8 +987,8 @@ exports.updateStationItems = async (stationId, updateData) => {
             item.readyTime = new Date();
             await KitchenStation.findByIdAndUpdate(stationId, {
               $inc: {
-                currentLoad: -item.quantity
-              }
+                currentLoad: -item.quantity,
+              },
             });
           }
           updatedOrders.add(order._id);
@@ -845,25 +997,27 @@ exports.updateStationItems = async (stationId, updateData) => {
       bulkOperations.push({
         updateOne: {
           filter: {
-            _id: order._id
+            _id: order._id,
           },
           update: {
             items: order.items,
-            updatedAt: new Date()
-          }
-        }
+            updatedAt: new Date(),
+          },
+        },
       });
     }
     if (bulkOperations.length > 0) {
       await KitchenOrder.bulkWrite(bulkOperations);
       for (const orderId of updatedOrders) {
-        const updatedOrder = await KitchenOrder.findById(orderId).populate("items.station", "name").populate("items.assignedTo", "name");
+        const updatedOrder = await KitchenOrder.findById(orderId)
+          .populate("items.station", "name")
+          .populate("items.assignedTo", "name");
         this.emitKitchenUpdate("items_updated", {
           stationId,
           orderId: updatedOrder._id,
           orderNumber: updatedOrder.orderNumber,
           updatedItems: validItemIds,
-          status
+          status,
         });
       }
       this.emitStationUpdates();
@@ -872,29 +1026,29 @@ exports.updateStationItems = async (stationId, updateData) => {
       success: true,
       updatedOrders: updatedOrders.size,
       updatedItems: validItemIds.length,
-      stationName: station.name
+      stationName: station.name,
     };
   } catch (error) {
     logger.error("Update station items failed:", error);
     throw error;
   }
 };
-exports.validateStationId = async stationId => {
+exports.validateStationId = async (stationId) => {
   if (!mongoose.Types.ObjectId.isValid(stationId)) {
     return {
       isValid: false,
-      error: "Invalid station ID format"
+      error: "Invalid station ID format",
     };
   }
   const station = await KitchenStation.findById(stationId);
   if (!station) {
     return {
       isValid: false,
-      error: "Station not found"
+      error: "Station not found",
     };
   }
   return {
     isValid: true,
-    station
+    station,
   };
 };

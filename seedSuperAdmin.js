@@ -1,15 +1,13 @@
-const {
-  logger
-} = require("./utils/logger.js");
+const { logger } = require("./utils/logger.js");
 const mongoose = require("mongoose");
 const User = require("./models/User");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
 const DEFAULT_SUPER_ADMIN = {
   name: "Platform Super Admin",
   email: process.env.SUPER_ADMIN_EMAIL || "superadmin@tableloom.com",
-  password: process.env.SUPER_ADMIN_PASSWORD || "SUperAdmin99!!"
+  password: process.env.SUPER_ADMIN_PASSWORD || "SUperAdmin99!!",
 };
 const connectDB = async () => {
   try {
@@ -24,12 +22,15 @@ const connectDB = async () => {
 const createSuperAdminUser = async () => {
   try {
     const existingSuperAdmin = await User.findOne({
-      $or: [{
-        email: DEFAULT_SUPER_ADMIN.email.toLowerCase(),
-        tenantId: null
-      }, {
-        role: "super_admin"
-      }]
+      $or: [
+        {
+          email: DEFAULT_SUPER_ADMIN.email.toLowerCase(),
+          tenantId: null,
+        },
+        {
+          role: "super_admin",
+        },
+      ],
     });
     if (existingSuperAdmin) {
       logger.info("super admin already exists:");
@@ -37,7 +38,7 @@ const createSuperAdminUser = async () => {
         id: existingSuperAdmin._id,
         name: existingSuperAdmin.name,
         email: existingSuperAdmin.email,
-        role: existingSuperAdmin.role
+        role: existingSuperAdmin.role,
       });
       return existingSuperAdmin;
     }
@@ -48,14 +49,14 @@ const createSuperAdminUser = async () => {
       role: "super_admin",
       tenantId: null,
       isActive: true,
-      forcePasswordChange: false
+      forcePasswordChange: false,
     });
     logger.info("Super admin created successfully.");
     logger.info({
       id: superAdmin._id,
       name: superAdmin.name,
       email: superAdmin.email,
-      role: superAdmin.role
+      role: superAdmin.role,
     });
     logger.info("\nSuper Admin Login Credentials:");
     logger.info(`Email: ${DEFAULT_SUPER_ADMIN.email}`);
@@ -89,5 +90,5 @@ if (require.main === module) {
 }
 module.exports = {
   seedSuperAdmin,
-  createSuperAdminUser
+  createSuperAdminUser,
 };

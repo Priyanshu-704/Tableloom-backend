@@ -1,16 +1,12 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const Customer = require("../models/Customer");
 const sessionManager = require("../utils/sessionManager");
-const {
-  verifyQRToken
-} = require("../utils/qrGenerator");
+const { verifyQRToken } = require("../utils/qrGenerator");
 const mongoose = require("mongoose");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
-const shapeCustomerSessionResponse = session => {
+const shapeCustomerSessionResponse = (session) => {
   if (!session) {
     return null;
   }
@@ -29,88 +25,110 @@ const shapeCustomerSessionResponse = session => {
     name: session.name || "",
     email: session.email || "",
     phone: session.phone || "",
-    table: session.table ? {
-      _id: session.table._id,
-      tableNumber: session.table.tableNumber,
-      tableName: session.table.tableName || "",
-      capacity: session.table.capacity,
-      location: session.table.location || "",
-      status: session.table.status
-    } : null,
-    currentOrder: session.currentOrder ? {
-      _id: session.currentOrder._id,
-      orderNumber: session.currentOrder.orderNumber,
-      status: session.currentOrder.status,
-      totalAmount: Number(session.currentOrder.totalAmount || 0),
-      itemsCount: Array.isArray(session.currentOrder.items) ? session.currentOrder.items.length : 0
-    } : null
+    table: session.table
+      ? {
+          _id: session.table._id,
+          tableNumber: session.table.tableNumber,
+          tableName: session.table.tableName || "",
+          capacity: session.table.capacity,
+          location: session.table.location || "",
+          status: session.table.status,
+        }
+      : null,
+    currentOrder: session.currentOrder
+      ? {
+          _id: session.currentOrder._id,
+          orderNumber: session.currentOrder.orderNumber,
+          status: session.currentOrder.status,
+          totalAmount: Number(session.currentOrder.totalAmount || 0),
+          itemsCount: Array.isArray(session.currentOrder.items)
+            ? session.currentOrder.items.length
+            : 0,
+        }
+      : null,
   };
 };
-const getSessionCreationValidationResponse = error => {
-  const validationMessages = Object.values(error?.errors || {}).map(fieldError => fieldError?.message).filter(Boolean);
+const getSessionCreationValidationResponse = (error) => {
+  const validationMessages = Object.values(error?.errors || {})
+    .map((fieldError) => fieldError?.message)
+    .filter(Boolean);
   if (error?.name === "ValidationError" && validationMessages.length > 0) {
     return {
       statusCode: 400,
       body: {
         success: false,
         message: validationMessages[0],
-        details: validationMessages
-      }
+        details: validationMessages,
+      },
     };
   }
   const errorMessage = String(error?.message || "");
-  const knownValidationMessages = ["Name is required to start a session", "Email is required to start a session", "Phone is required to start a session", "Invalid email format", "Invalid phone number", "Table is currently occupied", "Table has a pending payment session", "Table is not active", "Table not found", "Table is under maintenance"];
-  if (knownValidationMessages.some(message => errorMessage.includes(message))) {
+  const knownValidationMessages = [
+    "Name is required to start a session",
+    "Email is required to start a session",
+    "Phone is required to start a session",
+    "Invalid email format",
+    "Invalid phone number",
+    "Table is currently occupied",
+    "Table has a pending payment session",
+    "Table is not active",
+    "Table not found",
+    "Table is under maintenance",
+  ];
+  if (
+    knownValidationMessages.some((message) => errorMessage.includes(message))
+  ) {
     return {
       statusCode: 400,
       body: {
         success: false,
-        message: errorMessage
-      }
+        message: errorMessage,
+      },
     };
   }
   return null;
 };
 exports.createSessionByScan = async (req, res) => {
   try {
-    const {
-      tableId,
-      token,
-      customerData = {}
-    } = req.body;
+    const { tableId, token, customerData = {} } = req.body;
     if (!tableId || !token) {
       return res.status(400).json({
         success: false,
-        message: "Table ID and token are required"
+        message: "Table ID and token are required",
       });
     }
     const verification = await verifyQRToken(tableId, token);
     if (!verification.isValid) {
       return res.status(400).json({
         success: false,
-        message: verification.message || "Invalid or expired QR code"
+        message: verification.message || "Invalid or expired QR code",
       });
     }
     try {
-      const result = await sessionManager.createCustomerSession(tableId, token, customerData);
-      const {
-        session,
-        isExisting
-      } = result;
+      const result = await sessionManager.createCustomerSession(
+        tableId,
+        token,
+        customerData,
+      );
+      const { session, isExisting } = result;
       return res.status(isExisting ? 200 : 201).json({
         success: true,
-        message: isExisting ? "Existing active session found" : "New customer session created successfully",
+        message: isExisting
+          ? "Existing active session found"
+          : "New customer session created successfully",
         data: {
           sessionId: session.sessionId,
           sessionStatus: session.sessionStatus,
           table: session.table,
-          isExistingSession: isExisting
-        }
+          isExistingSession: isExisting,
+        },
       });
     } catch (error) {
       const validationResponse = getSessionCreationValidationResponse(error);
       if (validationResponse) {
-        return res.status(validationResponse.statusCode).json(validationResponse.body);
+        return res
+          .status(validationResponse.statusCode)
+          .json(validationResponse.body);
       }
       throw error;
     }
@@ -118,27 +136,24 @@ exports.createSessionByScan = async (req, res) => {
     logger.error("Session creation error:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to create customer session"
+      message: "Failed to create customer session",
     });
   }
 };
 exports.validateSessionScan = async (req, res) => {
   try {
-    const {
-      tableId,
-      token
-    } = req.body;
+    const { tableId, token } = req.body;
     if (!tableId || !token) {
       return res.status(400).json({
         success: false,
-        message: "Table ID and token are required"
+        message: "Table ID and token are required",
       });
     }
     const verification = await verifyQRToken(tableId, token);
     if (!verification.isValid) {
       return res.status(400).json({
         success: false,
-        message: verification.message || "Invalid or expired QR code"
+        message: verification.message || "Invalid or expired QR code",
       });
     }
     return res.status(200).json({
@@ -151,229 +166,218 @@ exports.validateSessionScan = async (req, res) => {
           tableName: verification.table.tableName || "",
           capacity: verification.table.capacity,
           location: verification.table.location,
-          status: verification.table.status
-        }
-      }
+          status: verification.table.status,
+        },
+      },
     });
   } catch (error) {
     logger.error("QR validation error:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to validate QR code"
+      message: "Failed to validate QR code",
     });
   }
 };
 exports.getCustomerSession = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const customerSession = await sessionManager.getCustomerSession(sessionId);
     if (!customerSession) {
       return res.status(404).json({
         success: false,
-        message: "Customer session not found or expired"
+        message: "Customer session not found or expired",
       });
     }
     await sessionManager.updateSessionActivity(sessionId);
     res.status(200).json({
       success: true,
-      data: shapeCustomerSessionResponse(customerSession)
+      data: shapeCustomerSessionResponse(customerSession),
     });
   } catch (error) {
     logger.error(" Get session error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to get customer session",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.completeSessionOnline = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
-    const {
-      paymentData = {}
-    } = req.body;
-    const completedSession = await sessionManager.completeSessionOnline(sessionId, paymentData);
+    const { sessionId } = req.params;
+    const { paymentData = {} } = req.body;
+    const completedSession = await sessionManager.completeSessionOnline(
+      sessionId,
+      paymentData,
+    );
     res.status(200).json({
       success: true,
       message: "Session completed successfully with online payment",
-      data: completedSession
+      data: completedSession,
     });
   } catch (error) {
     logger.error(" Complete online error:", error);
     if (error.message.includes("Active customer session not found")) {
       return res.status(404).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     res.status(500).json({
       success: false,
       message: "Failed to complete session with online payment",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.customerLogout = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const loggedOutSession = await sessionManager.customerLogout(sessionId);
     res.status(200).json({
       success: true,
       message: "Logged out successfully",
-      data: loggedOutSession
+      data: loggedOutSession,
     });
   } catch (error) {
     if (error.message.includes("Active customer session not found")) {
       return res.status(404).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     if (error.message.includes("You have an unpaid order")) {
       return res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     if (error.message.includes("Please complete payment before logging out")) {
       return res.status(400).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     res.status(500).json({
       success: false,
       message: "Failed to logout",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.completeSessionOffline = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
-    const {
-      notes
-    } = req.body;
-    const completedSession = await sessionManager.completeSessionOffline(sessionId, req.user.id, notes);
+    const { sessionId } = req.params;
+    const { notes } = req.body;
+    const completedSession = await sessionManager.completeSessionOffline(
+      sessionId,
+      req.user.id,
+      notes,
+    );
     res.status(200).json({
       success: true,
       message: "Session completed successfully with offline payment",
-      data: completedSession
+      data: completedSession,
     });
   } catch (error) {
     logger.error(" Complete offline error:", error);
     if (error.message.includes("Active customer session not found")) {
       return res.status(404).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     res.status(500).json({
       success: false,
       message: "Failed to complete session with offline payment",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.cancelSession = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
-    const {
-      reason
-    } = req.body;
-    const cancelledSession = await sessionManager.cancelSession(sessionId, reason, req.user.id);
+    const { sessionId } = req.params;
+    const { reason } = req.body;
+    const cancelledSession = await sessionManager.cancelSession(
+      sessionId,
+      reason,
+      req.user.id,
+    );
     res.status(200).json({
       success: true,
       message: "Session cancelled successfully",
-      data: cancelledSession
+      data: cancelledSession,
     });
   } catch (error) {
     logger.error(" Cancel session error:", error);
     if (error.message.includes("Active customer session not found")) {
       return res.status(404).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     res.status(500).json({
       success: false,
       message: "Failed to cancel session",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.getSessionByTable = async (req, res) => {
   try {
-    const {
-      tableId
-    } = req.params;
+    const { tableId } = req.params;
     const session = await sessionManager.getSessionByTable(tableId);
     if (!session) {
       return res.status(404).json({
         success: false,
-        message: "No active session found for this table"
+        message: "No active session found for this table",
       });
     }
     res.status(200).json({
       success: true,
-      data: session
+      data: session,
     });
   } catch (error) {
     logger.error(" Get session by table error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to get session by table",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.extendSession = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
-    const {
-      minutes = 30
-    } = req.body;
-    const extendedSession = await sessionManager.extendSession(sessionId, minutes, req.user.id);
+    const { sessionId } = req.params;
+    const { minutes = 30 } = req.body;
+    const extendedSession = await sessionManager.extendSession(
+      sessionId,
+      minutes,
+      req.user.id,
+    );
     res.status(200).json({
       success: true,
       message: `Session extended by ${minutes} minutes`,
-      data: extendedSession
+      data: extendedSession,
     });
   } catch (error) {
     logger.error(" Extend session error:", error);
     if (error.message.includes("Active session not found")) {
       return res.status(404).json({
         success: false,
-        message: error.message
+        message: error.message,
       });
     }
     res.status(500).json({
       success: false,
       message: "Failed to extend session",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.getSessionAnalytics = async (req, res) => {
   try {
-    const {
-      period = "today",
-      startDate,
-      endDate
-    } = req.query;
+    const { period = "today", startDate, endDate } = req.query;
     let rangeStart = null;
     let rangeEnd = null;
     if (startDate || endDate) {
@@ -410,113 +414,226 @@ exports.getSessionAnalytics = async (req, res) => {
       sessionStartMatch.$lte = rangeEnd;
       sessionEndMatch.$lte = rangeEnd;
     }
-    const analytics = await Customer.aggregate([{
-      $match: {
-        $or: [{
-          sessionStart: sessionStartMatch
-        }, {
-          sessionEnd: sessionEndMatch
-        }]
-      }
-    }, {
-      $group: {
-        _id: null,
-        totalSessions: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionStart", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionStart", rangeEnd]
-              }] : []), {
-                $eq: ["$isActive", true]
-              }]
-            }, 1, 0]
-          }
+    const analytics = await Customer.aggregate([
+      {
+        $match: {
+          $or: [
+            {
+              sessionStart: sessionStartMatch,
+            },
+            {
+              sessionEnd: sessionEndMatch,
+            },
+          ],
         },
-        activeSessions: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionStart", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionStart", rangeEnd]
-              }] : []), {
-                $eq: ["$isActive", true]
-              }, {
-                $in: ["$sessionStatus", ["active", "payment_pending"]]
-              }]
-            }, 1, 0]
-          }
+      },
+      {
+        $group: {
+          _id: null,
+          totalSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionStart", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionStart", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$isActive", true],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          activeSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionStart", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionStart", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$isActive", true],
+                    },
+                    {
+                      $in: ["$sessionStatus", ["active", "payment_pending"]],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          completedSessions: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionEnd", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionEnd", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$isActive", true],
+                    },
+                    {
+                      $eq: ["$sessionStatus", "completed"],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          revenue: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionEnd", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionEnd", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$sessionStatus", "completed"],
+                    },
+                  ],
+                },
+                {
+                  $ifNull: ["$totalSpent", 0],
+                },
+                0,
+              ],
+            },
+          },
+          averageSessionMinutesTotal: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionStart", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionStart", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$sessionStatus", "completed"],
+                    },
+                    {
+                      $ne: ["$sessionEnd", null],
+                    },
+                  ],
+                },
+                {
+                  $divide: [
+                    {
+                      $subtract: ["$sessionEnd", "$sessionStart"],
+                    },
+                    60000,
+                  ],
+                },
+                0,
+              ],
+            },
+          },
+          averageSessionMinutesCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    ...(rangeStart
+                      ? [
+                          {
+                            $gte: ["$sessionStart", rangeStart],
+                          },
+                        ]
+                      : []),
+                    ...(rangeEnd
+                      ? [
+                          {
+                            $lte: ["$sessionStart", rangeEnd],
+                          },
+                        ]
+                      : []),
+                    {
+                      $eq: ["$sessionStatus", "completed"],
+                    },
+                    {
+                      $ne: ["$sessionEnd", null],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
         },
-        completedSessions: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionEnd", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionEnd", rangeEnd]
-              }] : []), {
-                $eq: ["$isActive", true]
-              }, {
-                $eq: ["$sessionStatus", "completed"]
-              }]
-            }, 1, 0]
-          }
-        },
-        revenue: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionEnd", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionEnd", rangeEnd]
-              }] : []), {
-                $eq: ["$sessionStatus", "completed"]
-              }]
-            }, {
-              $ifNull: ["$totalSpent", 0]
-            }, 0]
-          }
-        },
-        averageSessionMinutesTotal: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionStart", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionStart", rangeEnd]
-              }] : []), {
-                $eq: ["$sessionStatus", "completed"]
-              }, {
-                $ne: ["$sessionEnd", null]
-              }]
-            }, {
-              $divide: [{
-                $subtract: ["$sessionEnd", "$sessionStart"]
-              }, 60000]
-            }, 0]
-          }
-        },
-        averageSessionMinutesCount: {
-          $sum: {
-            $cond: [{
-              $and: [...(rangeStart ? [{
-                $gte: ["$sessionStart", rangeStart]
-              }] : []), ...(rangeEnd ? [{
-                $lte: ["$sessionStart", rangeEnd]
-              }] : []), {
-                $eq: ["$sessionStatus", "completed"]
-              }, {
-                $ne: ["$sessionEnd", null]
-              }]
-            }, 1, 0]
-          }
-        }
-      }
-    }]);
+      },
+    ]);
     const summary = analytics[0] || {};
-    const averageSessionTime = summary.averageSessionMinutesCount > 0 ? summary.averageSessionMinutesTotal / summary.averageSessionMinutesCount : 0;
+    const averageSessionTime =
+      summary.averageSessionMinutesCount > 0
+        ? summary.averageSessionMinutesTotal /
+          summary.averageSessionMinutesCount
+        : 0;
     res.status(200).json({
       success: true,
       data: {
@@ -528,24 +645,22 @@ exports.getSessionAnalytics = async (req, res) => {
         revenue: summary.revenue || 0,
         dateRange: {
           startDate: rangeStart || null,
-          endDate: rangeEnd || null
-        }
-      }
+          endDate: rangeEnd || null,
+        },
+      },
     });
   } catch (error) {
     logger.error("Analytics error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to get analytics",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.generateBillBeforePayment = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const result = await sessionManager.generateBillBeforePayment(sessionId);
     return res.status(200).json(result);
   } catch (error) {
@@ -553,105 +668,98 @@ exports.generateBillBeforePayment = async (req, res) => {
     if (error.message.includes("Active customer session not found")) {
       return res.status(404).json({
         success: false,
-        message: "Session not found or expired"
+        message: "Session not found or expired",
       });
     }
     if (error.message.includes("No unpaid orders found")) {
       return res.status(400).json({
         success: false,
-        message: "No unpaid orders found for this session"
+        message: "No unpaid orders found for this session",
       });
     }
     return res.status(500).json({
       success: false,
-      message: "Failed to generate bill"
+      message: "Failed to generate bill",
     });
   }
 };
 exports.getSessionWithBill = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const sessionData = await sessionManager.getSessionWithBill(sessionId);
     if (!sessionData) {
       return res.status(404).json({
         success: false,
-        message: "Session not found or expired"
+        message: "Session not found or expired",
       });
     }
     res.status(200).json({
       success: true,
-      data: sessionData
+      data: sessionData,
     });
   } catch (error) {
     logger.error("Get session with bill failed:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to get session details"
+      message: "Failed to get session details",
     });
   }
 };
 exports.requestBillForSession = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
-    const {
+    const { sessionId } = req.params;
+    const { email, forceNew = false, paymentMethod = "" } = req.body;
+    const result = await sessionManager.requestBillForSession(
+      sessionId,
       email,
-      forceNew = false,
-      paymentMethod = ""
-    } = req.body;
-    const result = await sessionManager.requestBillForSession(sessionId, email, forceNew, paymentMethod);
+      forceNew,
+      paymentMethod,
+    );
     res.json(result);
   } catch (error) {
     logger.error("Request bill failed:", error);
     res.status(400).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
 exports.markBillAsPaid = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
-    const {
-      paymentMethod,
-      transactionId,
-      staffId
-    } = req.body;
+    const { billId } = req.params;
+    const { paymentMethod, transactionId, staffId } = req.body;
     if (!paymentMethod) {
       return res.status(400).json({
         success: false,
-        message: "Payment method is required"
+        message: "Payment method is required",
       });
     }
-    const result = await sessionManager.markBillAsPaid(billId, {
-      method: paymentMethod,
-      transactionId: transactionId || `offline_${Date.now()}`,
-      gateway: paymentMethod === "online" ? "payment_gateway" : "offline"
-    }, staffId);
+    const result = await sessionManager.markBillAsPaid(
+      billId,
+      {
+        method: paymentMethod,
+        transactionId: transactionId || `offline_${Date.now()}`,
+        gateway: paymentMethod === "online" ? "payment_gateway" : "offline",
+      },
+      staffId,
+    );
     res.json(result);
   } catch (error) {
     logger.error("Mark bill as paid failed:", error);
     res.status(400).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
 exports.getSessionBillSummary = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const sessionData = await sessionManager.getSessionWithBill(sessionId);
     if (!sessionData) {
       return res.status(404).json({
         success: false,
-        message: "Session not found"
+        message: "Session not found",
       });
     }
     res.status(200).json({
@@ -661,14 +769,14 @@ exports.getSessionBillSummary = async (req, res) => {
         summary: sessionData.summary,
         bill: sessionData.bill,
         canRequestBill: sessionData.canRequestBill,
-        canCompleteSession: sessionData.canCompleteSession
-      }
+        canCompleteSession: sessionData.canCompleteSession,
+      },
     });
   } catch (error) {
     logger.error("Get session bill summary failed:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to get session summary"
+      message: "Failed to get session summary",
     });
   }
 };
@@ -682,7 +790,7 @@ exports.getAllSessions = async (req, res) => {
       tableId,
       search,
       startDate,
-      endDate
+      endDate,
     } = req.query;
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(Math.max(1, parseInt(limit)), 100);
@@ -691,14 +799,14 @@ exports.getAllSessions = async (req, res) => {
     if (mode === "active") {
       query.isActive = true;
       query.sessionStatus = {
-        $in: ["active", "payment_pending"]
+        $in: ["active", "payment_pending"],
       };
       if (status) {
         const allowedStatuses = ["active", "payment_pending"];
         if (!allowedStatuses.includes(status)) {
           return res.status(400).json({
             success: false,
-            message: `Status '${status}' is not valid for active mode. Valid statuses are: ${allowedStatuses.join(", ")}`
+            message: `Status '${status}' is not valid for active mode. Valid statuses are: ${allowedStatuses.join(", ")}`,
           });
         }
         query.sessionStatus = status;
@@ -709,7 +817,7 @@ exports.getAllSessions = async (req, res) => {
         query.sessionStatus = status;
       } else {
         query.sessionStatus = {
-          $in: ["completed", "cancelled", "timeout"]
+          $in: ["completed", "cancelled", "timeout"],
         };
       }
     } else {
@@ -724,7 +832,7 @@ exports.getAllSessions = async (req, res) => {
       if (!mongoose.Types.ObjectId.isValid(tableId)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid tableId format"
+          message: "Invalid tableId format",
         });
       }
       query.table = tableId;
@@ -736,7 +844,7 @@ exports.getAllSessions = async (req, res) => {
         if (isNaN(start.getTime())) {
           return res.status(400).json({
             success: false,
-            message: "Invalid startDate format"
+            message: "Invalid startDate format",
           });
         }
         query.sessionStart.$gte = start;
@@ -746,7 +854,7 @@ exports.getAllSessions = async (req, res) => {
         if (isNaN(end.getTime())) {
           return res.status(400).json({
             success: false,
-            message: "Invalid endDate format"
+            message: "Invalid endDate format",
           });
         }
         end.setHours(23, 59, 59, 999);
@@ -756,22 +864,49 @@ exports.getAllSessions = async (req, res) => {
         delete query.sessionStart;
       }
     }
-    const sortCriteria = mode === "active" ? {
-      lastActivity: -1
-    } : {
-      sessionStart: -1
-    };
-    let sessionsQuery = Customer.find(query).select("sessionId isActive sessionStatus sessionStart sessionEnd lastActivity paymentStatus paymentMethod totalAmount totalSpent name email phone table currentOrder").populate("table", "tableNumber tableName capacity location").populate("currentOrder", "orderNumber status totalAmount items").sort(sortCriteria);
+    const sortCriteria =
+      mode === "active"
+        ? {
+            lastActivity: -1,
+          }
+        : {
+            sessionStart: -1,
+          };
+    let sessionsQuery = Customer.find(query)
+      .select(
+        "sessionId isActive sessionStatus sessionStart sessionEnd lastActivity paymentStatus paymentMethod totalAmount totalSpent name email phone table currentOrder",
+      )
+      .populate("table", "tableNumber tableName capacity location")
+      .populate("currentOrder", "orderNumber status totalAmount items")
+      .sort(sortCriteria);
     if (!search) {
       sessionsQuery = sessionsQuery.skip(skip).limit(limitNum);
     }
     let sessions = await sessionsQuery.lean();
     if (search) {
       const keyword = search.trim().toLowerCase();
-      sessions = sessions.filter(session => String(session.sessionId || "").toLowerCase().includes(keyword) || String(session.name || "").toLowerCase().includes(keyword) || String(session.phone || "").toLowerCase().includes(keyword) || String(session.table?.tableNumber || "").toLowerCase().includes(keyword));
+      sessions = sessions.filter(
+        (session) =>
+          String(session.sessionId || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(session.name || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(session.phone || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(session.table?.tableNumber || "")
+            .toLowerCase()
+            .includes(keyword),
+      );
     }
-    const total = search ? sessions.length : await Customer.countDocuments(query);
-    const paginatedSessions = search ? sessions.slice(skip, skip + limitNum) : sessions;
+    const total = search
+      ? sessions.length
+      : await Customer.countDocuments(query);
+    const paginatedSessions = search
+      ? sessions.slice(skip, skip + limitNum)
+      : sessions;
     const response = {
       success: true,
       pagination: {
@@ -780,9 +915,11 @@ exports.getAllSessions = async (req, res) => {
         total,
         pages: Math.ceil(total / limitNum),
         hasNext: pageNum * limitNum < total,
-        hasPrev: pageNum > 1
+        hasPrev: pageNum > 1,
       },
-      data: paginatedSessions.map(session => shapeCustomerSessionResponse(session))
+      data: paginatedSessions.map((session) =>
+        shapeCustomerSessionResponse(session),
+      ),
     };
     return res.status(200).json(response);
   } catch (error) {
@@ -798,7 +935,7 @@ exports.getAllSessions = async (req, res) => {
     res.status(statusCode).json({
       success: false,
       message: errorMessage,
-      error: process.env.NODE_ENV === "development" ? error.message : undefined
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };

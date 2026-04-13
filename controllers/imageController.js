@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const MenuItem = require("../models/MenuItem");
 const Category = require("../models/Category");
 const Table = require("../models/Table");
@@ -8,18 +6,21 @@ const Bill = require("../models/Bill");
 const AppSetting = require("../models/AppSetting");
 const {
   getStoredAssetReference,
-  serveStoredAsset
+  serveStoredAsset,
 } = require("../utils/imageStorage");
 const {
   buildQRCodeBuffer,
-  buildTenantTableQrUrl
+  buildTenantTableQrUrl,
 } = require("../utils/qrGenerator");
-const getRequestedVariant = req => req.query?.variant === "thumbnail" ? "thumbnail" : "image";
+const getRequestedVariant = (req) =>
+  req.query?.variant === "thumbnail" ? "thumbnail" : "image";
 exports.getMenuItemImage = async (req, res) => {
   try {
-    const menuItem = await MenuItem.findById(req.params.id).select("image thumbnail imagePublicId thumbnailPublicId");
+    const menuItem = await MenuItem.findById(req.params.id).select(
+      "image thumbnail imagePublicId thumbnailPublicId",
+    );
     const storedReference = getStoredAssetReference(menuItem, {
-      variant: getRequestedVariant(req)
+      variant: getRequestedVariant(req),
     });
     if (!storedReference) {
       return res.status(404).send("Image not found");
@@ -32,9 +33,11 @@ exports.getMenuItemImage = async (req, res) => {
 };
 exports.getCategoryImage = async (req, res) => {
   try {
-    const category = await Category.findById(req.params.id).select("image thumbnail imagePublicId thumbnailPublicId");
+    const category = await Category.findById(req.params.id).select(
+      "image thumbnail imagePublicId thumbnailPublicId",
+    );
     const storedReference = getStoredAssetReference(category, {
-      variant: getRequestedVariant(req)
+      variant: getRequestedVariant(req),
     });
     if (!storedReference) {
       return res.status(404).send("Image not found");
@@ -47,7 +50,9 @@ exports.getCategoryImage = async (req, res) => {
 };
 exports.getTableQRImage = async (req, res) => {
   try {
-    const table = await Table.findById(req.params.id).select("tableNumber qrCode qrPublicId qrToken");
+    const table = await Table.findById(req.params.id).select(
+      "tableNumber qrCode qrPublicId qrToken",
+    );
     if (!table) {
       return res.status(404).send("Image not found");
     }
@@ -56,7 +61,7 @@ exports.getTableQRImage = async (req, res) => {
         tableId: table._id,
         tableNumber: table.tableNumber,
         token: table.qrToken,
-        tenant: req.tenant
+        tenant: req.tenant,
       });
       if (!qrUrl) {
         return res.status(404).send("Image not found");
@@ -70,7 +75,7 @@ exports.getTableQRImage = async (req, res) => {
       return res.status(404).send("Image not found");
     }
     await serveStoredAsset(res, table.qrCode, {
-      contentType: "image/png"
+      contentType: "image/png",
     });
   } catch (error) {
     logger.error("Category image error:", error);
@@ -81,12 +86,12 @@ exports.getRestaurantLogo = async (req, res) => {
   try {
     const settings = await AppSetting.findOne({
       tenantId: req.tenant?._id,
-      key: "app-settings"
+      key: "app-settings",
     }).select("restaurant.logo restaurant.logoThumbnail");
     const logoUrl = getStoredAssetReference(settings?.restaurant, {
       variant: getRequestedVariant(req),
       originalField: "logo",
-      thumbnailField: "logoThumbnail"
+      thumbnailField: "logoThumbnail",
     });
     if (!logoUrl || String(settings?.restaurant?.logo || "").startsWith("/")) {
       return res.status(404).send("Image not found");
@@ -103,17 +108,17 @@ exports.downloadBillPDF = async (req, res) => {
     if (!bill || !bill.pdfUrl) {
       return res.status(404).json({
         success: false,
-        message: "Bill PDF not found"
+        message: "Bill PDF not found",
       });
     }
     return serveStoredAsset(res, bill.pdfUrl, {
       contentType: "application/pdf",
-      disposition: `attachment; filename="bill-${bill.billNumber || bill._id}.pdf"`
+      disposition: `attachment; filename="bill-${bill.billNumber || bill._id}.pdf"`,
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch bill PDF"
+      message: "Failed to fetch bill PDF",
     });
   }
 };

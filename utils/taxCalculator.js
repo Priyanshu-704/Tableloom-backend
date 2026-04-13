@@ -1,14 +1,12 @@
 const AppSetting = require("../models/AppSetting");
-const {
-  getCurrentTenantId
-} = require("./tenantContext");
+const { getCurrentTenantId } = require("./tenantContext");
 const TAX_SETTINGS_CACHE_TTL_MS = 30 * 1000;
 const DEFAULT_TAX_SETTINGS = Object.freeze({
   taxRate: 9,
   serviceCharge: 10,
   taxInclusive: false,
   currency: "INR",
-  currencySymbol: "₹"
+  currencySymbol: "₹",
 });
 const currencySymbols = {
   INR: "₹",
@@ -18,23 +16,36 @@ const currencySymbols = {
   AED: "AED",
   SAR: "SAR",
   CAD: "CA$",
-  AUD: "A$"
+  AUD: "A$",
 };
 const taxSettingsCache = new Map();
-const MAX_TAX_SETTINGS_CACHE_ENTRIES = Math.max(Number(process.env.TAX_SETTINGS_CACHE_MAX_ENTRIES || 200), 25);
-const roundCurrency = value => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-const clampMoney = value => Math.max(roundCurrency(value), 0);
+const MAX_TAX_SETTINGS_CACHE_ENTRIES = Math.max(
+  Number(process.env.TAX_SETTINGS_CACHE_MAX_ENTRIES || 200),
+  25,
+);
+const roundCurrency = (value) =>
+  Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+const clampMoney = (value) => Math.max(roundCurrency(value), 0);
 const normalizeTaxSettings = (settings = {}) => {
-  const currency = String(settings.currency || DEFAULT_TAX_SETTINGS.currency).toUpperCase();
+  const currency = String(
+    settings.currency || DEFAULT_TAX_SETTINGS.currency,
+  ).toUpperCase();
   return {
     taxRate: clampMoney(settings.taxRate ?? DEFAULT_TAX_SETTINGS.taxRate),
-    serviceCharge: clampMoney(settings.serviceCharge ?? DEFAULT_TAX_SETTINGS.serviceCharge),
-    taxInclusive: Boolean(settings.taxInclusive ?? DEFAULT_TAX_SETTINGS.taxInclusive),
+    serviceCharge: clampMoney(
+      settings.serviceCharge ?? DEFAULT_TAX_SETTINGS.serviceCharge,
+    ),
+    taxInclusive: Boolean(
+      settings.taxInclusive ?? DEFAULT_TAX_SETTINGS.taxInclusive,
+    ),
     currency,
-    currencySymbol: settings.currencySymbol || currencySymbols[currency] || DEFAULT_TAX_SETTINGS.currencySymbol
+    currencySymbol:
+      settings.currencySymbol ||
+      currencySymbols[currency] ||
+      DEFAULT_TAX_SETTINGS.currencySymbol,
   };
 };
-const getCachedTaxSettings = tenantId => {
+const getCachedTaxSettings = (tenantId) => {
   if (!tenantId) {
     return null;
   }
@@ -66,7 +77,7 @@ const setCachedTaxSettings = (tenantId, value) => {
   }
   taxSettingsCache.set(cacheKey, {
     value,
-    expiresAt: Date.now() + TAX_SETTINGS_CACHE_TTL_MS
+    expiresAt: Date.now() + TAX_SETTINGS_CACHE_TTL_MS,
   });
   while (taxSettingsCache.size > MAX_TAX_SETTINGS_CACHE_ENTRIES) {
     const oldestKey = taxSettingsCache.keys().next().value;
@@ -76,7 +87,7 @@ const setCachedTaxSettings = (tenantId, value) => {
     taxSettingsCache.delete(oldestKey);
   }
 };
-const invalidateTenantTaxSettings = tenantId => {
+const invalidateTenantTaxSettings = (tenantId) => {
   if (!tenantId) {
     return;
   }
@@ -91,8 +102,10 @@ const getTenantTaxSettings = async (options = {}) => {
     }
   }
   const settings = await AppSetting.findOne({
-    key: "app-settings"
-  }).select("taxSettings").lean();
+    key: "app-settings",
+  })
+    .select("taxSettings")
+    .lean();
   const normalized = normalizeTaxSettings(settings?.taxSettings || {});
   setCachedTaxSettings(tenantId, normalized);
   return normalized;
@@ -104,28 +117,39 @@ const createTaxSnapshot = (settings = {}) => {
     serviceChargeRate: normalized.serviceCharge,
     taxInclusive: normalized.taxInclusive,
     currency: normalized.currency,
-    currencySymbol: normalized.currencySymbol
+    currencySymbol: normalized.currencySymbol,
   };
 };
 const calculatePricingBreakdown = ({
   subtotal = 0,
   discountAmount = 0,
-  settings = {}
+  settings = {},
 }) => {
   const normalizedSettings = normalizeTaxSettings(settings);
   const normalizedSubtotal = clampMoney(subtotal);
-  const normalizedDiscount = Math.min(clampMoney(discountAmount), normalizedSubtotal);
+  const normalizedDiscount = Math.min(
+    clampMoney(discountAmount),
+    normalizedSubtotal,
+  );
   const taxableSubtotal = clampMoney(normalizedSubtotal - normalizedDiscount);
   let baseAmount = taxableSubtotal;
   let taxAmount = 0;
   if (normalizedSettings.taxInclusive && normalizedSettings.taxRate > 0) {
-    baseAmount = roundCurrency(taxableSubtotal / (1 + normalizedSettings.taxRate / 100));
+    baseAmount = roundCurrency(
+      taxableSubtotal / (1 + normalizedSettings.taxRate / 100),
+    );
     taxAmount = clampMoney(taxableSubtotal - baseAmount);
   } else {
-    taxAmount = clampMoney(taxableSubtotal * normalizedSettings.taxRate / 100);
+    taxAmount = clampMoney(
+      (taxableSubtotal * normalizedSettings.taxRate) / 100,
+    );
   }
-  const serviceChargeAmount = clampMoney(baseAmount * normalizedSettings.serviceCharge / 100);
-  const totalAmount = normalizedSettings.taxInclusive ? clampMoney(taxableSubtotal + serviceChargeAmount) : clampMoney(taxableSubtotal + taxAmount + serviceChargeAmount);
+  const serviceChargeAmount = clampMoney(
+    (baseAmount * normalizedSettings.serviceCharge) / 100,
+  );
+  const totalAmount = normalizedSettings.taxInclusive
+    ? clampMoney(taxableSubtotal + serviceChargeAmount)
+    : clampMoney(taxableSubtotal + taxAmount + serviceChargeAmount);
   return {
     subtotal: normalizedSubtotal,
     discountAmount: normalizedDiscount,
@@ -134,7 +158,7 @@ const calculatePricingBreakdown = ({
     taxAmount,
     serviceChargeAmount,
     totalAmount,
-    ...createTaxSnapshot(normalizedSettings)
+    ...createTaxSnapshot(normalizedSettings),
   };
 };
 module.exports = {
@@ -144,5 +168,5 @@ module.exports = {
   getTenantTaxSettings,
   invalidateTenantTaxSettings,
   normalizeTaxSettings,
-  roundCurrency
+  roundCurrency,
 };

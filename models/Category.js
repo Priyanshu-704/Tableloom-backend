@@ -5,64 +5,67 @@ const categorySchema = new mongoose.Schema({
     type: String,
     required: [true, "Please add a category name"],
     trim: true,
-    maxlength: [50, "Category name cannot exceed 50 characters"]
+    maxlength: [50, "Category name cannot exceed 50 characters"],
   },
   description: {
     type: String,
-    maxlength: [200, "Description cannot exceed 200 characters"]
+    maxlength: [200, "Description cannot exceed 200 characters"],
   },
   image: {
     type: String,
-    default: null
+    default: null,
   },
   thumbnail: {
     type: String,
-    default: null
+    default: null,
   },
   imagePublicId: {
     type: String,
-    default: null
+    default: null,
   },
   thumbnailPublicId: {
     type: String,
-    default: null
+    default: null,
   },
   imageProvider: {
     type: String,
-    default: null
+    default: null,
   },
   displayOrder: {
     type: Number,
-    default: 0
+    default: 0,
   },
   kitchenStation: {
     type: mongoose.Schema.ObjectId,
     ref: "KitchenStation",
-    default: null
+    default: null,
   },
   isActive: {
     type: Boolean,
-    default: true
+    default: true,
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   createdBy: {
     type: mongoose.Schema.ObjectId,
     ref: "User",
-    required: true
-  }
+    required: true,
+  },
 });
 categorySchema.index({
   displayOrder: 1,
-  isActive: 1
+  isActive: 1,
 });
-categorySchema.index({
-  tenantId: 1,
-  name: 1
-}, {
-  unique: true
-});
+categorySchema.index(
+  {
+    tenantId: 1,
+    name: 1,
+  },
+  {
+    unique: true,
+  },
+);
 categorySchema.plugin(tenantScoped);
 module.exports = mongoose.model("Category", categorySchema);

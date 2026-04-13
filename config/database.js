@@ -1,18 +1,20 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
 const reconcileIndexes = async () => {
   const AppSetting = require("../models/AppSetting");
   try {
     const collection = AppSetting.collection;
     const existingIndexes = await collection.indexes();
-    const legacyKeyIndex = existingIndexes.find(index => {
+    const legacyKeyIndex = existingIndexes.find((index) => {
       const keyEntries = Object.entries(index.key || {});
-      return index.unique === true && keyEntries.length === 1 && keyEntries[0][0] === "key";
+      return (
+        index.unique === true &&
+        keyEntries.length === 1 &&
+        keyEntries[0][0] === "key"
+      );
     });
     if (legacyKeyIndex) {
       await collection.dropIndex(legacyKeyIndex.name);
@@ -29,7 +31,7 @@ const connectDB = async () => {
       throw new Error("MONGODB_URI is not configured");
     }
     const conn = await mongoose.connect(process.env.MONGODB_URI, {
-      serverSelectionTimeoutMS: 10000
+      serverSelectionTimeoutMS: 10000,
     });
     await reconcileIndexes();
     logger.info(`MongoDB Connected: ${conn.connection.host}`);

@@ -1,11 +1,11 @@
-const User = require('../models/User');
+const User = require("../models/User");
 const {
   AllPermissions,
   getDefaultRolePermissions,
   getEffectivePermissionsForUser,
   getPermissionMetadata,
-  hydrateUserPermissions
-} = require('../utils/permissionSettings');
+  hydrateUserPermissions,
+} = require("../utils/permissionSettings");
 exports.getAvailablePermissions = async (req, res) => {
   try {
     const permissionMetadata = await getPermissionMetadata();
@@ -13,23 +13,25 @@ exports.getAvailablePermissions = async (req, res) => {
       success: true,
       data: {
         ...permissionMetadata,
-        source: 'database'
-      }
+        source: "database",
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'Server error'
+      error: "Server error",
     });
   }
 };
 exports.getUserPermissions = async (req, res) => {
   try {
-    const user = await User.findById(req.params.userId).select('customPermissions role');
+    const user = await User.findById(req.params.userId).select(
+      "customPermissions role",
+    );
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: "User not found",
       });
     }
     await hydrateUserPermissions(user);
@@ -39,40 +41,40 @@ exports.getUserPermissions = async (req, res) => {
         permissions: await getEffectivePermissionsForUser(user),
         customPermissions: user.customPermissions || [],
         role: user.role,
-        defaultPermissions: await getDefaultRolePermissions(user.role)
-      }
+        defaultPermissions: await getDefaultRolePermissions(user.role),
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'Server error'
+      error: "Server error",
     });
   }
 };
 exports.updateUserPermissions = async (req, res) => {
   try {
-    const {
-      permissions = []
-    } = req.body;
+    const { permissions = [] } = req.body;
     const userId = req.params.userId;
-    const invalidPermissions = permissions.filter(perm => !AllPermissions.includes(perm));
+    const invalidPermissions = permissions.filter(
+      (perm) => !AllPermissions.includes(perm),
+    );
     if (invalidPermissions.length > 0) {
       return res.status(400).json({
         success: false,
-        error: `Invalid permissions: ${invalidPermissions.join(', ')}`
+        error: `Invalid permissions: ${invalidPermissions.join(", ")}`,
       });
     }
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: "User not found",
       });
     }
-    if (user.role === 'admin') {
+    if (user.role === "admin") {
       return res.status(400).json({
         success: false,
-        error: 'Cannot update permissions for admin role'
+        error: "Cannot update permissions for admin role",
       });
     }
     user.updatePermissions(permissions, req.user.id);
@@ -83,13 +85,13 @@ exports.updateUserPermissions = async (req, res) => {
         permissions: await getEffectivePermissionsForUser(user),
         role: user.role,
         updatedBy: req.user.id,
-        updatedAt: user.permissionsUpdatedAt
-      }
+        updatedAt: user.permissionsUpdatedAt,
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'Server error'
+      error: "Server error",
     });
   }
 };
@@ -99,7 +101,7 @@ exports.resetUserPermissions = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: "User not found",
       });
     }
     const defaultPermissions = await getDefaultRolePermissions(user.role);
@@ -113,13 +115,13 @@ exports.resetUserPermissions = async (req, res) => {
       data: {
         permissions: defaultPermissions,
         role: user.role,
-        message: 'Permissions reset to role defaults'
-      }
+        message: "Permissions reset to role defaults",
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: 'Server error'
+      error: "Server error",
     });
   }
 };
@@ -130,23 +132,26 @@ exports.getMyPermissions = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        error: "User not found"
+        error: "User not found",
       });
     }
-    const effectivePermissions = user.role === "super_admin" ? AllPermissions : await getEffectivePermissionsForUser(user);
+    const effectivePermissions =
+      user.role === "super_admin"
+        ? AllPermissions
+        : await getEffectivePermissionsForUser(user);
     res.json({
       success: true,
       data: {
         role: user.role,
         permissions: effectivePermissions,
         defaultPermissions: await getDefaultRolePermissions(user.role),
-        source: "database"
-      }
+        source: "database",
+      },
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: "Server error"
+      error: "Server error",
     });
   }
 };

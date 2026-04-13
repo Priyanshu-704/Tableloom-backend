@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const crypto = require("crypto");
 const Customer = require("../models/Customer");
 const User = require("../models/User");
@@ -11,15 +9,10 @@ const billManager = require("./billManager");
 const Bill = require("../models/Bill");
 const path = require("path");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
-const {
-  getCacheEntry,
-  setCacheEntry
-} = require("./responseCache");
-const {
-  createTaxSnapshot
-} = require("./taxCalculator");
+const { getCacheEntry, setCacheEntry } = require("./responseCache");
+const { createTaxSnapshot } = require("./taxCalculator");
 const SESSION_TIMEOUT_MINUTES = 60;
 const SESSION_ACTIVITY_WRITE_TTL_MS = 30 * 1000;
 const generateSessionId = () => {
@@ -27,11 +20,7 @@ const generateSessionId = () => {
 };
 exports.createCustomerSession = async (tableId, token, customerData = {}) => {
   try {
-    const {
-      name,
-      email,
-      phone
-    } = customerData;
+    const { name, email, phone } = customerData;
     if (!name) {
       throw new Error("Name is required to start a session");
     }
@@ -59,9 +48,9 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
     const existingSession = await Customer.findOne({
       table: tableId,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
+        $in: ["active", "payment_pending"],
       },
-      isActive: true
+      isActive: true,
     }).populate("table", "tableNumber tableName capacity location");
     if (existingSession) {
       const timeoutMinutes = SESSION_TIMEOUT_MINUTES;
@@ -77,7 +66,7 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
       } else {
         return {
           session: existingSession,
-          isExisting: true
+          isExisting: true,
         };
       }
     }
@@ -97,7 +86,7 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
       sessionStart: new Date(),
       lastActivity: new Date(),
       sessionStatus: "active",
-      isActive: true
+      isActive: true,
     });
     table.status = "occupied";
     table.currentCustomer = customer._id;
@@ -106,21 +95,23 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
     const populatedCustomer = await Customer.findById(customer._id);
     return {
       session: populatedCustomer,
-      isExisting: false
+      isExisting: false,
     };
   } catch (error) {
     throw error;
   }
 };
-exports.getCustomerSession = async sessionId => {
+exports.getCustomerSession = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
-    }).populate("table", "tableNumber tableName capacity location status").populate("currentOrder", "orderNumber status totalAmount items");
+        $in: ["active", "payment_pending"],
+      },
+    })
+      .populate("table", "tableNumber tableName capacity location status")
+      .populate("currentOrder", "orderNumber status totalAmount items");
     if (!customer) {
       logger.info("Session not found or expired:", sessionId);
       return null;
@@ -144,26 +135,30 @@ exports.getCustomerSession = async sessionId => {
     throw error;
   }
 };
-exports.updateSessionActivity = async sessionId => {
+exports.updateSessionActivity = async (sessionId) => {
   try {
     const activityCacheKey = `session:activity:${sessionId}`;
     if (getCacheEntry(activityCacheKey)) {
       return null;
     }
-    const customer = await Customer.findOneAndUpdate({
-      sessionId,
-      isActive: true,
-      sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
-    }, {
-      lastActivity: new Date(),
-      $inc: {
-        activityCount: 1
-      }
-    }, {
-      new: true
-    });
+    const customer = await Customer.findOneAndUpdate(
+      {
+        sessionId,
+        isActive: true,
+        sessionStatus: {
+          $in: ["active", "payment_pending"],
+        },
+      },
+      {
+        lastActivity: new Date(),
+        $inc: {
+          activityCount: 1,
+        },
+      },
+      {
+        new: true,
+      },
+    );
     if (!customer) {
       return null;
     }
@@ -173,7 +168,7 @@ exports.updateSessionActivity = async sessionId => {
     throw error;
   }
 };
-exports.customerLogout = async sessionId => {
+exports.customerLogout = async (sessionId) => {
   try {
     if (!sessionId || typeof sessionId !== "string") {
       throw new Error("Valid sessionId is required");
@@ -182,29 +177,41 @@ exports.customerLogout = async sessionId => {
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
     }
     if (customer.currentOrder) {
       const order = await Order.findById(customer.currentOrder);
-      if (order && order.status !== "completed" && order.status !== "cancelled") {
-        throw new Error("You have an unpaid order. Please complete payment first.");
+      if (
+        order &&
+        order.status !== "completed" &&
+        order.status !== "cancelled"
+      ) {
+        throw new Error(
+          "You have an unpaid order. Please complete payment first.",
+        );
       }
     }
     const pendingBill = await Bill.findOne({
       sessionId,
       paymentStatus: "pending",
       billStatus: {
-        $in: ["draft", "sent", "viewed"]
-      }
+        $in: ["draft", "sent", "viewed"],
+      },
     }).sort({
-      createdAt: -1
+      createdAt: -1,
     });
-    const selectedCashPayment = customer.paymentMethod === "cash" || pendingBill?.paymentMethod === "cash";
-    if (pendingBill && pendingBill.paymentStatus === "pending" && !selectedCashPayment) {
+    const selectedCashPayment =
+      customer.paymentMethod === "cash" ||
+      pendingBill?.paymentMethod === "cash";
+    if (
+      pendingBill &&
+      pendingBill.paymentStatus === "pending" &&
+      !selectedCashPayment
+    ) {
       throw new Error("Please complete payment before logging out.");
     }
     customer.sessionStatus = "completed";
@@ -212,7 +219,9 @@ exports.customerLogout = async sessionId => {
     customer.retainSessionData = true;
     customer.retainUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
     customer.isAccessibleForBilling = true;
-    customer.notes = selectedCashPayment ? "Customer logged out after selecting cash payment" : "Customer logged out";
+    customer.notes = selectedCashPayment
+      ? "Customer logged out after selecting cash payment"
+      : "Customer logged out";
     await customer.save();
     if (customer.table) {
       customer.table.status = "available";
@@ -225,9 +234,12 @@ exports.customerLogout = async sessionId => {
       sessionStatus: customer.sessionStatus,
       sessionEnd: customer.sessionEnd,
       paymentMethod: customer.paymentMethod || pendingBill?.paymentMethod || "",
-      paymentStatus: customer.paymentStatus || pendingBill?.paymentStatus || "pending",
+      paymentStatus:
+        customer.paymentStatus || pendingBill?.paymentStatus || "pending",
       redirectToThankYou: selectedCashPayment,
-      thankYouMessage: selectedCashPayment ? "Cash payment selected. Our staff has been notified." : ""
+      thankYouMessage: selectedCashPayment
+        ? "Cash payment selected. Our staff has been notified."
+        : "",
     };
   } catch (error) {
     throw error;
@@ -238,8 +250,8 @@ async function calculateSessionTotal(customerId) {
     const orders = await Order.find({
       customerId,
       status: {
-        $in: ["active", "pending", "preparing"]
-      }
+        $in: ["active", "pending", "preparing"],
+      },
     });
     const total = orders.reduce((sum, order) => {
       return sum + (order.totalAmount || 0);
@@ -251,11 +263,15 @@ async function calculateSessionTotal(customerId) {
 }
 exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
   try {
-    if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+    if (
+      !sessionId ||
+      typeof sessionId !== "string" ||
+      sessionId.trim().length === 0
+    ) {
       throw {
         message: "Valid sessionId is required",
         statusCode: 400,
-        errorType: "validation_error"
+        errorType: "validation_error",
       };
     }
     const trimmedSessionId = sessionId.trim();
@@ -266,7 +282,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
         throw {
           message: "Invalid cancelledBy ID format",
           statusCode: 400,
-          errorType: "validation_error"
+          errorType: "validation_error",
         };
       }
       cancelledByUser = await User.findById(cancelledBy);
@@ -274,7 +290,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
         throw {
           message: "User who is cancelling not found",
           statusCode: 404,
-          errorType: "user_not_found"
+          errorType: "user_not_found",
         };
       }
     }
@@ -282,7 +298,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       if (!cancelledByUser.hasPermission("SESSION_CANCEL")) {
         throw {
           message: "You don't have permission to cancel sessions",
-          statusCode: 403
+          statusCode: 403,
         };
       }
     }
@@ -290,55 +306,60 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       throw {
         message: "Reason cannot exceed 500 characters",
         statusCode: 400,
-        errorType: "validation_error"
+        errorType: "validation_error",
       };
     }
-    const forbiddenPatterns = [/<script>/i, /javascript:/i, /onclick/i, /onload/i];
-    if (forbiddenPatterns.some(pattern => pattern.test(trimmedReason))) {
+    const forbiddenPatterns = [
+      /<script>/i,
+      /javascript:/i,
+      /onclick/i,
+      /onload/i,
+    ];
+    if (forbiddenPatterns.some((pattern) => pattern.test(trimmedReason))) {
       throw {
         message: "Reason contains potentially harmful content",
         statusCode: 400,
-        errorType: "security_error"
+        errorType: "security_error",
       };
     }
     const customer = await Customer.findOne({
       sessionId: trimmedSessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       const existingSession = await Customer.findOne({
-        sessionId: trimmedSessionId
+        sessionId: trimmedSessionId,
       });
       if (existingSession) {
         if (existingSession.sessionStatus === "cancelled") {
           throw {
             message: "Session is already cancelled",
             statusCode: 400,
-            errorType: "already_cancelled"
+            errorType: "already_cancelled",
           };
         }
         if (existingSession.sessionStatus === "completed") {
           throw {
             message: "Cannot cancel a completed session",
             statusCode: 400,
-            errorType: "invalid_operation"
+            errorType: "invalid_operation",
           };
         }
         if (!existingSession.isActive) {
           throw {
             message: "Session is not active",
             statusCode: 400,
-            errorType: "inactive_session"
+            errorType: "inactive_session",
           };
         }
       }
       throw {
         message: "Active customer session not found",
         statusCode: 404,
-        errorType: "session_not_found"
+        errorType: "session_not_found",
       };
     }
     customer.sessionStatus = "cancelled";
@@ -359,7 +380,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       hadTable: !!customer.table,
       hadOrders: customer.totalAmount > 0,
       originalStatus: customer.sessionStatus,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
     await customer.save();
     if (customer.table) {
@@ -377,23 +398,26 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
     const activeOrders = await Order.find({
       customerId: customer._id,
       status: {
-        $in: ["pending", "preparing", "ready"]
-      }
+        $in: ["pending", "preparing", "ready"],
+      },
     });
     if (activeOrders.length > 0) {
-      await Order.updateMany({
-        customerId: customer._id,
-        status: {
-          $in: ["pending", "preparing", "ready"]
-        }
-      }, {
-        $set: {
-          status: "cancelled",
-          cancellationReason: `Session cancelled: ${trimmedReason}`,
-          cancelledAt: new Date(),
-          cancelledBy: cancelledByUser?._id
-        }
-      });
+      await Order.updateMany(
+        {
+          customerId: customer._id,
+          status: {
+            $in: ["pending", "preparing", "ready"],
+          },
+        },
+        {
+          $set: {
+            status: "cancelled",
+            cancellationReason: `Session cancelled: ${trimmedReason}`,
+            cancelledAt: new Date(),
+            cancelledBy: cancelledByUser?._id,
+          },
+        },
+      );
     }
     return {
       session: {
@@ -403,21 +427,23 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
         startTime: customer.sessionStart,
         endTime: customer.sessionEnd,
         cancellationReason: trimmedReason,
-        cancelledBy: cancelledByUser ? {
-          id: cancelledByUser._id,
-          name: cancelledByUser.name,
-          role: cancelledByUser.role
-        } : null,
-        cancellationTime: customer.cancelledAt
+        cancelledBy: cancelledByUser
+          ? {
+              id: cancelledByUser._id,
+              name: cancelledByUser.name,
+              role: cancelledByUser.role,
+            }
+          : null,
+        cancellationTime: customer.cancelledAt,
       },
       customer: {
         id: customer._id,
         name: customer.name,
         phone: customer.phone,
-        email: customer.email
+        email: customer.email,
       },
       ordersCancelled: activeOrders.length,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
   } catch (error) {
     if (error.statusCode) {
@@ -428,19 +454,21 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       statusCode: 500,
       message: error.message || "Failed to cancel session",
       errorType: "server_error",
-      error: process.env.NODE_ENV === "development" ? error.stack : undefined
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined,
     };
   }
 };
-exports.getSessionByTable = async tableId => {
+exports.getSessionByTable = async (tableId) => {
   try {
     const customer = await Customer.findOne({
       table: tableId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
-    }).populate("table", "tableNumber tableName capacity location status").populate("currentOrder", "orderNumber status totalAmount");
+        $in: ["active", "payment_pending"],
+      },
+    })
+      .populate("table", "tableNumber tableName capacity location status")
+      .populate("currentOrder", "orderNumber status totalAmount");
     return customer;
   } catch (error) {
     logger.error("Get session by table failed:", error);
@@ -456,15 +484,19 @@ exports.extendSession = async (sessionId, minutes = 30, staffId) => {
         throw new Error("You don't have permission to extend sessions");
       }
     }
-    const customer = await Customer.findOneAndUpdate({
-      sessionId,
-      isActive: true,
-      sessionStatus: "active"
-    }, {
-      lastActivity: new Date(Date.now() + minutes * 60 * 1000)
-    }, {
-      new: true
-    });
+    const customer = await Customer.findOneAndUpdate(
+      {
+        sessionId,
+        isActive: true,
+        sessionStatus: "active",
+      },
+      {
+        lastActivity: new Date(Date.now() + minutes * 60 * 1000),
+      },
+      {
+        new: true,
+      },
+    );
     if (!customer) {
       throw new Error("Active session not found");
     }
@@ -473,7 +505,7 @@ exports.extendSession = async (sessionId, minutes = 30, staffId) => {
     throw error;
   }
 };
-exports.getSessionStatistics = async staffId => {
+exports.getSessionStatistics = async (staffId) => {
   try {
     if (staffId) {
       const staff = await User.findById(staffId);
@@ -483,87 +515,113 @@ exports.getSessionStatistics = async staffId => {
     }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const [totalSessions, activeSessions, completedToday, averageDuration, revenueToday] = await Promise.all([Customer.countDocuments({
-      isActive: true
-    }), Customer.countDocuments({
-      sessionStatus: {
-        $in: ["active", "payment_pending"]
-      },
-      isActive: true
-    }), Customer.countDocuments({
-      sessionStatus: "completed",
-      sessionEnd: {
-        $gte: today
-      },
-      isActive: true
-    }), Customer.aggregate([{
-      $match: {
-        sessionStatus: "completed",
-        sessionStart: {
-          $exists: true
+    const [
+      totalSessions,
+      activeSessions,
+      completedToday,
+      averageDuration,
+      revenueToday,
+    ] = await Promise.all([
+      Customer.countDocuments({
+        isActive: true,
+      }),
+      Customer.countDocuments({
+        sessionStatus: {
+          $in: ["active", "payment_pending"],
         },
-        sessionEnd: {
-          $exists: true
-        }
-      }
-    }, {
-      $addFields: {
-        duration: {
-          $divide: [{
-            $subtract: ["$sessionEnd", "$sessionStart"]
-          }, 60000]
-        }
-      }
-    }, {
-      $group: {
-        _id: null,
-        average: {
-          $avg: "$duration"
-        }
-      }
-    }]), Customer.aggregate([{
-      $match: {
+        isActive: true,
+      }),
+      Customer.countDocuments({
         sessionStatus: "completed",
         sessionEnd: {
-          $gte: today
-        }
-      }
-    }, {
-      $group: {
-        _id: null,
-        total: {
-          $sum: "$totalSpent"
-        }
-      }
-    }])]);
+          $gte: today,
+        },
+        isActive: true,
+      }),
+      Customer.aggregate([
+        {
+          $match: {
+            sessionStatus: "completed",
+            sessionStart: {
+              $exists: true,
+            },
+            sessionEnd: {
+              $exists: true,
+            },
+          },
+        },
+        {
+          $addFields: {
+            duration: {
+              $divide: [
+                {
+                  $subtract: ["$sessionEnd", "$sessionStart"],
+                },
+                60000,
+              ],
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            average: {
+              $avg: "$duration",
+            },
+          },
+        },
+      ]),
+      Customer.aggregate([
+        {
+          $match: {
+            sessionStatus: "completed",
+            sessionEnd: {
+              $gte: today,
+            },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: "$totalSpent",
+            },
+          },
+        },
+      ]),
+    ]);
     return {
       totalSessions,
       activeSessions,
       completedToday,
       averageDuration: averageDuration[0]?.average || 0,
-      revenueToday: revenueToday[0]?.total || 0
+      revenueToday: revenueToday[0]?.total || 0,
     };
   } catch (error) {
     logger.error("Session statistics failed:", error);
     throw error;
   }
 };
-exports.getInactiveSessions = async (timeoutMinutes = SESSION_TIMEOUT_MINUTES) => {
+exports.getInactiveSessions = async (
+  timeoutMinutes = SESSION_TIMEOUT_MINUTES,
+) => {
   try {
     const timeoutTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
     const inactiveSessions = await Customer.find({
       sessionStatus: "active",
       lastActivity: {
-        $lt: timeoutTime
+        $lt: timeoutTime,
       },
-      isActive: true
+      isActive: true,
     }).populate("table");
     return inactiveSessions;
   } catch (error) {
     throw error;
   }
 };
-exports.timeoutInactiveSessions = async (timeoutMinutes = SESSION_TIMEOUT_MINUTES) => {
+exports.timeoutInactiveSessions = async (
+  timeoutMinutes = SESSION_TIMEOUT_MINUTES,
+) => {
   try {
     const inactiveSessions = await this.getInactiveSessions(timeoutMinutes);
     const results = [];
@@ -583,14 +641,14 @@ exports.timeoutInactiveSessions = async (timeoutMinutes = SESSION_TIMEOUT_MINUTE
           sessionId: session.sessionId,
           table: session.table?.tableNumber,
           success: true,
-          message: "Session timed out"
+          message: "Session timed out",
         });
       } catch (error) {
         results.push({
           sessionId: session.sessionId,
           table: session.table?.tableNumber,
           success: false,
-          error: error.message
+          error: error.message,
         });
       }
     }
@@ -614,8 +672,8 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       sessionId,
       paymentStatus: "pending",
       billStatus: {
-        $in: ["draft", "sent", "viewed"]
-      }
+        $in: ["draft", "sent", "viewed"],
+      },
     });
     let isNewBill = false;
     if (!bill) {
@@ -624,18 +682,22 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         sessionId,
         isActive: true,
         sessionStatus: {
-          $in: ["active", "payment_pending"]
-        }
+          $in: ["active", "payment_pending"],
+        },
       }).populate("table");
       if (!customerForBill) {
-        throw new Error("Active customer session not found for bill generation");
+        throw new Error(
+          "Active customer session not found for bill generation",
+        );
       }
       const orders = await Order.find({
         customer: customerForBill._id,
         paymentStatus: {
-          $ne: "paid"
-        }
-      }).populate("items.menuItem", "name description category").populate("items.sizeId", "name code");
+          $ne: "paid",
+        },
+      })
+        .populate("items.menuItem", "name description category")
+        .populate("items.sizeId", "name code");
       if (orders.length === 0) {
         throw new Error("No orders found for bill generation");
       }
@@ -644,29 +706,32 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       let serviceCharge = 0;
       let discountAmount = 0;
       const allItems = [];
-      orders.forEach(order => {
+      orders.forEach((order) => {
         subtotal += order.subtotal || 0;
         taxAmount += order.taxAmount || 0;
         serviceCharge += order.serviceCharge || 0;
         discountAmount += order.discountAmount || 0;
-        order.items.forEach(item => {
+        order.items.forEach((item) => {
           allItems.push({
             menuItem: item.menuItem,
             name: item.menuItem?.name || "Unknown Item",
             size: item.sizeName || "Regular",
             quantity: item.quantity,
             unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice
+            totalPrice: item.totalPrice,
           });
         });
       });
-      const totalAmount = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+      const totalAmount = orders.reduce(
+        (sum, order) => sum + Number(order.totalAmount || 0),
+        0,
+      );
       const taxSnapshot = createTaxSnapshot({
         taxRate: orders[0]?.taxRate,
         serviceCharge: orders[0]?.serviceChargeRate,
         taxInclusive: orders[0]?.taxInclusive,
         currency: orders[0]?.currency,
-        currencySymbol: orders[0]?.currencySymbol
+        currencySymbol: orders[0]?.currencySymbol,
       });
       bill = await Bill.create({
         orderId: orders[0]._id,
@@ -691,10 +756,10 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         billStatus: "draft",
         metadata: {
           orderCount: orders.length,
-          orderNumbers: orders.map(o => o.orderNumber),
+          orderNumbers: orders.map((o) => o.orderNumber),
           customerSessionStart: customerForBill.sessionStart,
-          tableNumber: customerForBill.table?.tableNumber
-        }
+          tableNumber: customerForBill.table?.tableNumber,
+        },
       });
       try {
         await billManager.generateAndSavePDF(bill);
@@ -706,22 +771,27 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
     }
     const customer = await Customer.findOne({
       sessionId,
-      $or: [{
-        isActive: true,
-        sessionStatus: {
-          $in: ["active", "payment_pending"]
-        }
-      }, {
-        isActive: false,
-        sessionStatus: "completed",
-        retainSessionData: true
-      }]
+      $or: [
+        {
+          isActive: true,
+          sessionStatus: {
+            $in: ["active", "payment_pending"],
+          },
+        },
+        {
+          isActive: false,
+          sessionStatus: "completed",
+          retainSessionData: true,
+        },
+      ],
     }).populate("table");
     if (!customer) {
       throw new Error("Customer session not found");
     }
     const resolvedPaymentMethod = paymentData.paymentMethod || "online";
-    const resolvedGateway = paymentData.gateway || (resolvedPaymentMethod === "online" ? "online" : resolvedPaymentMethod);
+    const resolvedGateway =
+      paymentData.gateway ||
+      (resolvedPaymentMethod === "online" ? "online" : resolvedPaymentMethod);
     if (bill) {
       bill.paymentStatus = "paid";
       bill.paymentMethod = resolvedPaymentMethod;
@@ -741,7 +811,7 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
           await billManager.sendPaymentConfirmationEmail(bill, {
             method: resolvedPaymentMethod,
             transactionId: paymentData.transactionId,
-            gateway: resolvedGateway
+            gateway: resolvedGateway,
           });
         } catch (emailError) {
           logger.warn("Payment confirmation email failed:", emailError);
@@ -770,24 +840,27 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       customer.table.lastCleaned = new Date();
       await customer.table.save();
     }
-    await Order.updateMany({
-      customer: customer._id,
-      paymentStatus: {
-        $ne: "paid"
-      }
-    }, {
-      $set: {
-        paymentStatus: "paid",
-        paymentMethod: resolvedPaymentMethod,
-        paymentDetails: {
-          transactionId: paymentData.transactionId,
-          paymentGateway: resolvedGateway,
-          paidAmount: bill ? bill.totalAmount : paymentData.amount,
-          paidAt: new Date()
+    await Order.updateMany(
+      {
+        customer: customer._id,
+        paymentStatus: {
+          $ne: "paid",
         },
-        status: "completed"
-      }
-    });
+      },
+      {
+        $set: {
+          paymentStatus: "paid",
+          paymentMethod: resolvedPaymentMethod,
+          paymentDetails: {
+            transactionId: paymentData.transactionId,
+            paymentGateway: resolvedGateway,
+            paidAmount: bill ? bill.totalAmount : paymentData.amount,
+            paidAt: new Date(),
+          },
+          status: "completed",
+        },
+      },
+    );
     return {
       success: true,
       message: "Payment successful and session completed",
@@ -801,30 +874,34 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
           totalAmount: bill ? bill.totalAmount : customer.totalAmount,
           paymentMethod: customer.paymentMethod,
           paymentStatus: customer.paymentStatus,
-          paymentReference: customer.paymentReference
+          paymentReference: customer.paymentReference,
         },
         customer: {
           id: customer._id,
           name: customer.name,
           phone: customer.phone,
           email: customer.email,
-          totalSpent: customer.totalSpent
+          totalSpent: customer.totalSpent,
         },
-        bill: bill ? {
-          id: bill._id,
-          billNumber: bill.billNumber,
-          totalAmount: bill.totalAmount,
-          paymentStatus: bill.paymentStatus,
-          pdfUrl: bill.pdfUrl
-        } : null,
+        bill: bill
+          ? {
+              id: bill._id,
+              billNumber: bill.billNumber,
+              totalAmount: bill.totalAmount,
+              paymentStatus: bill.paymentStatus,
+              pdfUrl: bill.pdfUrl,
+            }
+          : null,
         billDownloadUrl: bill?.pdfUrl || null,
-        table: customer.table ? {
-          id: customer.table._id,
-          tableNumber: customer.table.tableNumber,
-          status: customer.table.status
-        } : null,
-        timestamp: customer.sessionEnd
-      }
+        table: customer.table
+          ? {
+              id: customer.table._id,
+              tableNumber: customer.table.tableNumber,
+              status: customer.table.status,
+            }
+          : null,
+        timestamp: customer.sessionEnd,
+      },
     };
   } catch (error) {
     logger.error("Complete session online failed:", error);
@@ -832,22 +909,30 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       success: false,
       statusCode: 500,
       message: error.message || "Failed to complete session online",
-      error: process.env.NODE_ENV === "development" ? error.stack : undefined
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined,
     };
   }
 };
 exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
   try {
-    if (!sessionId || typeof sessionId !== "string" || sessionId.trim().length === 0) {
+    if (
+      !sessionId ||
+      typeof sessionId !== "string" ||
+      sessionId.trim().length === 0
+    ) {
       throw {
         message: "Valid sessionId is required",
-        statusCode: 400
+        statusCode: 400,
       };
     }
-    if (!staffId || typeof staffId !== "string" || staffId.trim().length === 0) {
+    if (
+      !staffId ||
+      typeof staffId !== "string" ||
+      staffId.trim().length === 0
+    ) {
       throw {
         message: "Valid staffId is required",
-        statusCode: 400
+        statusCode: 400,
       };
     }
     const trimmedSessionId = sessionId.trim();
@@ -856,59 +941,60 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
     if (!mongoose.Types.ObjectId.isValid(trimmedStaffId)) {
       throw {
         message: "Invalid staffId format",
-        statusCode: 400
+        statusCode: 400,
       };
     }
     const staff = await User.findById(trimmedStaffId);
     if (!staff) {
       throw {
         message: "Staff member not found",
-        statusCode: 404
+        statusCode: 404,
       };
     }
     if (!staff.isActive) {
       throw {
         message: "Staff member is not active",
-        statusCode: 403
+        statusCode: 403,
       };
     }
     if (staff.role === "customer") {
       throw {
-        message: "Customers cannot process payments. Only staff members are allowed.",
-        statusCode: 403
+        message:
+          "Customers cannot process payments. Only staff members are allowed.",
+        statusCode: 403,
       };
     }
     if (!staff.hasPermission("cart_checkout")) {
       throw {
         message: "You don't have permission to process payments",
-        statusCode: 403
+        statusCode: 403,
       };
     }
     if (!staff.hasPermission("SESSION_COMPLETE_OFFLINE")) {
       throw {
         message: "You don't have permission to complete sessions offline",
-        statusCode: 403
+        statusCode: 403,
       };
     }
     const customer = await Customer.findOne({
       sessionId: trimmedSessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw {
         message: "Active customer session not found",
-        statusCode: 404
+        statusCode: 404,
       };
     }
     const pendingBill = await Bill.findOne({
       sessionId: trimmedSessionId,
       paymentStatus: "pending",
       billStatus: {
-        $in: ["draft", "sent", "viewed"]
-      }
+        $in: ["draft", "sent", "viewed"],
+      },
     });
     let billPaid = false;
     let billData = null;
@@ -924,7 +1010,7 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
       if (pendingBill.customerEmail) {
         await billManager.sendPaymentConfirmationEmail(pendingBill, {
           method: "offline",
-          processedBy: staff.name
+          processedBy: staff.name,
         });
       }
     }
@@ -939,7 +1025,9 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
     customer.paymentMethod = "cash";
     customer.paymentStatus = "paid";
     customer.closedBy = staff._id;
-    customer.notes = trimmedNotes || `Payment completed offline by ${staff.role}: ${staff.name}`;
+    customer.notes =
+      trimmedNotes ||
+      `Payment completed offline by ${staff.role}: ${staff.name}`;
     customer.closedByName = staff.name;
     customer.closedByRole = staff.role;
     if (customer.totalAmount) {
@@ -955,23 +1043,28 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
       customer.table.cleanedByName = staff.name;
       await customer.table.save();
     }
-    await Order.updateMany({
-      customer: customer._id,
-      paymentStatus: {
-        $ne: "paid"
-      }
-    }, {
-      $set: {
-        paymentStatus: "paid",
-        paymentMethod: "cash",
-        paymentDetails: {
-          paidAmount: pendingBill ? pendingBill.totalAmount : customer.totalAmount,
-          paidAt: new Date(),
-          processedBy: staff.name
+    await Order.updateMany(
+      {
+        customer: customer._id,
+        paymentStatus: {
+          $ne: "paid",
         },
-        status: "completed"
-      }
-    });
+      },
+      {
+        $set: {
+          paymentStatus: "paid",
+          paymentMethod: "cash",
+          paymentDetails: {
+            paidAmount: pendingBill
+              ? pendingBill.totalAmount
+              : customer.totalAmount,
+            paidAt: new Date(),
+            processedBy: staff.name,
+          },
+          status: "completed",
+        },
+      },
+    );
     return {
       success: true,
       statusCode: 200,
@@ -983,36 +1076,42 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
           status: customer.sessionStatus,
           startTime: customer.sessionStart,
           endTime: customer.sessionEnd,
-          totalAmount: pendingBill ? pendingBill.totalAmount : customer.totalAmount,
+          totalAmount: pendingBill
+            ? pendingBill.totalAmount
+            : customer.totalAmount,
           paymentMethod: customer.paymentMethod,
-          paymentStatus: customer.paymentStatus
+          paymentStatus: customer.paymentStatus,
         },
         customer: {
           id: customer._id,
           name: customer.name,
           phone: customer.phone,
           email: customer.email,
-          totalSpent: customer.totalSpent
+          totalSpent: customer.totalSpent,
         },
         staff: {
           id: staff._id,
           name: staff.name,
-          role: staff.role
+          role: staff.role,
         },
-        bill: billPaid ? {
-          id: pendingBill._id,
-          billNumber: pendingBill.billNumber,
-          totalAmount: pendingBill.totalAmount,
-          paymentStatus: pendingBill.paymentStatus
-        } : null,
-        table: customer.table ? {
-          id: customer.table._id,
-          tableNumber: customer.table.tableNumber,
-          status: customer.table.status
-        } : null,
+        bill: billPaid
+          ? {
+              id: pendingBill._id,
+              billNumber: pendingBill.billNumber,
+              totalAmount: pendingBill.totalAmount,
+              paymentStatus: pendingBill.paymentStatus,
+            }
+          : null,
+        table: customer.table
+          ? {
+              id: customer.table._id,
+              tableNumber: customer.table.tableNumber,
+              status: customer.table.status,
+            }
+          : null,
         timestamp: customer.sessionEnd,
-        notes: customer.notes
-      }
+        notes: customer.notes,
+      },
     };
   } catch (error) {
     if (error.statusCode) {
@@ -1022,7 +1121,7 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
       success: false,
       statusCode: 500,
       message: error.message || "Internal server error",
-      error: process.env.NODE_ENV === "development" ? error.stack : undefined
+      error: process.env.NODE_ENV === "development" ? error.stack : undefined,
     };
   }
 };
@@ -1031,11 +1130,18 @@ async function calculateSessionTotal(customerId) {
     const orders = await Order.find({
       customer: customerId,
       status: {
-        $in: ["completed", "served", "pending", "confirmed", "preparing", "ready"]
+        $in: [
+          "completed",
+          "served",
+          "pending",
+          "confirmed",
+          "preparing",
+          "ready",
+        ],
       },
       paymentStatus: {
-        $ne: "paid"
-      }
+        $ne: "paid",
+      },
     });
     const total = orders.reduce((sum, order) => {
       return sum + (order.totalAmount || 0);
@@ -1045,48 +1151,57 @@ async function calculateSessionTotal(customerId) {
     return 0;
   }
 }
-exports.getSessionWithBill = async sessionId => {
+exports.getSessionWithBill = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
-      $or: [{
-        isActive: true,
-        sessionStatus: {
-          $in: ["active", "payment_pending"]
-        }
-      }, {
-        retainSessionData: true,
-        isAccessibleForBilling: true,
-        sessionStatus: "completed"
-      }]
-    }).populate("table", "tableNumber tableName capacity location status").populate("currentOrder", "orderNumber status totalAmount items");
+      $or: [
+        {
+          isActive: true,
+          sessionStatus: {
+            $in: ["active", "payment_pending"],
+          },
+        },
+        {
+          retainSessionData: true,
+          isAccessibleForBilling: true,
+          sessionStatus: "completed",
+        },
+      ],
+    })
+      .populate("table", "tableNumber tableName capacity location status")
+      .populate("currentOrder", "orderNumber status totalAmount items");
     if (!customer) {
       return null;
     }
     const bill = await Bill.findOne({
       sessionId,
-      ...(customer.sessionStatus === "completed" ? {} : {
-        paymentStatus: "pending",
-        billStatus: {
-          $in: ["draft", "sent", "viewed"]
-        }
-      })
+      ...(customer.sessionStatus === "completed"
+        ? {}
+        : {
+            paymentStatus: "pending",
+            billStatus: {
+              $in: ["draft", "sent", "viewed"],
+            },
+          }),
     }).sort({
-      createdAt: -1
+      createdAt: -1,
     });
     const orders = await Order.find({
       customer: customer._id,
       paymentStatus: {
-        $ne: "paid"
-      }
-    }).populate("items.menuItem", "name").populate("items.sizeId", "name");
+        $ne: "paid",
+      },
+    })
+      .populate("items.menuItem", "name")
+      .populate("items.sizeId", "name");
     let subtotal = 0;
     let taxAmount = 0;
     let serviceCharge = 0;
     let discountAmount = 0;
     let totalAmount = 0;
     let itemsCount = 0;
-    orders.forEach(order => {
+    orders.forEach((order) => {
       subtotal += order.subtotal || 0;
       taxAmount += order.taxAmount || 0;
       serviceCharge += order.serviceCharge || 0;
@@ -1099,39 +1214,59 @@ exports.getSessionWithBill = async sessionId => {
       bill: bill,
       orders: orders,
       summary: {
-        orderCount: orders.length || bill?.metadata?.get?.("orderCount") || bill?.metadata?.orderCount || 0,
+        orderCount:
+          orders.length ||
+          bill?.metadata?.get?.("orderCount") ||
+          bill?.metadata?.orderCount ||
+          0,
         itemsCount: itemsCount || bill?.items?.length || 0,
         subtotal: subtotal || bill?.subtotal || 0,
         taxAmount: taxAmount || bill?.taxAmount || 0,
         serviceCharge: serviceCharge || bill?.serviceCharge || 0,
         discountAmount: discountAmount || bill?.discountAmount || 0,
-        totalAmount: totalAmount || bill?.totalAmount || 0
+        totalAmount: totalAmount || bill?.totalAmount || 0,
       },
       hasActiveBill: !!bill,
-      canRequestBill: customer.sessionStatus === "active" || customer.sessionStatus === "payment_pending",
-      canCompleteSession: orders.length > 0 || Boolean(bill)
+      canRequestBill:
+        customer.sessionStatus === "active" ||
+        customer.sessionStatus === "payment_pending",
+      canCompleteSession: orders.length > 0 || Boolean(bill),
     };
   } catch (error) {
     logger.error("Get session with bill failed:", error);
     throw error;
   }
 };
-exports.requestBillForSession = async (sessionId, email = null, forceNew = false, paymentMethod = "") => {
+exports.requestBillForSession = async (
+  sessionId,
+  email = null,
+  forceNew = false,
+  paymentMethod = "",
+) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
     }
-    const resolvedEmail = String(email || customer.email || "").trim().toLowerCase() || null;
-    const bill = await billManager.generateBill(sessionId, resolvedEmail, forceNew);
+    const resolvedEmail =
+      String(email || customer.email || "")
+        .trim()
+        .toLowerCase() || null;
+    const bill = await billManager.generateBill(
+      sessionId,
+      resolvedEmail,
+      forceNew,
+    );
     const action = bill?.generationAction || "created";
-    const normalizedPaymentMethod = String(paymentMethod || "").trim().toLowerCase();
+    const normalizedPaymentMethod = String(paymentMethod || "")
+      .trim()
+      .toLowerCase();
     if (normalizedPaymentMethod) {
       customer.paymentMethod = normalizedPaymentMethod;
     }
@@ -1139,19 +1274,34 @@ exports.requestBillForSession = async (sessionId, email = null, forceNew = false
       customer.email = resolvedEmail;
     }
     await customer.save();
-    if (normalizedPaymentMethod && bill && bill.paymentStatus === "pending" && bill.paymentMethod !== normalizedPaymentMethod) {
+    if (
+      normalizedPaymentMethod &&
+      bill &&
+      bill.paymentStatus === "pending" &&
+      bill.paymentMethod !== normalizedPaymentMethod
+    ) {
       await Bill.findByIdAndUpdate(bill._id, {
-        paymentMethod: normalizedPaymentMethod
+        paymentMethod: normalizedPaymentMethod,
       });
       bill.paymentMethod = normalizedPaymentMethod;
     }
     return {
       success: true,
-      message: resolvedEmail ? action === "unchanged" ? "Existing bill reused successfully" : action === "updated" ? "Existing bill updated and sent via email" : "Bill generated and sent via email" : action === "unchanged" ? "Existing bill reused. No new changes found for this session" : action === "updated" ? "Existing bill updated successfully" : "Bill generated successfully",
+      message: resolvedEmail
+        ? action === "unchanged"
+          ? "Existing bill reused successfully"
+          : action === "updated"
+            ? "Existing bill updated and sent via email"
+            : "Bill generated and sent via email"
+        : action === "unchanged"
+          ? "Existing bill reused. No new changes found for this session"
+          : action === "updated"
+            ? "Existing bill updated successfully"
+            : "Bill generated successfully",
       data: {
         bill,
-        session: customer
-      }
+        session: customer,
+      },
     };
   } catch (error) {
     logger.error("Request bill for session failed:", error);
@@ -1164,10 +1314,13 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
     if (!bill) {
       throw new Error("Bill not found");
     }
-    const updatedBill = await billManager.updateBillPayment(billId, paymentData);
+    const updatedBill = await billManager.updateBillPayment(
+      billId,
+      paymentData,
+    );
     const customer = await Customer.findOne({
       sessionId: bill.sessionId,
-      isActive: true
+      isActive: true,
     });
     if (customer) {
       const paidAt = new Date();
@@ -1200,69 +1353,74 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
           await table.save();
         }
       }
-      await Order.updateMany({
-        customer: customer._id,
-        paymentStatus: {
-          $ne: "paid"
-        }
-      }, {
-        $set: {
-          paymentStatus: "paid",
-          paymentMethod: paymentData.method,
-          paymentDetails: {
-            transactionId: paymentData.transactionId,
-            paymentGateway: paymentData.gateway || paymentData.method,
-            paidAmount: updatedBill.totalAmount,
-            paidAt
+      await Order.updateMany(
+        {
+          customer: customer._id,
+          paymentStatus: {
+            $ne: "paid",
           },
-          status: "completed"
-        }
-      });
+        },
+        {
+          $set: {
+            paymentStatus: "paid",
+            paymentMethod: paymentData.method,
+            paymentDetails: {
+              transactionId: paymentData.transactionId,
+              paymentGateway: paymentData.gateway || paymentData.method,
+              paidAmount: updatedBill.totalAmount,
+              paidAt,
+            },
+            status: "completed",
+          },
+        },
+      );
     }
     return {
       success: true,
       message: "Bill marked as paid successfully",
       data: {
         bill: updatedBill,
-        customer: customer
-      }
+        customer: customer,
+      },
     };
   } catch (error) {
     logger.error("Mark bill as paid failed:", error);
     throw error;
   }
 };
-exports.generateBillBeforePayment = async sessionId => {
+exports.generateBillBeforePayment = async (sessionId) => {
   try {
     logger.info("Generating bill before payment for session:", sessionId);
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
     }
     const existingBill = await Bill.findOne({
       sessionId,
-      paymentStatus: "pending"
+      paymentStatus: "pending",
     });
     if (existingBill) {
       logger.info("Bill already exists:", existingBill.billNumber);
       return {
         success: true,
         message: "Bill already exists",
-        data: existingBill
+        data: existingBill,
       };
     }
     const orders = await Order.find({
       customer: customer._id,
       paymentStatus: {
-        $ne: "paid"
-      }
-    }).populate("items.menuItem", "name description category").populate("items.sizeId", "name code");
+        $ne: "paid",
+      },
+    })
+      .populate("items.menuItem", "name description category")
+      .populate("items.sizeId", "name code");
     if (orders.length === 0) {
       throw new Error("No unpaid orders found");
     }
@@ -1271,34 +1429,42 @@ exports.generateBillBeforePayment = async sessionId => {
     let serviceCharge = 0;
     let discountAmount = 0;
     const allItems = [];
-    orders.forEach(order => {
+    orders.forEach((order) => {
       subtotal += order.subtotal || 0;
       taxAmount += order.taxAmount || 0;
       serviceCharge += order.serviceCharge || 0;
       discountAmount += order.discountAmount || 0;
-      order.items.forEach(item => {
+      order.items.forEach((item) => {
         allItems.push({
           menuItem: item.menuItem,
           name: item.menuItem?.name || item.name || "Menu item",
           size: item.sizeName || item.sizeId?.name || "Regular",
           quantity: item.quantity,
           unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice
+          totalPrice: item.totalPrice,
         });
       });
     });
-    const totalAmount = orders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0);
+    const totalAmount = orders.reduce(
+      (sum, order) => sum + Number(order.totalAmount || 0),
+      0,
+    );
     const taxSnapshot = createTaxSnapshot({
       taxRate: orders[0]?.taxRate,
       serviceCharge: orders[0]?.serviceChargeRate,
       taxInclusive: orders[0]?.taxInclusive,
       currency: orders[0]?.currency,
-      currencySymbol: orders[0]?.currencySymbol
+      currencySymbol: orders[0]?.currencySymbol,
     });
     const date = new Date();
-    const dateStr = date.getFullYear().toString().slice(-2) + (date.getMonth() + 1).toString().padStart(2, "0") + date.getDate().toString().padStart(2, "0");
+    const dateStr =
+      date.getFullYear().toString().slice(-2) +
+      (date.getMonth() + 1).toString().padStart(2, "0") +
+      date.getDate().toString().padStart(2, "0");
     const timestampPart = Date.now().toString().slice(-4);
-    const randomPart = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const randomPart = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, "0");
     const billNumber = await billManager.generateBillNumber();
     logger.info("Generated bill number:", billNumber);
     const billData = {
@@ -1326,16 +1492,16 @@ exports.generateBillBeforePayment = async sessionId => {
       billDate: new Date(),
       metadata: {
         orderCount: orders.length,
-        orderNumbers: orders.map(o => o.orderNumber),
+        orderNumbers: orders.map((o) => o.orderNumber),
         customerSessionStart: customer.sessionStart,
         tableNumber: customer.table?.tableNumber,
-        generatedBeforePayment: true
-      }
+        generatedBeforePayment: true,
+      },
     };
     logger.info("Creating bill with data:", {
       billNumber: billData.billNumber,
       sessionId: billData.sessionId,
-      totalAmount: billData.totalAmount
+      totalAmount: billData.totalAmount,
     });
     const bill = await Bill.create(billData);
     logger.info("Bill created successfully:", bill.billNumber);
@@ -1343,7 +1509,10 @@ exports.generateBillBeforePayment = async sessionId => {
       await billManager.generateAndSavePDF(bill);
       logger.info("PDF generated for bill:", bill.billNumber);
     } catch (pdfError) {
-      logger.warn("PDF generation failed (continuing without PDF):", pdfError.message);
+      logger.warn(
+        "PDF generation failed (continuing without PDF):",
+        pdfError.message,
+      );
     }
     customer.lastBillId = bill._id;
     customer.lastBillNumber = bill.billNumber;
@@ -1355,7 +1524,7 @@ exports.generateBillBeforePayment = async sessionId => {
     return {
       success: true,
       message: "Bill generated successfully",
-      data: bill
+      data: bill,
     };
   } catch (error) {
     logger.error("Generate bill before payment failed:", error);
@@ -1365,14 +1534,14 @@ exports.generateBillBeforePayment = async sessionId => {
     throw error;
   }
 };
-exports.getBillSummary = async sessionId => {
+exports.getBillSummary = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
@@ -1380,14 +1549,14 @@ exports.getBillSummary = async sessionId => {
     const orders = await Order.find({
       customer: customer._id,
       paymentStatus: {
-        $ne: "paid"
-      }
+        $ne: "paid",
+      },
     });
     if (orders.length === 0) {
       return {
         success: false,
         message: "No orders found",
-        data: null
+        data: null,
       };
     }
     let subtotal = 0;
@@ -1396,7 +1565,7 @@ exports.getBillSummary = async sessionId => {
     let discountAmount = 0;
     let totalAmount = 0;
     let itemCount = 0;
-    orders.forEach(order => {
+    orders.forEach((order) => {
       subtotal += order.subtotal || 0;
       taxAmount += order.taxAmount || 0;
       serviceCharge += order.serviceCharge || 0;
@@ -1406,7 +1575,7 @@ exports.getBillSummary = async sessionId => {
     });
     const existingBill = await Bill.findOne({
       sessionId,
-      paymentStatus: "pending"
+      paymentStatus: "pending",
     });
     return {
       success: true,
@@ -1416,7 +1585,7 @@ exports.getBillSummary = async sessionId => {
           id: customer._id,
           sessionId: customer.sessionId,
           name: customer.name,
-          table: customer.table
+          table: customer.table,
         },
         summary: {
           orderCount: orders.length,
@@ -1425,16 +1594,18 @@ exports.getBillSummary = async sessionId => {
           taxAmount,
           serviceCharge,
           discountAmount,
-          totalAmount
+          totalAmount,
         },
-        existingBill: existingBill ? {
-          id: existingBill._id,
-          billNumber: existingBill.billNumber,
-          totalAmount: existingBill.totalAmount,
-          status: existingBill.paymentStatus
-        } : null,
-        canGenerateBill: orders.length > 0
-      }
+        existingBill: existingBill
+          ? {
+              id: existingBill._id,
+              billNumber: existingBill.billNumber,
+              totalAmount: existingBill.totalAmount,
+              status: existingBill.paymentStatus,
+            }
+          : null,
+        canGenerateBill: orders.length > 0,
+      },
     };
   } catch (error) {
     logger.error("Get bill summary failed:", error);

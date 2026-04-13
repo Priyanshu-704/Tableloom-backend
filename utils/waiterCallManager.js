@@ -1,33 +1,30 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const WaiterCall = require("../models/WaiterCall");
 const Customer = require("../models/Customer");
 const User = require("../models/User");
 const notificationManager = require("./notificationManager");
 const socketManager = require("./socketManager");
-const {
-  getOrSetCache,
-  clearCache
-} = require("./responseCache");
-const {
-  getCurrentTenantId
-} = require("./tenantContext");
+const { getOrSetCache, clearCache } = require("./responseCache");
+const { getCurrentTenantId } = require("./tenantContext");
 const ACTIVE_SESSION_STATUSES = ["active", "payment_pending"];
-const ACTIVE_CALL_STATUSES = ["pending", "assigned", "acknowledged", "in_progress"];
+const ACTIVE_CALL_STATUSES = [
+  "pending",
+  "assigned",
+  "acknowledged",
+  "in_progress",
+];
 const WAITER_CALL_CACHE_PREFIX = "waiter-call:";
 const WAITER_CALL_LIST_CACHE_TTL_MS = 8 * 1000;
 const WAITER_CALL_STATS_CACHE_TTL_MS = 10 * 1000;
 const WAITER_CALL_DASHBOARD_CACHE_TTL_MS = 8 * 1000;
 const getDateRange = (options = "today") => {
-  const normalizedOptions = typeof options === "string" ? {
-    period: options
-  } : options || {};
-  const {
-    period = "today",
-    startDate,
-    endDate
-  } = normalizedOptions;
+  const normalizedOptions =
+    typeof options === "string"
+      ? {
+          period: options,
+        }
+      : options || {};
+  const { period = "today", startDate, endDate } = normalizedOptions;
   const range = {};
   if (startDate) {
     range.$gte = new Date(startDate);
@@ -52,7 +49,7 @@ const getDateRange = (options = "today") => {
     start.setHours(0, 0, 0, 0);
   }
   return {
-    $gte: start
+    $gte: start,
   };
 };
 const toPriorityWeight = {
@@ -60,7 +57,7 @@ const toPriorityWeight = {
   urgent: 4,
   high: 3,
   medium: 2,
-  low: 1
+  low: 1,
 };
 const toCallTypeWeight = {
   emergency: 5,
@@ -70,16 +67,16 @@ const toCallTypeWeight = {
   order_help: 3,
   assistance: 2,
   waiter: 2,
-  other: 1
+  other: 1,
 };
-const getStatusMessage = status => {
+const getStatusMessage = (status) => {
   const messages = {
     pending: "Your request is pending. Staff will be with you shortly.",
     assigned: "A staff member has been assigned to your request.",
     acknowledged: "Staff member is on the way to your table.",
     in_progress: "Staff member is assisting you.",
     completed: "Request completed. Thank you!",
-    cancelled: "Request cancelled."
+    cancelled: "Request cancelled.",
   };
   return messages[status] || "Request status updated.";
 };
@@ -92,14 +89,14 @@ const getEstimatedWaitTime = (priority = "medium", callType = "waiter") => {
     order_help: 4,
     assistance: 5,
     waiter: 5,
-    other: 6
+    other: 6,
   };
   const multipliers = {
     critical: 0.5,
     urgent: 0.7,
     high: 0.8,
     medium: 1,
-    low: 1.2
+    low: 1.2,
   };
   return Math.round((baseTimes[callType] || 5) * (multipliers[priority] || 1));
 };
@@ -116,23 +113,31 @@ const emitToStaffRoom = (eventName, payload) => {
     io.to("management-room").emit(eventName, payload);
   } catch (_error) {}
 };
-const createCustomerNotification = async (sessionId, title, message, payload = {}) => {
+const createCustomerNotification = async (
+  sessionId,
+  title,
+  message,
+  payload = {},
+) => {
   try {
     await notificationManager.createCustomerSessionNotification({
       customerSessionId: sessionId,
       title,
       message,
       type: "waiter_call",
-      priority: payload.priority === "critical" ? "urgent" : payload.priority || "medium",
+      priority:
+        payload.priority === "critical"
+          ? "urgent"
+          : payload.priority || "medium",
       relatedTo: payload._id || null,
       relatedModel: "WaiterCall",
-      metadata: payload
+      metadata: payload,
     });
   } catch (error) {
     logger.error("Failed to create customer session notification:", error);
   }
 };
-const buildCallPayload = call => ({
+const buildCallPayload = (call) => ({
   callId: call.callId,
   sessionId: call.sessionId,
   tableNumber: call.tableNumber,
@@ -148,9 +153,10 @@ const buildCallPayload = call => ({
   completedAt: call.completedAt,
   assignedAt: call.assignedAt,
   createdAt: call.createdAt,
-  updatedAt: call.updatedAt
+  updatedAt: call.updatedAt,
 });
-const getWaiterCallCacheKey = (suffix = "") => `${WAITER_CALL_CACHE_PREFIX}${getCurrentTenantId() || "default"}:${suffix}`;
+const getWaiterCallCacheKey = (suffix = "") =>
+  `${WAITER_CALL_CACHE_PREFIX}${getCurrentTenantId() || "default"}:${suffix}`;
 const invalidateWaiterCallCaches = () => {
   clearCache(getWaiterCallCacheKey(""));
 };
@@ -169,15 +175,17 @@ exports.getAvailableStaff = async () => {
     const query = {
       isActive: true,
       role: {
-        $in: ["waiter", "manager", "admin"]
-      }
+        $in: ["waiter", "manager", "admin"],
+      },
     };
     if (tenantId) {
       query.tenantId = tenantId;
     }
     return await User.find({
-      ...query
-    }).select("name role").lean();
+      ...query,
+    })
+      .select("name role")
+      .lean();
   } catch (error) {
     logger.error("Get available staff failed:", error);
     return [];
@@ -189,8 +197,8 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ACTIVE_SESSION_STATUSES
-      }
+        $in: ACTIVE_SESSION_STATUSES,
+      },
     }).populate("table");
     if (!customer || !customer.table) {
       throw new Error("Active customer session not found");
@@ -198,28 +206,42 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
     const existingActiveCall = await WaiterCall.findOne({
       sessionId,
       status: {
-        $in: ACTIVE_CALL_STATUSES
-      }
-    }).populate("table", "tableNumber tableName location").populate("customer", "name phone");
+        $in: ACTIVE_CALL_STATUSES,
+      },
+    })
+      .populate("table", "tableNumber tableName location")
+      .populate("customer", "name phone");
     if (existingActiveCall) {
-      existingActiveCall.callType = callData.callType || existingActiveCall.callType;
-      existingActiveCall.priority = callData.priority || existingActiveCall.priority;
-      existingActiveCall.message = callData.message || existingActiveCall.message;
-      existingActiveCall.coordinates = callData.coordinates || existingActiveCall.coordinates;
-      existingActiveCall.urgencyLevel = this.calculateUrgencyLevel(existingActiveCall.callType, existingActiveCall.priority);
+      existingActiveCall.callType =
+        callData.callType || existingActiveCall.callType;
+      existingActiveCall.priority =
+        callData.priority || existingActiveCall.priority;
+      existingActiveCall.message =
+        callData.message || existingActiveCall.message;
+      existingActiveCall.coordinates =
+        callData.coordinates || existingActiveCall.coordinates;
+      existingActiveCall.urgencyLevel = this.calculateUrgencyLevel(
+        existingActiveCall.callType,
+        existingActiveCall.priority,
+      );
       await existingActiveCall.save();
       invalidateWaiterCallCaches();
       const payload = {
         ...buildCallPayload(existingActiveCall),
         customerName: existingActiveCall.customer?.name || "Customer",
-        customerPhone: existingActiveCall.customer?.phone || ""
+        customerPhone: existingActiveCall.customer?.phone || "",
       };
       socketManager.emitNewCall(payload);
       emitToCustomerSession(sessionId, "waiter-call:updated", {
         ...payload,
-        message: "Your existing request has been updated."
+        message: "Your existing request has been updated.",
       });
-      await createCustomerNotification(sessionId, `Waiter request updated`, "Your existing waiter request has been updated.", payload);
+      await createCustomerNotification(
+        sessionId,
+        `Waiter request updated`,
+        "Your existing waiter request has been updated.",
+        payload,
+      );
       return existingActiveCall;
     }
     const waiterCall = await WaiterCall.create({
@@ -227,13 +249,17 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
       customer: customer._id,
       table: customer.table._id,
       tableNumber: String(customer.table.tableNumber),
-      tableName: customer.table.tableName || `Table ${customer.table.tableNumber}`,
+      tableName:
+        customer.table.tableName || `Table ${customer.table.tableNumber}`,
       location: customer.table.location || "Dining Area",
       callType: callData.callType || "waiter",
       priority: callData.priority || "medium",
       message: callData.message || "",
       coordinates: callData.coordinates || null,
-      urgencyLevel: this.calculateUrgencyLevel(callData.callType, callData.priority)
+      urgencyLevel: this.calculateUrgencyLevel(
+        callData.callType,
+        callData.priority,
+      ),
     });
     await waiterCall.populate("table", "tableNumber tableName location");
     await waiterCall.populate("customer", "name phone");
@@ -241,15 +267,24 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
     const payload = {
       ...buildCallPayload(waiterCall),
       customerName: waiterCall.customer?.name || "Customer",
-      customerPhone: waiterCall.customer?.phone || ""
+      customerPhone: waiterCall.customer?.phone || "",
     };
     socketManager.emitNewCall(payload);
     emitToCustomerSession(sessionId, "waiter-call:confirmed", {
       ...payload,
-      estimatedWaitTime: getEstimatedWaitTime(waiterCall.priority, waiterCall.callType),
-      message: "Your request has been received. A staff member will be with you shortly."
+      estimatedWaitTime: getEstimatedWaitTime(
+        waiterCall.priority,
+        waiterCall.callType,
+      ),
+      message:
+        "Your request has been received. A staff member will be with you shortly.",
     });
-    await createCustomerNotification(sessionId, `Waiter request received`, "Your request has been received. A staff member will be with you shortly.", payload);
+    await createCustomerNotification(
+      sessionId,
+      `Waiter request received`,
+      "Your request has been received. A staff member will be with you shortly.",
+      payload,
+    );
     try {
       await notificationManager.createWaiterCallNotification({
         _id: waiterCall._id,
@@ -261,10 +296,13 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
         priority: waiterCall.priority,
         message: waiterCall.message,
         customerName: waiterCall.customer?.name || "Customer",
-        createdAt: waiterCall.createdAt
+        createdAt: waiterCall.createdAt,
       });
     } catch (notificationError) {
-      logger.error("Failed to create waiter call notification:", notificationError);
+      logger.error(
+        "Failed to create waiter call notification:",
+        notificationError,
+      );
     }
     await this.updateCallStatistics();
     return waiterCall;
@@ -276,7 +314,7 @@ exports.createWaiterCall = async (sessionId, callData = {}) => {
 exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
   try {
     const waiterCall = await WaiterCall.findOne({
-      callId
+      callId,
     });
     if (!waiterCall) throw new Error("Waiter call not found");
     if (!["pending", "assigned"].includes(waiterCall.status)) {
@@ -287,9 +325,14 @@ exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
     waiterCall.status = "acknowledged";
     waiterCall.acknowledgedBy = staffId;
     waiterCall.acknowledgedAt = new Date();
-    waiterCall.responseTime = Math.floor((waiterCall.acknowledgedAt.getTime() - waiterCall.createdAt.getTime()) / 1000);
+    waiterCall.responseTime = Math.floor(
+      (waiterCall.acknowledgedAt.getTime() - waiterCall.createdAt.getTime()) /
+        1000,
+    );
     if (estimatedTime) {
-      waiterCall.estimatedArrival = new Date(Date.now() + Number(estimatedTime) * 60000);
+      waiterCall.estimatedArrival = new Date(
+        Date.now() + Number(estimatedTime) * 60000,
+      );
     }
     await waiterCall.save();
     invalidateWaiterCallCaches();
@@ -299,11 +342,16 @@ exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
       ...buildCallPayload(waiterCall),
       acknowledgedBy: waiterCall.acknowledgedBy?.name || "Staff",
       staffRole: waiterCall.acknowledgedBy?.role || "waiter",
-      estimatedArrival: waiterCall.estimatedArrival
+      estimatedArrival: waiterCall.estimatedArrival,
     };
     socketManager.emitCallAcknowledged(waiterCall.sessionId, payload);
     emitToStaffRoom("waiter-call:taken", payload);
-    await createCustomerNotification(waiterCall.sessionId, "Waiter request acknowledged", getStatusMessage("acknowledged"), payload);
+    await createCustomerNotification(
+      waiterCall.sessionId,
+      "Waiter request acknowledged",
+      getStatusMessage("acknowledged"),
+      payload,
+    );
     await this.updateCallStatistics();
     return waiterCall;
   } catch (error) {
@@ -314,10 +362,11 @@ exports.acknowledgeCall = async (callId, staffId, estimatedTime = null) => {
 exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
   try {
     const waiterCall = await WaiterCall.findOne({
-      callId
+      callId,
     });
     if (!waiterCall) throw new Error("Waiter call not found");
-    if (waiterCall.status === "completed") throw new Error("Call is already completed");
+    if (waiterCall.status === "completed")
+      throw new Error("Call is already completed");
     const staff = await User.findById(staffId);
     if (!staff) throw new Error("Staff member not found");
     waiterCall.status = "completed";
@@ -325,7 +374,11 @@ exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
     waiterCall.completedAt = new Date();
     waiterCall.resolutionNotes = resolutionNotes;
     if (waiterCall.acknowledgedAt) {
-      waiterCall.resolutionTime = Math.floor((waiterCall.completedAt.getTime() - waiterCall.acknowledgedAt.getTime()) / 1000);
+      waiterCall.resolutionTime = Math.floor(
+        (waiterCall.completedAt.getTime() -
+          waiterCall.acknowledgedAt.getTime()) /
+          1000,
+      );
     }
     await waiterCall.save();
     invalidateWaiterCallCaches();
@@ -334,11 +387,16 @@ exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
     const payload = {
       ...buildCallPayload(waiterCall),
       completedBy: waiterCall.completedBy?.name || "Staff",
-      resolutionNotes: waiterCall.resolutionNotes || ""
+      resolutionNotes: waiterCall.resolutionNotes || "",
     };
     socketManager.emitCallCompleted(waiterCall.sessionId, payload);
     emitToStaffRoom("waiter-call:completed-staff", payload);
-    await createCustomerNotification(waiterCall.sessionId, "Waiter request completed", getStatusMessage("completed"), payload);
+    await createCustomerNotification(
+      waiterCall.sessionId,
+      "Waiter request completed",
+      getStatusMessage("completed"),
+      payload,
+    );
     await this.updateCallStatistics();
     return waiterCall;
   } catch (error) {
@@ -349,7 +407,7 @@ exports.completeCall = async (callId, staffId, resolutionNotes = "") => {
 exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
   try {
     const waiterCall = await WaiterCall.findOne({
-      callId
+      callId,
     });
     if (!waiterCall) throw new Error("Waiter call not found");
     const validTransitions = {
@@ -358,10 +416,12 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
       acknowledged: ["in_progress", "completed", "cancelled"],
       in_progress: ["completed", "cancelled"],
       completed: [],
-      cancelled: []
+      cancelled: [],
     };
     if (!validTransitions[waiterCall.status]?.includes(status)) {
-      throw new Error(`Invalid status transition from ${waiterCall.status} to ${status}`);
+      throw new Error(
+        `Invalid status transition from ${waiterCall.status} to ${status}`,
+      );
     }
     waiterCall.status = status;
     waiterCall.updatedAt = new Date();
@@ -370,7 +430,9 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
       if (staffId) waiterCall.startedBy = staffId;
     }
     if (notes) {
-      waiterCall.notes = waiterCall.notes ? `${waiterCall.notes}\n${notes}` : notes;
+      waiterCall.notes = waiterCall.notes
+        ? `${waiterCall.notes}\n${notes}`
+        : notes;
     }
     await waiterCall.save();
     invalidateWaiterCallCaches();
@@ -381,11 +443,20 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
       ...buildCallPayload(waiterCall),
       message: getStatusMessage(waiterCall.status),
       startedBy: waiterCall.startedBy?.name,
-      notes: waiterCall.notes
+      notes: waiterCall.notes,
     };
     emitToStaffRoom("waiter-call:status-updated", payload);
-    emitToCustomerSession(waiterCall.sessionId, "waiter-call:status-updated", payload);
-    await createCustomerNotification(waiterCall.sessionId, "Waiter request status updated", payload.message, payload);
+    emitToCustomerSession(
+      waiterCall.sessionId,
+      "waiter-call:status-updated",
+      payload,
+    );
+    await createCustomerNotification(
+      waiterCall.sessionId,
+      "Waiter request status updated",
+      payload.message,
+      payload,
+    );
     return waiterCall;
   } catch (error) {
     logger.error("Update call status failed:", error);
@@ -395,14 +466,23 @@ exports.updateCallStatus = async (callId, status, staffId, notes = "") => {
 exports.getPendingCalls = async (filters = {}) => {
   try {
     const query = {
-      status: "pending"
+      status: "pending",
     };
     if (filters.callType) query.callType = filters.callType;
     if (filters.priority) query.priority = filters.priority;
     if (filters.location) query.location = filters.location;
-    return await getOrSetCache(getWaiterCallCacheKey(`pending:${JSON.stringify(filters || {})}`), WAITER_CALL_LIST_CACHE_TTL_MS, async () => WaiterCall.find(query).populate("table", "tableNumber tableName location").populate("customer", "name phone").sort({
-      createdAt: 1
-    }).lean());
+    return await getOrSetCache(
+      getWaiterCallCacheKey(`pending:${JSON.stringify(filters || {})}`),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find(query)
+          .populate("table", "tableNumber tableName location")
+          .populate("customer", "name phone")
+          .sort({
+            createdAt: 1,
+          })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get pending calls failed:", error);
     throw error;
@@ -410,33 +490,55 @@ exports.getPendingCalls = async (filters = {}) => {
 };
 exports.getActiveCalls = async () => {
   try {
-    return await getOrSetCache(getWaiterCallCacheKey("active"), WAITER_CALL_LIST_CACHE_TTL_MS, async () => WaiterCall.find({
-      status: {
-        $in: ACTIVE_CALL_STATUSES
-      }
-    }).populate("table", "tableNumber tableName location").populate("customer", "name phone").populate("acknowledgedBy", "name role").populate("assignedTo", "name role").sort({
-      updatedAt: -1,
-      createdAt: -1
-    }).lean());
+    return await getOrSetCache(
+      getWaiterCallCacheKey("active"),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find({
+          status: {
+            $in: ACTIVE_CALL_STATUSES,
+          },
+        })
+          .populate("table", "tableNumber tableName location")
+          .populate("customer", "name phone")
+          .populate("acknowledgedBy", "name role")
+          .populate("assignedTo", "name role")
+          .sort({
+            updatedAt: -1,
+            createdAt: -1,
+          })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get active calls failed:", error);
     throw error;
   }
 };
-exports.getSessionActiveCalls = async sessionId => {
+exports.getSessionActiveCalls = async (sessionId) => {
   try {
     if (!sessionId) {
       return [];
     }
-    return await getOrSetCache(getWaiterCallCacheKey(`session:${sessionId}`), WAITER_CALL_LIST_CACHE_TTL_MS, async () => WaiterCall.find({
-      sessionId,
-      status: {
-        $in: ACTIVE_CALL_STATUSES
-      }
-    }).populate("table", "tableNumber tableName location").populate("customer", "name phone").populate("acknowledgedBy", "name role").populate("assignedTo", "name role").sort({
-      updatedAt: -1,
-      createdAt: -1
-    }).lean());
+    return await getOrSetCache(
+      getWaiterCallCacheKey(`session:${sessionId}`),
+      WAITER_CALL_LIST_CACHE_TTL_MS,
+      async () =>
+        WaiterCall.find({
+          sessionId,
+          status: {
+            $in: ACTIVE_CALL_STATUSES,
+          },
+        })
+          .populate("table", "tableNumber tableName location")
+          .populate("customer", "name phone")
+          .populate("acknowledgedBy", "name role")
+          .populate("assignedTo", "name role")
+          .sort({
+            updatedAt: -1,
+            createdAt: -1,
+          })
+          .lean(),
+    );
   } catch (error) {
     logger.error("Get session active calls failed:", error);
     throw error;
@@ -445,22 +547,30 @@ exports.getSessionActiveCalls = async sessionId => {
 exports.getCallsByStaff = async (staffId, period = "today") => {
   try {
     const dateFilter = {
-      updatedAt: getDateRange(period)
+      updatedAt: getDateRange(period),
     };
     return await WaiterCall.find({
-      $or: [{
-        assignedTo: staffId
-      }, {
-        acknowledgedBy: staffId
-      }, {
-        startedBy: staffId
-      }, {
-        completedBy: staffId
-      }],
-      ...dateFilter
-    }).populate("table", "tableNumber tableName").populate("customer", "name").sort({
-      updatedAt: -1
-    });
+      $or: [
+        {
+          assignedTo: staffId,
+        },
+        {
+          acknowledgedBy: staffId,
+        },
+        {
+          startedBy: staffId,
+        },
+        {
+          completedBy: staffId,
+        },
+      ],
+      ...dateFilter,
+    })
+      .populate("table", "tableNumber tableName")
+      .populate("customer", "name")
+      .sort({
+        updatedAt: -1,
+      });
   } catch (error) {
     logger.error("Get calls by staff failed:", error);
     throw error;
@@ -468,73 +578,103 @@ exports.getCallsByStaff = async (staffId, period = "today") => {
 };
 exports.getCallStatistics = async (options = "today") => {
   try {
-    const normalizedOptions = typeof options === "string" ? {
-      period: options
-    } : options || {};
-    const periodLabel = normalizedOptions.startDate || normalizedOptions.endDate ? "custom" : normalizedOptions.period || "today";
+    const normalizedOptions =
+      typeof options === "string"
+        ? {
+            period: options,
+          }
+        : options || {};
+    const periodLabel =
+      normalizedOptions.startDate || normalizedOptions.endDate
+        ? "custom"
+        : normalizedOptions.period || "today";
     const dateFilter = {
-      createdAt: getDateRange(normalizedOptions)
+      createdAt: getDateRange(normalizedOptions),
     };
-    return await getOrSetCache(getWaiterCallCacheKey(`stats:${periodLabel}:${dateFilter.createdAt.$gte?.toISOString?.() || "na"}:${dateFilter.createdAt.$lte?.toISOString?.() || "na"}`), WAITER_CALL_STATS_CACHE_TTL_MS, async () => {
-      const [grouped, byType, pendingCalls, activeCalls] = await Promise.all([WaiterCall.aggregate([{
-        $match: dateFilter
-      }, {
-        $group: {
-          _id: "$status",
-          count: {
-            $sum: 1
-          },
-          avgResponseTime: {
-            $avg: "$responseTime"
-          },
-          avgResolutionTime: {
-            $avg: "$resolutionTime"
-          }
-        }
-      }]), WaiterCall.aggregate([{
-        $match: dateFilter
-      }, {
-        $group: {
-          _id: "$callType",
-          count: {
-            $sum: 1
-          }
-        }
-      }, {
-        $project: {
-          _id: 0,
-          callType: "$_id",
-          count: 1
-        }
-      }]), WaiterCall.countDocuments({
-        ...dateFilter,
-        status: "pending"
-      }), WaiterCall.countDocuments({
-        ...dateFilter,
-        status: {
-          $in: ACTIVE_CALL_STATUSES
-        }
-      })]);
-      const byStatus = grouped.map(item => ({
-        status: item._id,
-        count: item.count,
-        avgResponseTime: item.avgResponseTime || 0,
-        avgResolutionTime: item.avgResolutionTime || 0
-      }));
-      const totalCalls = byStatus.reduce((sum, item) => sum + item.count, 0);
-      const avgResponseTime = byStatus.length ? byStatus.reduce((sum, item) => sum + item.avgResponseTime, 0) / byStatus.length : 0;
-      const avgResolutionTime = byStatus.length ? byStatus.reduce((sum, item) => sum + item.avgResolutionTime, 0) / byStatus.length : 0;
-      return {
-        totalCalls,
-        pendingCalls,
-        activeCalls,
-        byStatus,
-        byType,
-        avgResponseTime,
-        avgResolutionTime,
-        period: periodLabel
-      };
-    });
+    return await getOrSetCache(
+      getWaiterCallCacheKey(
+        `stats:${periodLabel}:${dateFilter.createdAt.$gte?.toISOString?.() || "na"}:${dateFilter.createdAt.$lte?.toISOString?.() || "na"}`,
+      ),
+      WAITER_CALL_STATS_CACHE_TTL_MS,
+      async () => {
+        const [grouped, byType, pendingCalls, activeCalls] = await Promise.all([
+          WaiterCall.aggregate([
+            {
+              $match: dateFilter,
+            },
+            {
+              $group: {
+                _id: "$status",
+                count: {
+                  $sum: 1,
+                },
+                avgResponseTime: {
+                  $avg: "$responseTime",
+                },
+                avgResolutionTime: {
+                  $avg: "$resolutionTime",
+                },
+              },
+            },
+          ]),
+          WaiterCall.aggregate([
+            {
+              $match: dateFilter,
+            },
+            {
+              $group: {
+                _id: "$callType",
+                count: {
+                  $sum: 1,
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                callType: "$_id",
+                count: 1,
+              },
+            },
+          ]),
+          WaiterCall.countDocuments({
+            ...dateFilter,
+            status: "pending",
+          }),
+          WaiterCall.countDocuments({
+            ...dateFilter,
+            status: {
+              $in: ACTIVE_CALL_STATUSES,
+            },
+          }),
+        ]);
+        const byStatus = grouped.map((item) => ({
+          status: item._id,
+          count: item.count,
+          avgResponseTime: item.avgResponseTime || 0,
+          avgResolutionTime: item.avgResolutionTime || 0,
+        }));
+        const totalCalls = byStatus.reduce((sum, item) => sum + item.count, 0);
+        const avgResponseTime = byStatus.length
+          ? byStatus.reduce((sum, item) => sum + item.avgResponseTime, 0) /
+            byStatus.length
+          : 0;
+        const avgResolutionTime = byStatus.length
+          ? byStatus.reduce((sum, item) => sum + item.avgResolutionTime, 0) /
+            byStatus.length
+          : 0;
+        return {
+          totalCalls,
+          pendingCalls,
+          activeCalls,
+          byStatus,
+          byType,
+          avgResponseTime,
+          avgResolutionTime,
+          period: periodLabel,
+        };
+      },
+    );
   } catch (error) {
     logger.error("Get call statistics failed:", error);
     throw error;
@@ -550,51 +690,58 @@ exports.updateCallStatistics = async () => {
 };
 exports.getStaffPerformance = async (startDate, endDate) => {
   try {
-    return await WaiterCall.aggregate([{
-      $match: {
-        status: "completed",
-        acknowledgedAt: {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
-        }
-      }
-    }, {
-      $group: {
-        _id: "$acknowledgedBy",
-        totalCalls: {
-          $sum: 1
+    return await WaiterCall.aggregate([
+      {
+        $match: {
+          status: "completed",
+          acknowledgedAt: {
+            $gte: new Date(startDate),
+            $lte: new Date(endDate),
+          },
         },
-        avgResponseTime: {
-          $avg: "$responseTime"
+      },
+      {
+        $group: {
+          _id: "$acknowledgedBy",
+          totalCalls: {
+            $sum: 1,
+          },
+          avgResponseTime: {
+            $avg: "$responseTime",
+          },
+          avgResolutionTime: {
+            $avg: "$resolutionTime",
+          },
         },
-        avgResolutionTime: {
-          $avg: "$resolutionTime"
-        }
-      }
-    }, {
-      $lookup: {
-        from: "users",
-        localField: "_id",
-        foreignField: "_id",
-        as: "staff"
-      }
-    }, {
-      $unwind: "$staff"
-    }, {
-      $project: {
-        _id: 0,
-        staffId: "$staff._id",
-        staffName: "$staff.name",
-        staffRole: "$staff.role",
-        totalCalls: 1,
-        avgResponseTime: 1,
-        avgResolutionTime: 1
-      }
-    }, {
-      $sort: {
-        totalCalls: -1
-      }
-    }]);
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "_id",
+          foreignField: "_id",
+          as: "staff",
+        },
+      },
+      {
+        $unwind: "$staff",
+      },
+      {
+        $project: {
+          _id: 0,
+          staffId: "$staff._id",
+          staffName: "$staff.name",
+          staffRole: "$staff.role",
+          totalCalls: 1,
+          avgResponseTime: 1,
+          avgResolutionTime: 1,
+        },
+      },
+      {
+        $sort: {
+          totalCalls: -1,
+        },
+      },
+    ]);
   } catch (error) {
     logger.error("Get staff performance failed:", error);
     throw error;
@@ -602,20 +749,36 @@ exports.getStaffPerformance = async (startDate, endDate) => {
 };
 exports.getCallDashboard = async () => {
   try {
-    return await getOrSetCache(getWaiterCallCacheKey("dashboard"), WAITER_CALL_DASHBOARD_CACHE_TTL_MS, async () => {
-      const [pendingCalls, activeCalls, statistics, recentCompleted] = await Promise.all([this.getPendingCalls(), this.getActiveCalls(), this.getCallStatistics("today"), WaiterCall.find({
-        status: "completed"
-      }).sort({
-        completedAt: -1
-      }).limit(10).populate("table", "tableNumber tableName").populate("acknowledgedBy", "name").populate("completedBy", "name").lean()]);
-      return {
-        pendingCalls,
-        activeCalls,
-        statistics,
-        recentCompleted,
-        lastUpdated: new Date()
-      };
-    });
+    return await getOrSetCache(
+      getWaiterCallCacheKey("dashboard"),
+      WAITER_CALL_DASHBOARD_CACHE_TTL_MS,
+      async () => {
+        const [pendingCalls, activeCalls, statistics, recentCompleted] =
+          await Promise.all([
+            this.getPendingCalls(),
+            this.getActiveCalls(),
+            this.getCallStatistics("today"),
+            WaiterCall.find({
+              status: "completed",
+            })
+              .sort({
+                completedAt: -1,
+              })
+              .limit(10)
+              .populate("table", "tableNumber tableName")
+              .populate("acknowledgedBy", "name")
+              .populate("completedBy", "name")
+              .lean(),
+          ]);
+        return {
+          pendingCalls,
+          activeCalls,
+          statistics,
+          recentCompleted,
+          lastUpdated: new Date(),
+        };
+      },
+    );
   } catch (error) {
     logger.error("Get call dashboard failed:", error);
     throw error;
@@ -624,7 +787,7 @@ exports.getCallDashboard = async () => {
 exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
   try {
     const call = await WaiterCall.findOne({
-      callId
+      callId,
     }).populate("customer", "name phone");
     if (!call) throw new Error("Call not found");
     if (!["pending", "assigned"].includes(call.status)) {
@@ -632,14 +795,16 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
     }
     const tenantId = getCurrentTenantId();
     const staffQuery = {
-      _id: staffId
+      _id: staffId,
     };
     if (tenantId) {
       staffQuery.tenantId = tenantId;
     }
     const staff = await User.findOne(staffQuery).select("name role tenantId");
     if (!staff) throw new Error("Staff member not found");
-    const assigner = assignerId ? await User.findById(assignerId).select("name") : null;
+    const assigner = assignerId
+      ? await User.findById(assignerId).select("name")
+      : null;
     call.assignedTo = staff._id;
     call.assignedBy = assignerId;
     call.assignedAt = new Date();
@@ -650,42 +815,53 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
     const payload = {
       ...buildCallPayload(call),
       assignedTo: call.assignedTo?.name || "Staff",
-      assignedBy: assigner?.name || "System"
+      assignedBy: assigner?.name || "System",
     };
     emitToStaffRoom("waiter-call:assigned", payload);
     emitToCustomerSession(call.sessionId, "waiter-call:assigned", {
       ...payload,
-      message: `${call.assignedTo?.name || "A staff member"} has been assigned to assist you.`
+      message: `${call.assignedTo?.name || "A staff member"} has been assigned to assist you.`,
     });
-    await createCustomerNotification(call.sessionId, "Staff assigned", `${call.assignedTo?.name || "A staff member"} has been assigned to assist you.`, payload);
+    await createCustomerNotification(
+      call.sessionId,
+      "Staff assigned",
+      `${call.assignedTo?.name || "A staff member"} has been assigned to assist you.`,
+      payload,
+    );
     try {
       await notificationManager.createNotification({
         title: `Waiter Call Assigned - ${call.tableNumber || "Table"}`,
         message: `You have been assigned to waiter call ${call.callId}.`,
         type: "waiter_call",
-        priority: call.priority === "critical" ? "urgent" : call.priority || "medium",
+        priority:
+          call.priority === "critical" ? "urgent" : call.priority || "medium",
         recipientType: "user",
         recipients: [staff._id],
         relatedTo: call._id,
         relatedModel: "WaiterCall",
         actionRequired: true,
-        actions: [{
-          label: "View Waiter Calls",
-          type: "link",
-          action: "/dashboard/waiter-calls",
-          color: "primary"
-        }],
+        actions: [
+          {
+            label: "View Waiter Calls",
+            type: "link",
+            action: "/dashboard/waiter-calls",
+            color: "primary",
+          },
+        ],
         metadata: {
           callId: call.callId,
           tableNumber: call.tableNumber,
           tableName: call.tableName,
           location: call.location,
           callType: call.callType,
-          customerName: call.customer?.name || "Customer"
-        }
+          customerName: call.customer?.name || "Customer",
+        },
       });
     } catch (notificationError) {
-      logger.error("Failed to create waiter assignment notification:", notificationError);
+      logger.error(
+        "Failed to create waiter assignment notification:",
+        notificationError,
+      );
     }
     return call;
   } catch (error) {
@@ -693,17 +869,20 @@ exports.assignCallToStaff = async (callId, staffId, assignerId = null) => {
     throw error;
   }
 };
-exports.getStaffAssignedCalls = async staffId => {
+exports.getStaffAssignedCalls = async (staffId) => {
   try {
     return await WaiterCall.find({
       assignedTo: staffId,
       status: {
-        $in: ["assigned", "acknowledged", "in_progress"]
-      }
-    }).populate("table", "tableNumber tableName location").populate("customer", "name").sort({
-      assignedAt: 1,
-      createdAt: 1
-    });
+        $in: ["assigned", "acknowledged", "in_progress"],
+      },
+    })
+      .populate("table", "tableNumber tableName location")
+      .populate("customer", "name")
+      .sort({
+        assignedAt: 1,
+        createdAt: 1,
+      });
   } catch (error) {
     logger.error("Get staff assigned calls failed:", error);
     throw error;
@@ -713,10 +892,11 @@ exports.cancelCall = async (callId, sessionId, reason = "") => {
   try {
     const waiterCall = await WaiterCall.findOne({
       callId,
-      sessionId
+      sessionId,
     });
     if (!waiterCall) throw new Error("Waiter call not found");
-    if (waiterCall.status === "completed") throw new Error("Cannot cancel completed call");
+    if (waiterCall.status === "completed")
+      throw new Error("Cannot cancel completed call");
     waiterCall.status = "cancelled";
     waiterCall.cancelledAt = new Date();
     waiterCall.cancellationReason = reason;
@@ -724,11 +904,16 @@ exports.cancelCall = async (callId, sessionId, reason = "") => {
     invalidateWaiterCallCaches();
     const payload = {
       ...buildCallPayload(waiterCall),
-      message: waiterCall.cancellationReason || getStatusMessage("cancelled")
+      message: waiterCall.cancellationReason || getStatusMessage("cancelled"),
     };
     emitToStaffRoom("waiter-call:cancelled", payload);
     emitToCustomerSession(sessionId, "waiter-call:cancelled", payload);
-    await createCustomerNotification(sessionId, "Waiter request cancelled", payload.message, payload);
+    await createCustomerNotification(
+      sessionId,
+      "Waiter request cancelled",
+      payload.message,
+      payload,
+    );
     await this.updateCallStatistics();
     return waiterCall;
   } catch (error) {

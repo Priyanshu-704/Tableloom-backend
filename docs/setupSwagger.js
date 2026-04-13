@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const swaggerUi = require("swagger-ui-express");
 const createSwaggerSpec = require("../config/swagger");
 const swaggerOptions = {
@@ -28,12 +26,16 @@ const swaggerOptions = {
     operationsSorter: "alpha",
     defaultModelsExpandDepth: 3,
     defaultModelExpandDepth: 3,
-    displayRequestDuration: true
-  }
+    displayRequestDuration: true,
+  },
 };
 const setupSwagger = (app, contextPath = "") => {
   const swaggerSpec = createSwaggerSpec(contextPath);
-  app.use(`${contextPath}/docs`, swaggerUi.serve, swaggerUi.setup(swaggerSpec, swaggerOptions));
+  app.use(
+    `${contextPath}/docs`,
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, swaggerOptions),
+  );
   app.get(`${contextPath}/docs.json`, (req, res) => {
     res.setHeader("Content-Type", "application/json");
     res.send(swaggerSpec);

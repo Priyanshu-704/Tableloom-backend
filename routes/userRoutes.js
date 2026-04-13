@@ -14,12 +14,9 @@ const {
   validateResetToken,
   toggleStaffStatus,
   deleteStaff,
-  updateUserRole
+  updateUserRole,
 } = require("../controllers/userController");
-const {
-  protect,
-  hasPermission
-} = require("../middleware/auth");
+const { protect, hasPermission } = require("../middleware/auth");
 router.post("/login", loginStaff);
 router.post("/forgot-password", forgotPassword);
 router.put("/reset-password/:resetToken", resetPassword);
@@ -32,7 +29,11 @@ router.put("/update-password", updatePassword);
 router.post("/logout", logout);
 router.post("/register", hasPermission("USER_CREATE"), registerStaff);
 router.get("/staff", hasPermission("USER_VIEW_ALL"), getAllStaff);
-router.put("/:id/status", hasPermission("USER_CHANGE_STATUS"), toggleStaffStatus);
+router.put(
+  "/:id/status",
+  hasPermission("USER_CHANGE_STATUS"),
+  toggleStaffStatus,
+);
 router.put("/:id/role", hasPermission("USER_CHANGE_ROLE"), updateUserRole);
 router.delete("/:id", hasPermission("USER_DELETE"), deleteStaff);
 module.exports = router;

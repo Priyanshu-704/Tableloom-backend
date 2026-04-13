@@ -5,7 +5,7 @@ const {
   getCategoryImage,
   getTableQRImage,
   getRestaurantLogo,
-  downloadBillPDF
+  downloadBillPDF,
 } = require("../controllers/imageController");
 router.get("/menu-item/:id", getMenuItemImage);
 router.get("/category/:id", getCategoryImage);

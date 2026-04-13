@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const User = require("../models/User");
 const Category = require("../models/Category");
 const MenuItem = require("../models/MenuItem");
@@ -14,59 +12,74 @@ const KitchenStation = require("../models/KitchenStation");
 const AppSetting = require("../models/AppSetting");
 const Notification = require("../models/Notification");
 const mongoose = require("mongoose");
-const {
-  sendError,
-  sendSuccess
-} = require("../utils/httpResponse");
-const backupCollections = [{
-  key: "users",
-  model: User,
-  exportQuery: () => User.find({}).select("-password -refreshToken -passwordResetToken -passwordResetExpires").lean(),
-  cloneQuery: () => User.find({}).lean()
-}, {
-  key: "categories",
-  model: Category
-}, {
-  key: "menuItems",
-  model: MenuItem
-}, {
-  key: "sizes",
-  model: Size
-}, {
-  key: "tables",
-  model: Table
-}, {
-  key: "customers",
-  model: Customer
-}, {
-  key: "orders",
-  model: Order
-}, {
-  key: "feedback",
-  model: Feedback
-}, {
-  key: "waiterCalls",
-  model: WaiterCall
-}, {
-  key: "kitchenStations",
-  model: KitchenStation
-}, {
-  key: "settings",
-  model: AppSetting
-}, {
-  key: "notifications",
-  model: Notification
-}];
+const { sendError, sendSuccess } = require("../utils/httpResponse");
+const backupCollections = [
+  {
+    key: "users",
+    model: User,
+    exportQuery: () =>
+      User.find({})
+        .select(
+          "-password -refreshToken -passwordResetToken -passwordResetExpires",
+        )
+        .lean(),
+    cloneQuery: () => User.find({}).lean(),
+  },
+  {
+    key: "categories",
+    model: Category,
+  },
+  {
+    key: "menuItems",
+    model: MenuItem,
+  },
+  {
+    key: "sizes",
+    model: Size,
+  },
+  {
+    key: "tables",
+    model: Table,
+  },
+  {
+    key: "customers",
+    model: Customer,
+  },
+  {
+    key: "orders",
+    model: Order,
+  },
+  {
+    key: "feedback",
+    model: Feedback,
+  },
+  {
+    key: "waiterCalls",
+    model: WaiterCall,
+  },
+  {
+    key: "kitchenStations",
+    model: KitchenStation,
+  },
+  {
+    key: "settings",
+    model: AppSetting,
+  },
+  {
+    key: "notifications",
+    model: Notification,
+  },
+];
 const loadCollectionDocuments = async (mode = "export") => {
-  const entries = await Promise.all(backupCollections.map(async ({
-    key,
-    model,
-    exportQuery,
-    cloneQuery
-  }) => {
-    const query = mode === "clone" ? cloneQuery?.() || model.find({}).lean() : exportQuery?.() || model.find({}).lean();
-    return [key, await query];
-  }));
+  const entries = await Promise.all(
+    backupCollections.map(async ({ key, model, exportQuery, cloneQuery }) => {
+      const query =
+        mode === "clone"
+          ? cloneQuery?.() || model.find({}).lean()
+          : exportQuery?.() || model.find({}).lean();
+      return [key, await query];
+    }),
+  );
   return Object.fromEntries(entries);
 };
 exports.exportBackup = async (req, res) => {
@@ -76,9 +89,9 @@ exports.exportBackup = async (req, res) => {
       generatedBy: {
         id: req.user?._id || null,
         email: req.user?.email || null,
-        role: req.user?.role || null
+        role: req.user?.role || null,
       },
-      collections: await loadCollectionDocuments("export")
+      collections: await loadCollectionDocuments("export"),
     };
     const filename = `tableloom-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
     res.setHeader("Content-Type", "application/json");
@@ -95,20 +108,19 @@ exports.cloneBackupToTarget = async (req, res) => {
     const {
       targetUri = "",
       targetDbName = "",
-      mode = "replace"
+      mode = "replace",
     } = req.body || {};
     if (!targetUri.trim()) {
       return sendError(res, 400, "Target MongoDB URI is required");
     }
-    targetConnection = await mongoose.createConnection(targetUri.trim(), {
-      dbName: targetDbName.trim() || undefined
-    }).asPromise();
+    targetConnection = await mongoose
+      .createConnection(targetUri.trim(), {
+        dbName: targetDbName.trim() || undefined,
+      })
+      .asPromise();
     const collections = await loadCollectionDocuments("clone");
     const summary = {};
-    for (const {
-      key,
-      model
-    } of backupCollections) {
+    for (const { key, model } of backupCollections) {
       const collectionName = model.collection.collectionName;
       const targetCollection = targetConnection.db.collection(collectionName);
       const documents = collections[key] || [];
@@ -116,35 +128,48 @@ exports.cloneBackupToTarget = async (req, res) => {
         await targetCollection.deleteMany({});
         if (documents.length > 0) {
           await targetCollection.insertMany(documents, {
-            ordered: false
+            ordered: false,
           });
         }
       } else if (documents.length > 0) {
-        await targetCollection.bulkWrite(documents.map(document => ({
-          replaceOne: {
-            filter: {
-              _id: document._id
+        await targetCollection.bulkWrite(
+          documents.map((document) => ({
+            replaceOne: {
+              filter: {
+                _id: document._id,
+              },
+              replacement: document,
+              upsert: true,
             },
-            replacement: document,
-            upsert: true
-          }
-        })), {
-          ordered: false
-        });
+          })),
+          {
+            ordered: false,
+          },
+        );
       }
       summary[key] = {
         collection: collectionName,
-        count: documents.length
+        count: documents.length,
       };
     }
-    return sendSuccess(res, 200, "Backup cloned successfully to target database", {
-      targetDbName: targetConnection.name,
-      mode,
-      collections: summary
-    });
+    return sendSuccess(
+      res,
+      200,
+      "Backup cloned successfully to target database",
+      {
+        targetDbName: targetConnection.name,
+        mode,
+        collections: summary,
+      },
+    );
   } catch (error) {
     logger.error("Backup clone failed:", error);
-    return sendError(res, 500, "Failed to clone backup to target database", error);
+    return sendError(
+      res,
+      500,
+      "Failed to clone backup to target database",
+      error,
+    );
   } finally {
     if (targetConnection) {
       await targetConnection.close().catch(() => {});

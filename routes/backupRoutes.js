@@ -1,12 +1,9 @@
 const express = require("express");
 const {
   cloneBackupToTarget,
-  exportBackup
+  exportBackup,
 } = require("../controllers/backupController");
-const {
-  protect,
-  hasPermission
-} = require("../middleware/auth");
+const { protect, hasPermission } = require("../middleware/auth");
 const router = express.Router();
 router.use(protect);
 router.get("/export", hasPermission("BACKUP_RESTORE"), exportBackup);

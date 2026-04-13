@@ -5,19 +5,26 @@ const {
   getUserPermissions,
   updateUserPermissions,
   resetUserPermissions,
-  getMyPermissions
+  getMyPermissions,
 } = require("../controllers/permissionController");
-const {
-  Permissions
-} = require("../config/permissions");
-const {
-  protect,
-  hasPermission
-} = require("../middleware/auth");
+const { Permissions } = require("../config/permissions");
+const { protect, hasPermission } = require("../middleware/auth");
 router.use(protect);
 router.get("/available", getAvailablePermissions);
-router.get("/user/:userId", hasPermission(Permissions.USER_MANAGE_PERMISSIONS), getUserPermissions);
+router.get(
+  "/user/:userId",
+  hasPermission(Permissions.USER_MANAGE_PERMISSIONS),
+  getUserPermissions,
+);
 router.get("/me", getMyPermissions);
-router.put("/user/:userId", hasPermission(Permissions.USER_MANAGE_PERMISSIONS), updateUserPermissions);
-router.post("/user/:userId/reset", hasPermission(Permissions.USER_MANAGE_PERMISSIONS), resetUserPermissions);
+router.put(
+  "/user/:userId",
+  hasPermission(Permissions.USER_MANAGE_PERMISSIONS),
+  updateUserPermissions,
+);
+router.post(
+  "/user/:userId/reset",
+  hasPermission(Permissions.USER_MANAGE_PERMISSIONS),
+  resetUserPermissions,
+);
 module.exports = router;

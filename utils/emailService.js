@@ -1,9 +1,7 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const nodemailer = require("nodemailer");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
@@ -11,27 +9,49 @@ const transporter = nodemailer.createTransport({
   secure: false,
   auth: {
     user: process.env.EMAIL_USERNAME,
-    pass: process.env.EMAIL_PASSWORD
+    pass: process.env.EMAIL_PASSWORD,
   },
   tls: {
-    rejectUnauthorized: false
-  }
+    rejectUnauthorized: false,
+  },
 });
-const normalizeBaseUrl = (value = "") => String(value || "").trim().replace(/\/+$/, "");
+const normalizeBaseUrl = (value = "") =>
+  String(value || "")
+    .trim()
+    .replace(/\/+$/, "");
 const buildTenantAdminLoginUrl = (tenant = {}) => {
   const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
-  const tenantSlug = String(tenant?.slug || "").trim().toLowerCase();
-  const tenantKey = String(tenant?.key || "").trim().toLowerCase();
+  const tenantSlug = String(tenant?.slug || "")
+    .trim()
+    .toLowerCase();
+  const tenantKey = String(tenant?.key || "")
+    .trim()
+    .toLowerCase();
   if (!baseUrl || !tenantSlug || !tenantKey) {
     return baseUrl || null;
   }
   return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/login`;
 };
-const sendStaffCredentials = async (email, name, password, role, options = {}) => {
-  const loginUrl = String(options?.loginUrl || process.env.FRONTEND_URL || "").trim();
-  const subject = String(options?.subject || "Your Staff Account Credentials - QR Order System").trim();
-  const heading = String(options?.heading || "Welcome to QR Order System!").trim();
-  const intro = String(options?.intro || "Your staff account has been created with the following details:").trim();
+const sendStaffCredentials = async (
+  email,
+  name,
+  password,
+  role,
+  options = {},
+) => {
+  const loginUrl = String(
+    options?.loginUrl || process.env.FRONTEND_URL || "",
+  ).trim();
+  const subject = String(
+    options?.subject || "Your Staff Account Credentials - QR Order System",
+  ).trim();
+  const heading = String(
+    options?.heading || "Welcome to QR Order System!",
+  ).trim();
+  const intro = String(
+    options?.intro ||
+      "Your staff account has been created with the following details:",
+  ).trim();
   const mailOptions = {
     from: process.env.EMAIL_FROM,
     to: email,
@@ -64,7 +84,7 @@ const sendStaffCredentials = async (email, name, password, role, options = {}) =
           </p>
         </div>
       </div>
-    `
+    `,
   };
   try {
     await transporter.sendMail(mailOptions);
@@ -102,7 +122,7 @@ const sendPasswordResetEmail = async (email, resetToken) => {
           </p>
         </div>
       </div>
-    `
+    `,
   };
   try {
     await transporter.sendMail(mailOptions);
@@ -116,7 +136,7 @@ const sendTenantRejectionEmail = async ({
   tenant,
   adminName,
   adminEmail,
-  reason = ""
+  reason = "",
 } = {}) => {
   const supportUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
   const normalizedReason = String(reason || "").trim();
@@ -144,7 +164,7 @@ const sendTenantRejectionEmail = async ({
           </p>
         </div>
       </div>
-    `
+    `,
   };
   try {
     await transporter.sendMail(mailOptions);
@@ -159,5 +179,5 @@ module.exports = {
   sendStaffCredentials,
   sendPasswordResetEmail,
   sendTenantRejectionEmail,
-  buildTenantAdminLoginUrl
+  buildTenantAdminLoginUrl,
 };

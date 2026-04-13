@@ -1,19 +1,29 @@
-const {
-  logger
-} = require("../utils/logger");
+const { logger } = require("../utils/logger");
 const requestStats = new Map();
 const profilerStartedAt = new Date();
-const SLOW_REQUEST_THRESHOLD_MS = Number(process.env.SLOW_REQUEST_THRESHOLD_MS || 700);
-const ENABLE_REQUEST_PROFILING = process.env.ENABLE_REQUEST_PROFILING !== "false";
-const ENABLE_VERBOSE_REQUEST_LOGS = process.env.ENABLE_VERBOSE_REQUEST_LOGS === "true";
-const REQUEST_PROFILER_MAX_ROUTES = Math.max(Number(process.env.REQUEST_PROFILER_MAX_ROUTES || 300), 50);
-const REQUEST_PROFILER_ENTRY_TTL_MS = Math.max(Number(process.env.REQUEST_PROFILER_ENTRY_TTL_MS || 6 * 60 * 60 * 1000), 60 * 1000);
+const SLOW_REQUEST_THRESHOLD_MS = Number(
+  process.env.SLOW_REQUEST_THRESHOLD_MS || 700,
+);
+const ENABLE_REQUEST_PROFILING =
+  process.env.ENABLE_REQUEST_PROFILING !== "false";
+const ENABLE_VERBOSE_REQUEST_LOGS =
+  process.env.ENABLE_VERBOSE_REQUEST_LOGS === "true";
+const REQUEST_PROFILER_MAX_ROUTES = Math.max(
+  Number(process.env.REQUEST_PROFILER_MAX_ROUTES || 300),
+  50,
+);
+const REQUEST_PROFILER_ENTRY_TTL_MS = Math.max(
+  Number(process.env.REQUEST_PROFILER_ENTRY_TTL_MS || 6 * 60 * 60 * 1000),
+  60 * 1000,
+);
 const round = (value = 0) => Math.round(Number(value || 0) * 100) / 100;
-const normalizeFallbackRoute = value => {
+const normalizeFallbackRoute = (value) => {
   const rawValue = String(value || "/").split("?")[0] || "/";
-  return rawValue.replace(/\/[0-9a-f]{24}(?=\/|$)/gi, "/:id").replace(/\/\d+(?=\/|$)/g, "/:id");
+  return rawValue
+    .replace(/\/[0-9a-f]{24}(?=\/|$)/gi, "/:id")
+    .replace(/\/\d+(?=\/|$)/g, "/:id");
 };
-const getRouteLabel = req => {
+const getRouteLabel = (req) => {
   const baseUrl = req.baseUrl || "";
   const routePath = req.route?.path || "";
   if (baseUrl || routePath) {
@@ -23,7 +33,10 @@ const getRouteLabel = req => {
 };
 const cleanupStaleRequestStats = (now = Date.now()) => {
   for (const [key, entry] of requestStats.entries()) {
-    if (!entry?.lastSeenAt || now - entry.lastSeenAt > REQUEST_PROFILER_ENTRY_TTL_MS) {
+    if (
+      !entry?.lastSeenAt ||
+      now - entry.lastSeenAt > REQUEST_PROFILER_ENTRY_TTL_MS
+    ) {
       requestStats.delete(key);
     }
   }
@@ -42,7 +55,7 @@ const updateRequestStats = ({
   route,
   statusCode,
   durationMs,
-  tenantId
+  tenantId,
 }) => {
   const key = `${method} ${route}`;
   const existing = requestStats.get(key) || {
@@ -58,7 +71,7 @@ const updateRequestStats = ({
     lastStatusCode: null,
     lastAt: null,
     lastSeenAt: 0,
-    tenantId: tenantId || null
+    tenantId: tenantId || null,
   };
   existing.count += 1;
   existing.totalMs += durationMs;
@@ -96,7 +109,7 @@ const requestProfiler = (req, res, next) => {
       route,
       statusCode: res.statusCode,
       durationMs,
-      tenantId
+      tenantId,
     });
     if (durationMs >= SLOW_REQUEST_THRESHOLD_MS) {
       logger.warn("Slow API request detected", {
@@ -104,7 +117,7 @@ const requestProfiler = (req, res, next) => {
         route,
         statusCode: res.statusCode,
         durationMs: round(durationMs),
-        tenantId
+        tenantId,
       });
       return;
     }
@@ -114,7 +127,7 @@ const requestProfiler = (req, res, next) => {
         route,
         statusCode: res.statusCode,
         durationMs: round(durationMs),
-        tenantId
+        tenantId,
       });
     }
   });
@@ -130,9 +143,18 @@ const getRequestProfilerSnapshot = (limit = 20) => {
     startedAt: profilerStartedAt.toISOString(),
     totalTrackedRoutes: rows.length,
     maxTrackedRoutes: REQUEST_PROFILER_MAX_ROUTES,
-    topByAverage: rows.slice().sort((left, right) => right.avgMs - left.avgMs).slice(0, normalizedLimit),
-    topByMax: rows.slice().sort((left, right) => right.maxMs - left.maxMs).slice(0, normalizedLimit),
-    topByVolume: rows.slice().sort((left, right) => right.count - left.count).slice(0, normalizedLimit)
+    topByAverage: rows
+      .slice()
+      .sort((left, right) => right.avgMs - left.avgMs)
+      .slice(0, normalizedLimit),
+    topByMax: rows
+      .slice()
+      .sort((left, right) => right.maxMs - left.maxMs)
+      .slice(0, normalizedLimit),
+    topByVolume: rows
+      .slice()
+      .sort((left, right) => right.count - left.count)
+      .slice(0, normalizedLimit),
   };
 };
 const resetRequestProfilerStats = () => {
@@ -141,5 +163,5 @@ const resetRequestProfilerStats = () => {
 module.exports = {
   requestProfiler,
   getRequestProfilerSnapshot,
-  resetRequestProfilerStats
+  resetRequestProfilerStats,
 };

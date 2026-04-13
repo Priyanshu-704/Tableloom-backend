@@ -1,30 +1,22 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const User = require("../models/User");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
 const crypto = require("crypto");
 const generatePassword = require("../utils/passwordGenerator");
 const {
   sendStaffCredentials,
-  sendPasswordResetEmail
+  sendPasswordResetEmail,
 } = require("../utils/emailService");
-const {
-  Permissions
-} = require("../config/permissions");
+const { Permissions } = require("../config/permissions");
 const {
   getDefaultRolePermissions,
   getEffectivePermissionsForUser,
-  hydrateUserPermissions
+  hydrateUserPermissions,
 } = require("../utils/permissionSettings");
-const {
-  normalizeTenantId
-} = require("../utils/tenantContext");
-const {
-  signAccessToken
-} = require("../utils/authTokens");
+const { normalizeTenantId } = require("../utils/tenantContext");
+const { signAccessToken } = require("../utils/authTokens");
 const setTokensInCookies = (res, refreshToken) => {
   const isProd = process.env.NODE_ENV === "production";
   res.cookie("refreshToken", refreshToken, {
@@ -32,14 +24,16 @@ const setTokensInCookies = (res, refreshToken) => {
     secure: isProd,
     sameSite: isProd ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/"
+    path: "/",
   });
 };
-const clearTokensFromCookies = res => {
+const clearTokensFromCookies = (res) => {
   const cookieOptions = {
     httpOnly: process.env.COOKIE_HTTPONLY === "true",
-    secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE === "true",
-    sameSite: process.env.COOKIE_SAMESITE || "none"
+    secure:
+      process.env.NODE_ENV === "production" &&
+      process.env.COOKIE_SECURE === "true",
+    sameSite: process.env.COOKIE_SAMESITE || "none",
   };
   if (process.env.NODE_ENV === "production" && process.env.COOKIE_DOMAIN) {
     cookieOptions.domain = process.env.COOKIE_DOMAIN;
@@ -52,7 +46,7 @@ const canManageRole = (requesterRole, targetRole) => {
     admin: ["admin", "manager", "chef", "waiter"],
     manager: ["chef", "waiter"],
     chef: [],
-    waiter: []
+    waiter: [],
   };
   return hierarchy[requesterRole]?.includes(targetRole) || false;
 };
@@ -63,11 +57,12 @@ const ensureSameTenantAccess = (requester, targetUser) => {
   if (requester?.role === "super_admin") {
     return true;
   }
-  return normalizeTenantId(requester?.tenantId) === normalizeTenantId(targetUser?.tenantId);
+  return (
+    normalizeTenantId(requester?.tenantId) ===
+    normalizeTenantId(targetUser?.tenantId)
+  );
 };
-const shapeAuthUser = (user = {}, {
-  permissions
-} = {}) => ({
+const shapeAuthUser = (user = {}, { permissions } = {}) => ({
   _id: user?._id || null,
   name: user?.name || "",
   email: user?.email || "",
@@ -75,13 +70,13 @@ const shapeAuthUser = (user = {}, {
   tenantId: user?.tenantId || null,
   forcePasswordChange: Boolean(user?.forcePasswordChange),
   isActive: user?.isActive !== false,
-  ...(Array.isArray(permissions) ? {
-    permissions
-  } : {})
+  ...(Array.isArray(permissions)
+    ? {
+        permissions,
+      }
+    : {}),
 });
-const shapeStaffUser = (user = {}, {
-  permissions
-} = {}) => ({
+const shapeStaffUser = (user = {}, { permissions } = {}) => ({
   _id: user?._id || null,
   name: user?.name || "",
   email: user?.email || "",
@@ -90,42 +85,41 @@ const shapeStaffUser = (user = {}, {
   isActive: user?.isActive !== false,
   forcePasswordChange: Boolean(user?.forcePasswordChange),
   createdAt: user?.createdAt || null,
-  ...(Array.isArray(permissions) ? {
-    permissions
-  } : Array.isArray(user?.customPermissions) ? {
-    permissions: user.customPermissions
-  } : {})
+  ...(Array.isArray(permissions)
+    ? {
+        permissions,
+      }
+    : Array.isArray(user?.customPermissions)
+      ? {
+          permissions: user.customPermissions,
+        }
+      : {}),
 });
 exports.registerStaff = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      role,
-      permissions = []
-    } = req.body;
+    const { name, email, role, permissions = [] } = req.body;
     const requestingUser = req.user;
     const tenantId = normalizeTenantId(requestingUser.tenantId);
     if (!requestingUser.hasPermission(Permissions.USER_CREATE)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to create users"
+        message: "Not authorized to create users",
       });
     }
     if (!canManageRole(requestingUser.role, role)) {
       return res.status(403).json({
         success: false,
-        message: `You are not authorized to register ${role} role`
+        message: `You are not authorized to register ${role} role`,
       });
     }
     const userExists = await User.findOne({
       email: String(email).trim().toLowerCase(),
-      tenantId
+      tenantId,
     });
     if (userExists) {
       return res.status(400).json({
         success: false,
-        message: "User already exists with this email"
+        message: "User already exists with this email",
       });
     }
     const tempPassword = generatePassword();
@@ -138,15 +132,20 @@ exports.registerStaff = async (req, res) => {
       tenantId,
       forcePasswordChange: true,
       createdBy: requestingUser._id,
-      updatedBy: requestingUser._id
+      updatedBy: requestingUser._id,
     };
-    if (permissions.length > 0 && requestingUser.hasPermission(Permissions.USER_MANAGE_PERMISSIONS)) {
+    if (
+      permissions.length > 0 &&
+      requestingUser.hasPermission(Permissions.USER_MANAGE_PERMISSIONS)
+    ) {
       const allPermissions = Object.values(Permissions);
-      const invalidPermissions = permissions.filter(p => !allPermissions.includes(p));
+      const invalidPermissions = permissions.filter(
+        (p) => !allPermissions.includes(p),
+      );
       if (invalidPermissions.length > 0) {
         return res.status(400).json({
           success: false,
-          message: `Invalid permissions: ${invalidPermissions.join(", ")}`
+          message: `Invalid permissions: ${invalidPermissions.join(", ")}`,
         });
       }
       userData.customPermissions = permissions;
@@ -156,16 +155,23 @@ exports.registerStaff = async (req, res) => {
     const user = await User.create(userData);
     await hydrateUserPermissions(user);
     if (user) {
-      const emailSent = await sendStaffCredentials(email, name, tempPassword, role);
+      const emailSent = await sendStaffCredentials(
+        email,
+        name,
+        tempPassword,
+        role,
+      );
       res.status(201).json({
         success: true,
-        message: "Staff member registered successfully" + (emailSent ? " and credentials emailed" : " but email failed"),
+        message:
+          "Staff member registered successfully" +
+          (emailSent ? " and credentials emailed" : " but email failed"),
         data: {
           ...shapeStaffUser(user, {
-            permissions: await getEffectivePermissionsForUser(user)
+            permissions: await getEffectivePermissionsForUser(user),
           }),
-          emailSent
-        }
+          emailSent,
+        },
       });
     }
   } catch (error) {
@@ -173,27 +179,24 @@ exports.registerStaff = async (req, res) => {
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
-        message: "Email already exists"
+        message: "Email already exists",
       });
     }
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.loginStaff = async (req, res) => {
   try {
-    const {
-      email,
-      password
-    } = req.body;
+    const { email, password } = req.body;
     const tenantId = normalizeTenantId(req.tenant);
     if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Please provide email and password"
+        message: "Please provide email and password",
       });
     }
     const normalizedEmail = String(email).trim().toLowerCase();
@@ -201,19 +204,23 @@ exports.loginStaff = async (req, res) => {
     if (tenantId) {
       user = await User.findOne({
         email: normalizedEmail,
-        tenantId
+        tenantId,
       }).select("+password");
     } else {
       const matchingUsers = await User.find({
-        email: normalizedEmail
-      }).sort({
-        role: 1,
-        createdAt: 1
-      }).limit(2).select("+password");
+        email: normalizedEmail,
+      })
+        .sort({
+          role: 1,
+          createdAt: 1,
+        })
+        .limit(2)
+        .select("+password");
       if (matchingUsers.length > 1) {
         return res.status(400).json({
           success: false,
-          message: "Restaurant workspace is required for this account. Please login from the restaurant workspace or provide tenant headers."
+          message:
+            "Restaurant workspace is required for this account. Please login from the restaurant workspace or provide tenant headers.",
         });
       }
       [user] = matchingUsers;
@@ -222,13 +229,14 @@ exports.loginStaff = async (req, res) => {
       if (!user.isActive) {
         return res.status(401).json({
           success: false,
-          message: "Account is deactivated. Please contact administrator."
+          message: "Account is deactivated. Please contact administrator.",
         });
       }
       if (!tenantId && user.role !== "super_admin") {
         return res.status(403).json({
           success: false,
-          message: "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL."
+          message:
+            "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL.",
         });
       }
       const accessToken = signAccessToken(user);
@@ -236,19 +244,19 @@ exports.loginStaff = async (req, res) => {
       user.lastLogin = Date.now();
       user.loginCount = (user.loginCount || 0) + 1;
       await user.save({
-        validateBeforeSave: false
+        validateBeforeSave: false,
       });
       setTokensInCookies(res, refreshToken);
       res.status(200).json({
         success: true,
         message: "Login successful",
         accessToken,
-        data: shapeAuthUser(user)
+        data: shapeAuthUser(user),
       });
     } else {
       res.status(401).json({
         success: false,
-        message: "Invalid credentials"
+        message: "Invalid credentials",
       });
     }
   } catch (error) {
@@ -256,7 +264,7 @@ exports.loginStaff = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -266,20 +274,20 @@ exports.logout = async (req, res) => {
     if (user) {
       user.clearRefreshToken();
       await user.save({
-        validateBeforeSave: false
+        validateBeforeSave: false,
       });
     }
     clearTokensFromCookies(res);
     res.status(200).json({
       success: true,
-      message: "Logged out successfully"
+      message: "Logged out successfully",
     });
   } catch (error) {
     logger.error("Logout error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -289,22 +297,25 @@ exports.refreshToken = async (req, res) => {
   if (!refreshToken) {
     return res.status(401).json({
       success: false,
-      message: "No refresh token provided"
+      message: "No refresh token provided",
     });
   }
   try {
-    const hashedRefreshToken = crypto.createHash("sha256").update(refreshToken).digest("hex");
+    const hashedRefreshToken = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
     const user = await User.findOne({
       refreshToken: hashedRefreshToken,
       refreshTokenExpires: {
-        $gt: Date.now()
-      }
+        $gt: Date.now(),
+      },
     });
     if (!user) {
       clearTokensFromCookies(res);
       return res.status(401).json({
         success: false,
-        message: "Invalid or expired refresh token. Please login again."
+        message: "Invalid or expired refresh token. Please login again.",
       });
     }
     const accessToken = signAccessToken(user);
@@ -314,10 +325,10 @@ exports.refreshToken = async (req, res) => {
       accessToken,
       data: {
         ...shapeAuthUser(user, {
-          permissions: await getEffectivePermissionsForUser(user)
+          permissions: await getEffectivePermissionsForUser(user),
         }),
-        sessionId: user.sessionId
-      }
+        sessionId: user.sessionId,
+      },
     });
   } catch (error) {
     logger.error("Refresh token error:", error);
@@ -325,7 +336,7 @@ exports.refreshToken = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -334,20 +345,15 @@ exports.getAllStaff = async (req, res) => {
     if (!req.user.hasPermission(Permissions.USER_VIEW_ALL)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to view all users"
+        message: "Not authorized to view all users",
       });
     }
-    const {
-      role,
-      isActive,
-      search,
-      page = 1,
-      limit = 20
-    } = req.query;
-    const tenantId = normalizeTenantId(req.tenant) || normalizeTenantId(req.user?.tenantId);
+    const { role, isActive, search, page = 1, limit = 20 } = req.query;
+    const tenantId =
+      normalizeTenantId(req.tenant) || normalizeTenantId(req.user?.tenantId);
     let query = {};
     query.role = {
-      $in: ["admin", "manager", "chef", "waiter"]
+      $in: ["admin", "manager", "chef", "waiter"],
     };
     query.tenantId = tenantId;
     if (role) {
@@ -358,23 +364,33 @@ exports.getAllStaff = async (req, res) => {
     }
     if (search) {
       const regex = new RegExp(search.trim(), "i");
-      query.$or = [{
-        name: regex
-      }, {
-        email: regex
-      }];
+      query.$or = [
+        {
+          name: regex,
+        },
+        {
+          email: regex,
+        },
+      ];
     }
     if (req.user.role === "manager") {
       query.role = {
-        $in: ["chef", "waiter"]
+        $in: ["chef", "waiter"],
       };
     }
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
-    const users = await User.find(query).select("name email phone role isActive forcePasswordChange createdAt customPermissions").sort({
-      createdAt: -1
-    }).skip(skip).limit(limitNum).lean();
+    const users = await User.find(query)
+      .select(
+        "name email phone role isActive forcePasswordChange createdAt customPermissions",
+      )
+      .sort({
+        createdAt: -1,
+      })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
     const total = await User.countDocuments(query);
     res.status(200).json({
       success: true,
@@ -382,32 +398,34 @@ exports.getAllStaff = async (req, res) => {
       total,
       pagination: {
         page: pageNum,
-        pages: Math.ceil(total / limitNum)
+        pages: Math.ceil(total / limitNum),
       },
-      data: users.map(user => shapeStaffUser(user))
+      data: users.map((user) => shapeStaffUser(user)),
     });
   } catch (error) {
     logger.error("Get all staff error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select("name email role tenantId forcePasswordChange isActive");
+    const user = await User.findById(req.user._id).select(
+      "name email role tenantId forcePasswordChange isActive",
+    );
     res.status(200).json({
       success: true,
-      data: shapeAuthUser(user)
+      data: shapeAuthUser(user),
     });
   } catch (error) {
     logger.error("Get profile error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -416,38 +434,38 @@ exports.updateProfile = async (req, res) => {
     const fieldsToUpdate = {
       name: req.body.name,
       email: req.body.email,
-      updatedBy: req.user._id
+      updatedBy: req.user._id,
     };
     if (req.body.email) {
       const existingUser = await User.findOne({
         email: req.body.email,
         tenantId: req.user.tenantId,
         _id: {
-          $ne: req.user._id
-        }
+          $ne: req.user._id,
+        },
       });
       if (existingUser) {
         return res.status(400).json({
           success: false,
-          message: "Email already in use"
+          message: "Email already in use",
         });
       }
     }
     const user = await User.findByIdAndUpdate(req.user._id, fieldsToUpdate, {
       new: true,
-      runValidators: true
+      runValidators: true,
     }).select("name email role tenantId forcePasswordChange isActive");
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
-      data: shapeAuthUser(user)
+      data: shapeAuthUser(user),
     });
   } catch (error) {
     logger.error("Update profile error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -455,11 +473,13 @@ exports.updatePassword = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("+password");
     const isFirstTimePasswordUpdate = Boolean(user?.forcePasswordChange);
-    const isCurrentPasswordCorrect = await user.matchPassword(req.body?.currentPassword);
+    const isCurrentPasswordCorrect = await user.matchPassword(
+      req.body?.currentPassword,
+    );
     if (!isCurrentPasswordCorrect) {
       return res.status(401).json({
         success: false,
-        message: "Current password is incorrect"
+        message: "Current password is incorrect",
       });
     }
     user.password = req.body?.newPassword;
@@ -468,27 +488,27 @@ exports.updatePassword = async (req, res) => {
     await user.save();
     user.clearRefreshToken();
     await user.save({
-      validateBeforeSave: false
+      validateBeforeSave: false,
     });
     clearTokensFromCookies(res);
     if (isFirstTimePasswordUpdate) {
       return res.status(200).json({
         success: true,
         message: "Password updated successfully. Please login again.",
-        logoutRequired: true
+        logoutRequired: true,
       });
     }
     res.status(200).json({
       success: true,
       message: "Password updated successfully. Please login again.",
-      logoutRequired: true
+      logoutRequired: true,
     });
   } catch (error) {
     logger.error("Update password error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -496,7 +516,9 @@ exports.forgotPassword = async (req, res) => {
   let user;
   try {
     const forgotPasswordQuery = {
-      email: String(req.body.email || "").trim().toLowerCase()
+      email: String(req.body.email || "")
+        .trim()
+        .toLowerCase(),
     };
     if (req.tenant?._id) {
       forgotPasswordQuery.tenantId = req.tenant._id;
@@ -507,18 +529,20 @@ exports.forgotPassword = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "No user found with that email"
+        message: "No user found with that email",
       });
     }
     const resetToken = user.getResetPasswordToken();
     logger.info("Generated Reset Token:", resetToken);
     await user.save({
-      validateBeforeSave: false
+      validateBeforeSave: false,
     });
     const emailSent = await sendPasswordResetEmail(user.email, resetToken);
     res.status(200).json({
       success: true,
-      message: emailSent ? "Password reset email sent" : "Email could not be sent"
+      message: emailSent
+        ? "Password reset email sent"
+        : "Email could not be sent",
     });
   } catch (error) {
     logger.error("Forgot password error:", error);
@@ -526,76 +550,80 @@ exports.forgotPassword = async (req, res) => {
       user.passwordResetToken = undefined;
       user.passwordResetExpires = undefined;
       await user.save({
-        validateBeforeSave: false
+        validateBeforeSave: false,
       });
     }
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.validateResetToken = async (req, res) => {
   try {
-    const resetPasswordToken = crypto.createHash("sha256").update(req.params.resetToken).digest("hex");
+    const resetPasswordToken = crypto
+      .createHash("sha256")
+      .update(req.params.resetToken)
+      .digest("hex");
     const user = await User.findOne({
       passwordResetToken: resetPasswordToken,
       passwordResetExpires: {
-        $gt: Date.now()
-      }
+        $gt: Date.now(),
+      },
     });
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired reset token"
+        message: "Invalid or expired reset token",
       });
     }
     res.status(200).json({
       success: true,
       message: "Valid reset token",
       data: {
-        email: user.email
-      }
+        email: user.email,
+      },
     });
   } catch (error) {
     logger.error("Validate reset token error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
 exports.resetPassword = async (req, res) => {
   try {
-    const {
-      password
-    } = req.body;
+    const { password } = req.body;
     if (!password || password.length < 6) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 6 characters long"
+        message: "Password must be at least 6 characters long",
       });
     }
-    const resetPasswordToken = crypto.createHash("sha256").update(req.params.resetToken).digest("hex");
+    const resetPasswordToken = crypto
+      .createHash("sha256")
+      .update(req.params.resetToken)
+      .digest("hex");
     const user = await User.findOne({
       passwordResetToken: resetPasswordToken,
       passwordResetExpires: {
-        $gt: Date.now()
-      }
+        $gt: Date.now(),
+      },
     }).select("+password");
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "Invalid or expired reset token"
+        message: "Invalid or expired reset token",
       });
     }
     const isSameAsOldPassword = await user.matchPassword(password);
     if (isSameAsOldPassword) {
       return res.status(400).json({
         success: false,
-        message: "New password cannot be same as old password"
+        message: "New password cannot be same as old password",
       });
     }
     user.password = password;
@@ -607,14 +635,15 @@ exports.resetPassword = async (req, res) => {
     clearTokensFromCookies(res);
     res.status(200).json({
       success: true,
-      message: "Password reset successful. You can now login with your new password."
+      message:
+        "Password reset successful. You can now login with your new password.",
     });
   } catch (error) {
     logger.error("Reset password error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -623,36 +652,34 @@ exports.toggleStaffStatus = async (req, res) => {
     if (!req.user.hasPermission(Permissions.USER_CHANGE_STATUS)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to change user status"
+        message: "Not authorized to change user status",
       });
     }
-    const {
-      isActive
-    } = req.body;
+    const { isActive } = req.body;
     const targetUserId = req.params.id;
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: "User not found",
       });
     }
     if (!ensureSameTenantAccess(req.user, targetUser)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to manage users from another restaurant"
+        message: "Not authorized to manage users from another restaurant",
       });
     }
     if (!canManageRole(req.user.role, targetUser.role)) {
       return res.status(403).json({
         success: false,
-        message: `You are not authorized to manage ${targetUser.role} role`
+        message: `You are not authorized to manage ${targetUser.role} role`,
       });
     }
     if (targetUserId === req.user._id.toString()) {
       return res.status(400).json({
         success: false,
-        message: "Cannot change your own status"
+        message: "Cannot change your own status",
       });
     }
     targetUser.isActive = isActive;
@@ -661,22 +688,22 @@ exports.toggleStaffStatus = async (req, res) => {
     if (!isActive) {
       targetUser.clearRefreshToken();
       await targetUser.save({
-        validateBeforeSave: false
+        validateBeforeSave: false,
       });
     }
     res.status(200).json({
       success: true,
       message: `User ${isActive ? "activated" : "deactivated"} successfully`,
       data: shapeStaffUser(targetUser, {
-        permissions: await getEffectivePermissionsForUser(targetUser)
-      })
+        permissions: await getEffectivePermissionsForUser(targetUser),
+      }),
     });
   } catch (error) {
     logger.error("Toggle user status error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -685,46 +712,46 @@ exports.deleteStaff = async (req, res) => {
     if (!req.user.hasPermission(Permissions.USER_DELETE)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to delete users"
+        message: "Not authorized to delete users",
       });
     }
     const targetUserId = req.params.id;
     if (targetUserId === req.user._id.toString()) {
       return res.status(400).json({
         success: false,
-        message: "Cannot delete your own account"
+        message: "Cannot delete your own account",
       });
     }
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: "User not found",
       });
     }
     if (!ensureSameTenantAccess(req.user, targetUser)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to manage users from another restaurant"
+        message: "Not authorized to manage users from another restaurant",
       });
     }
     if (!canManageRole(req.user.role, targetUser.role)) {
       return res.status(403).json({
         success: false,
-        message: `You are not authorized to delete ${targetUser.role} role`
+        message: `You are not authorized to delete ${targetUser.role} role`,
       });
     }
     await User.findByIdAndDelete(targetUserId);
     res.status(200).json({
       success: true,
-      message: "User deleted successfully"
+      message: "User deleted successfully",
     });
   } catch (error) {
     logger.error("Delete user error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -733,41 +760,47 @@ exports.getUserById = async (req, res) => {
     if (!req.user.hasPermission(Permissions.USER_VIEW_ALL)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to view user details"
+        message: "Not authorized to view user details",
       });
     }
-    const user = await User.findById(req.params.id).select("-password -refreshToken -__v").populate("createdBy", "name email").populate("updatedBy", "name email");
+    const user = await User.findById(req.params.id)
+      .select("-password -refreshToken -__v")
+      .populate("createdBy", "name email")
+      .populate("updatedBy", "name email");
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: "User not found",
       });
     }
     if (!ensureSameTenantAccess(req.user, user)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to view this user"
+        message: "Not authorized to view this user",
       });
     }
-    if (req.user.role === "manager" && ["admin", "manager"].includes(user.role)) {
+    if (
+      req.user.role === "manager" &&
+      ["admin", "manager"].includes(user.role)
+    ) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to view this user"
+        message: "Not authorized to view this user",
       });
     }
     res.status(200).json({
       success: true,
       data: {
         ...user.toObject(),
-        permissions: await getEffectivePermissionsForUser(user)
-      }
+        permissions: await getEffectivePermissionsForUser(user),
+      },
     });
   } catch (error) {
     logger.error("Get user by ID error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };
@@ -776,42 +809,40 @@ exports.updateUserRole = async (req, res) => {
     if (!req.user.hasPermission(Permissions.USER_CHANGE_ROLE)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to change user roles"
+        message: "Not authorized to change user roles",
       });
     }
-    const {
-      role
-    } = req.body;
+    const { role } = req.body;
     const targetUserId = req.params.id;
     if (!["admin", "manager", "chef", "waiter"].includes(role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role specified"
+        message: "Invalid role specified",
       });
     }
     if (!canManageRole(req.user.role, role)) {
       return res.status(403).json({
         success: false,
-        message: `You are not authorized to assign ${role} role`
+        message: `You are not authorized to assign ${role} role`,
       });
     }
     const targetUser = await User.findById(targetUserId);
     if (!targetUser) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: "User not found",
       });
     }
     if (!ensureSameTenantAccess(req.user, targetUser)) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to manage users from another restaurant"
+        message: "Not authorized to manage users from another restaurant",
       });
     }
     if (targetUserId === req.user._id.toString()) {
       return res.status(400).json({
         success: false,
-        message: "Cannot change your own role"
+        message: "Cannot change your own role",
       });
     }
     const wasActive = targetUser.isActive;
@@ -828,15 +859,15 @@ exports.updateUserRole = async (req, res) => {
       success: true,
       message: `User role updated to ${role} successfully`,
       data: shapeStaffUser(targetUser, {
-        permissions: await getEffectivePermissionsForUser(targetUser)
-      })
+        permissions: await getEffectivePermissionsForUser(targetUser),
+      }),
     });
   } catch (error) {
     logger.error("Update user role error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",
-      error: error.message
+      error: error.message,
     });
   }
 };

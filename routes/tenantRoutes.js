@@ -7,12 +7,9 @@ const {
   getTenantOverview,
   updateTenantStatus,
   verifyTenant,
-  rejectTenant
+  rejectTenant,
 } = require("../controllers/tenantController");
-const {
-  protect,
-  requireRole
-} = require("../middleware/auth");
+const { protect, requireRole } = require("../middleware/auth");
 router.post("/register", registerTenant);
 router.use(protect, requireRole("super_admin"));
 router.get("/", getTenants);

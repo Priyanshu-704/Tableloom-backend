@@ -1,189 +1,189 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 const billSchema = new mongoose.Schema({
   billNumber: {
     type: String,
     unique: true,
-    index: true
+    index: true,
   },
   orderId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "Order",
-    required: true
+    required: true,
   },
   sessionId: {
     type: String,
     required: true,
-    index: true
+    index: true,
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Customer"
+    ref: "Customer",
   },
   tableId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Table"
+    ref: "Table",
   },
   billDate: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   requestedAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   finalizedAt: Date,
   subtotal: {
     type: Number,
     required: true,
-    min: 0
+    min: 0,
   },
   taxAmount: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   },
   taxRate: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   },
   taxInclusive: {
     type: Boolean,
-    default: false
+    default: false,
   },
   serviceCharge: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   },
   serviceChargeRate: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   },
   discountAmount: {
     type: Number,
     default: 0,
-    min: 0
+    min: 0,
   },
   currency: {
     type: String,
-    default: "INR"
+    default: "INR",
   },
   currencySymbol: {
     type: String,
-    default: "₹"
+    default: "₹",
   },
   totalAmount: {
     type: Number,
     required: true,
-    min: 0
+    min: 0,
   },
-  items: [{
-    menuItem: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "MenuItem"
+  items: [
+    {
+      menuItem: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "MenuItem",
+      },
+      name: {
+        type: String,
+        required: true,
+      },
+      size: String,
+      quantity: {
+        type: Number,
+        required: true,
+        min: 1,
+      },
+      unitPrice: {
+        type: Number,
+        required: true,
+        min: 0,
+      },
+      totalPrice: {
+        type: Number,
+        required: true,
+        min: 0,
+      },
     },
-    name: {
-      type: String,
-      required: true
-    },
-    size: String,
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1
-    },
-    unitPrice: {
-      type: Number,
-      required: true,
-      min: 0
-    },
-    totalPrice: {
-      type: Number,
-      required: true,
-      min: 0
-    }
-  }],
+  ],
   customerEmail: String,
   customerPhone: String,
   customerName: String,
   paymentStatus: {
     type: String,
     enum: ["pending", "paid", "refunded", "failed"],
-    default: "pending"
+    default: "pending",
   },
   paymentMethod: {
     type: String,
     enum: ["cash", "card", "online", "upi", "wallet", "pending"],
-    default: "pending"
+    default: "pending",
   },
   transactionId: String,
   paidAt: Date,
   paymentGateway: String,
   emailSent: {
     type: Boolean,
-    default: false
+    default: false,
   },
   emailSentAt: Date,
   emailError: String,
   emailRecipient: String,
   billViewed: {
     type: Boolean,
-    default: false
+    default: false,
   },
   lastViewedAt: Date,
   viewCount: {
     type: Number,
-    default: 0
+    default: 0,
   },
   pdfMinioPath: {
-    type: String
+    type: String,
   },
   pdfBucket: {
-    type: String
+    type: String,
   },
   pdfPublicId: {
-    type: String
+    type: String,
   },
   pdfProvider: {
-    type: String
+    type: String,
   },
   pdfUrl: {
-    type: String
+    type: String,
   },
   pdfGenerated: {
     type: Boolean,
-    default: false
+    default: false,
   },
   pdfError: {
-    type: String
+    type: String,
   },
   billStatus: {
     type: String,
     enum: ["draft", "sent", "viewed", "paid", "finalized"],
-    default: "draft"
+    default: "draft",
   },
   metadata: {
     type: Map,
-    of: mongoose.Schema.Types.Mixed
+    of: mongoose.Schema.Types.Mixed,
   },
   version: {
     type: Number,
-    default: 1
+    default: 1,
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   updatedAt: {
     type: Date,
-    default: Date.now
-  }
+    default: Date.now,
+  },
 });
 billSchema.plugin(tenantScoped);
 billSchema.pre("save", function () {
@@ -192,27 +192,32 @@ billSchema.pre("save", function () {
 billSchema.pre("save", function () {
   if (this.isNew && !this.billNumber) {
     const date = new Date();
-    const dateStr = date.getFullYear().toString().slice(-2) + (date.getMonth() + 1).toString().padStart(2, "0") + date.getDate().toString().padStart(2, "0");
+    const dateStr =
+      date.getFullYear().toString().slice(-2) +
+      (date.getMonth() + 1).toString().padStart(2, "0") +
+      date.getDate().toString().padStart(2, "0");
     const timestampPart = Date.now().toString().slice(-4);
-    const randomPart = Math.floor(Math.random() * 1000).toString().padStart(3, "0");
+    const randomPart = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, "0");
     this.billNumber = `BILL-${dateStr}-${timestampPart}${randomPart}`;
     logger.info(`Generated bill number: ${this.billNumber}`);
   }
 });
 billSchema.index({
   sessionId: 1,
-  createdAt: -1
+  createdAt: -1,
 });
 billSchema.index({
-  customerEmail: 1
+  customerEmail: 1,
 });
 billSchema.index({
-  paymentStatus: 1
+  paymentStatus: 1,
 });
 billSchema.index({
-  billStatus: 1
+  billStatus: 1,
 });
 billSchema.index({
-  createdAt: -1
+  createdAt: -1,
 });
 module.exports = mongoose.model("Bill", billSchema);

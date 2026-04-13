@@ -1,11 +1,9 @@
-const {
-  logger
-} = require("./utils/logger.js");
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const User = require('./models/User');
-require('dotenv').config({
-  quiet: true
+const { logger } = require("./utils/logger.js");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const User = require("./models/User");
+require("dotenv").config({
+  quiet: true,
 });
 const connectDB = async () => {
   try {
@@ -13,72 +11,75 @@ const connectDB = async () => {
     logger.info(`MongoDB Connected: ${conn.connection.host}`);
     return conn;
   } catch (error) {
-    logger.error('Database connection error:', error);
+    logger.error("Database connection error:", error);
     process.exit(1);
   }
 };
 const createAdminUser = async () => {
   try {
     const existingAdmin = await User.findOne({
-      $or: [{
-        email: 'admin@restaurant.com'
-      }, {
-        role: 'admin'
-      }]
+      $or: [
+        {
+          email: "admin@restaurant.com",
+        },
+        {
+          role: "admin",
+        },
+      ],
     });
     if (existingAdmin) {
-      logger.info('Admin user already exists:');
+      logger.info("Admin user already exists:");
       logger.info({
         id: existingAdmin._id,
         name: existingAdmin.name,
         email: existingAdmin.email,
-        role: existingAdmin.role
+        role: existingAdmin.role,
       });
       return existingAdmin;
     }
     const adminUser = await User.create({
-      name: 'System Administrator',
-      email: 'admin2@restaurant.com',
-      password: 'AdminTest123@$',
-      role: 'admin',
-      isActive: true
+      name: "System Administrator",
+      email: "admin2@restaurant.com",
+      password: "AdminTest123@$",
+      role: "admin",
+      isActive: true,
     });
-    logger.info('Admin user created successfully.');
+    logger.info("Admin user created successfully.");
     logger.info({
       id: adminUser._id,
       name: adminUser.name,
       email: adminUser.email,
       role: adminUser.role,
-      password: 'AdminTest123@$'
+      password: "AdminTest123@$",
     });
-    logger.info('\nLogin Credentials:');
-    logger.info('Email: admin2@restaurant.com');
-    logger.info('Password: AdminTest123@$');
-    logger.info('\nPlease change the password after first login.');
+    logger.info("\nLogin Credentials:");
+    logger.info("Email: admin2@restaurant.com");
+    logger.info("Password: AdminTest123@$");
+    logger.info("\nPlease change the password after first login.");
     return adminUser;
   } catch (error) {
-    logger.error('Error creating admin user:', error);
+    logger.error("Error creating admin user:", error);
     if (error.code === 11000) {
-      logger.info('Duplicate key error - Admin might already exist');
+      logger.info("Duplicate key error - Admin might already exist");
     }
     throw error;
   }
 };
 const seedAdmin = async () => {
   try {
-    logger.info('Starting admin seed...');
+    logger.info("Starting admin seed...");
     await connectDB();
     await createAdminUser();
-    logger.info('Admin seed completed successfully.');
-    logger.info('\nYou can now:');
-    logger.info('1. Login with admin credentials');
-    logger.info('2. Create other staff members');
-    logger.info('3. Set up tables and menu items');
-    logger.info('4. Test all features');
+    logger.info("Admin seed completed successfully.");
+    logger.info("\nYou can now:");
+    logger.info("1. Login with admin credentials");
+    logger.info("2. Create other staff members");
+    logger.info("3. Set up tables and menu items");
+    logger.info("4. Test all features");
     mongoose.connection.close();
-    logger.info('Database connection closed.');
+    logger.info("Database connection closed.");
   } catch (error) {
-    logger.error('Seed failed:', error);
+    logger.error("Seed failed:", error);
     process.exit(1);
   }
 };
@@ -87,5 +88,5 @@ if (require.main === module) {
 }
 module.exports = {
   seedAdmin,
-  createAdminUser
+  createAdminUser,
 };

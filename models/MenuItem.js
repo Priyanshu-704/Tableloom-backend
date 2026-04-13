@@ -1,9 +1,7 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
-const resolveStationFromCategory = async categoryId => {
+const resolveStationFromCategory = async (categoryId) => {
   if (!categoryId) {
     return null;
   }
@@ -16,205 +14,213 @@ const menuItemSchema = new mongoose.Schema({
     type: String,
     required: [true, "Please add a menu item name"],
     trim: true,
-    maxlength: [100, "Menu item name cannot exceed 100 characters"]
+    maxlength: [100, "Menu item name cannot exceed 100 characters"],
   },
   description: {
     type: String,
-    maxlength: [500, "Description cannot exceed 500 characters"]
+    maxlength: [500, "Description cannot exceed 500 characters"],
   },
-  prices: [{
-    sizeId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Size",
-      required: true
+  prices: [
+    {
+      sizeId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Size",
+        required: true,
+      },
+      price: {
+        type: Number,
+        required: [true, "Please add a price for this size"],
+        min: [0, "Price cannot be negative"],
+      },
+      costPrice: {
+        type: Number,
+        min: [0, "Cost price cannot be negative"],
+      },
     },
-    price: {
-      type: Number,
-      required: [true, "Please add a price for this size"],
-      min: [0, "Price cannot be negative"]
-    },
-    costPrice: {
-      type: Number,
-      min: [0, "Cost price cannot be negative"]
-    }
-  }],
+  ],
   image: {
     type: String,
-    default: null
+    default: null,
   },
   thumbnail: {
     type: String,
-    default: null
+    default: null,
   },
   imagePublicId: {
     type: String,
-    default: null
+    default: null,
   },
   thumbnailPublicId: {
     type: String,
-    default: null
+    default: null,
   },
   imageProvider: {
     type: String,
-    default: null
+    default: null,
   },
   category: {
     type: mongoose.Schema.ObjectId,
     ref: "Category",
-    required: true
+    required: true,
   },
   station: {
     type: mongoose.Schema.ObjectId,
     ref: "KitchenStation",
-    required: true
+    required: true,
   },
-  ingredients: [{
-    type: String,
-    trim: true
-  }],
-  allergens: [{
-    type: String,
-    trim: true
-  }],
+  ingredients: [
+    {
+      type: String,
+      trim: true,
+    },
+  ],
+  allergens: [
+    {
+      type: String,
+      trim: true,
+    },
+  ],
   spiceLevel: {
     type: Number,
     min: 0,
     max: 5,
-    default: 0
+    default: 0,
   },
   preparationTime: {
     type: Number,
     required: [true, "Preparation time is required"],
-    min: [1, "Preparation time must be at least 1 minute"]
+    min: [1, "Preparation time must be at least 1 minute"],
   },
   isVegetarian: {
     type: Boolean,
-    default: false
+    default: false,
   },
   isNonVegetarian: {
     type: Boolean,
-    default: false
+    default: false,
   },
   isVegan: {
     type: Boolean,
-    default: false
+    default: false,
   },
   isGlutenFree: {
     type: Boolean,
-    default: false
+    default: false,
   },
   isAvailable: {
     type: Boolean,
-    default: true
+    default: true,
   },
   isActive: {
     type: Boolean,
-    default: true
+    default: true,
   },
   displayOrder: {
     type: Number,
-    default: 0
+    default: 0,
   },
-  tags: [{
-    type: String,
-    trim: true
-  }],
+  tags: [
+    {
+      type: String,
+      trim: true,
+    },
+  ],
   nutritionalInfo: {
     calories: {
       type: Number,
-      min: 0
+      min: 0,
     },
     protein: {
       type: Number,
-      min: 0
+      min: 0,
     },
     carbs: {
       type: Number,
-      min: 0
+      min: 0,
     },
     fat: {
       type: Number,
-      min: 0
-    }
+      min: 0,
+    },
   },
   orderCount: {
     type: Number,
-    default: 0
+    default: 0,
   },
   lastOrdered: {
-    type: Date
+    type: Date,
   },
   seasonal: {
     isSeasonal: {
       type: Boolean,
-      default: false
+      default: false,
     },
     startDate: {
-      type: Date
+      type: Date,
     },
     endDate: {
-      type: Date
+      type: Date,
     },
     seasonName: {
-      type: String
-    }
+      type: String,
+    },
   },
   discount: {
     isActive: {
       type: Boolean,
-      default: false
+      default: false,
     },
     type: {
       type: String,
       enum: ["percentage", "fixed"],
-      default: "percentage"
+      default: "percentage",
     },
     value: {
       type: Number,
       default: 0,
-      min: 0
+      min: 0,
     },
     code: {
       type: String,
       trim: true,
       uppercase: true,
-      default: ""
+      default: "",
     },
     description: {
       type: String,
       trim: true,
-      default: ""
+      default: "",
     },
     startDate: {
       type: Date,
-      default: null
+      default: null,
     },
     endDate: {
       type: Date,
-      default: null
-    }
+      default: null,
+    },
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   createdBy: {
     type: mongoose.Schema.ObjectId,
     ref: "User",
-    required: true
+    required: true,
   },
   updatedAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   updatedBy: {
     type: mongoose.Schema.ObjectId,
-    ref: "User"
-  }
+    ref: "User",
+  },
 });
 menuItemSchema.index({
   tenantId: 1,
-  category: 1
+  category: 1,
 });
 menuItemSchema.pre("save", async function () {
   this.updatedAt = Date.now();
@@ -240,7 +246,7 @@ menuItemSchema.pre("findOneAndUpdate", async function () {
   const hasDirectStationUpdate = update?.station !== undefined;
   const hasSetStationUpdate = update?.$set?.station !== undefined;
   this.set({
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   });
   if (hasDirectStationUpdate) {
     delete update.station;
@@ -248,13 +254,21 @@ menuItemSchema.pre("findOneAndUpdate", async function () {
   if (hasSetStationUpdate) {
     delete update.$set.station;
   }
-  if (update.category || update.$set?.category || hasDirectStationUpdate || hasSetStationUpdate) {
+  if (
+    update.category ||
+    update.$set?.category ||
+    hasDirectStationUpdate ||
+    hasSetStationUpdate
+  ) {
     try {
-      const currentItem = await this.model.findOne(this.getQuery()).select("category");
-      const categoryId = update.category || update.$set?.category || currentItem?.category;
+      const currentItem = await this.model
+        .findOne(this.getQuery())
+        .select("category");
+      const categoryId =
+        update.category || update.$set?.category || currentItem?.category;
       const stationId = await resolveStationFromCategory(categoryId);
       this.set({
-        station: stationId
+        station: stationId,
       });
     } catch (error) {
       logger.error("Error updating menu item station:", error);
@@ -285,26 +299,34 @@ menuItemSchema.methods.getActiveDiscount = function () {
   }
   return discount;
 };
-menuItemSchema.statics.updateStationForCategory = async function (categoryId, stationId = null) {
+menuItemSchema.statics.updateStationForCategory = async function (
+  categoryId,
+  stationId = null,
+) {
   try {
-    const updateData = stationId ? {
-      station: stationId
-    } : {
-      station: null
-    };
-    const result = await this.updateMany({
-      category: categoryId
-    }, updateData);
+    const updateData = stationId
+      ? {
+          station: stationId,
+        }
+      : {
+          station: null,
+        };
+    const result = await this.updateMany(
+      {
+        category: categoryId,
+      },
+      updateData,
+    );
     return {
       success: true,
       modifiedCount: result.modifiedCount,
-      message: `Updated station for ${result.modifiedCount} menu items`
+      message: `Updated station for ${result.modifiedCount} menu items`,
     };
   } catch (error) {
     logger.error("Error updating station for category:", error);
     return {
       success: false,
-      error: error.message
+      error: error.message,
     };
   }
 };
@@ -313,80 +335,98 @@ menuItemSchema.statics.syncAllStationsFromCategories = async function () {
     const Category = mongoose.model("Category");
     const categories = await Category.find({
       kitchenStation: {
-        $ne: null
-      }
-    }).select("_id kitchenStation").lean();
+        $ne: null,
+      },
+    })
+      .select("_id kitchenStation")
+      .lean();
     let totalUpdated = 0;
     for (const category of categories) {
-      const result = await this.updateMany({
-        category: category._id
-      }, {
-        station: category.kitchenStation
-      });
+      const result = await this.updateMany(
+        {
+          category: category._id,
+        },
+        {
+          station: category.kitchenStation,
+        },
+      );
       totalUpdated += result.modifiedCount;
     }
     const categoriesWithoutStation = await Category.find({
-      kitchenStation: null
-    }).select("_id").lean();
-    const categoryIdsWithoutStation = categoriesWithoutStation.map(c => c._id);
-    const clearResult = await this.updateMany({
-      category: {
-        $in: categoryIdsWithoutStation
-      }
-    }, {
-      station: null
-    });
+      kitchenStation: null,
+    })
+      .select("_id")
+      .lean();
+    const categoryIdsWithoutStation = categoriesWithoutStation.map(
+      (c) => c._id,
+    );
+    const clearResult = await this.updateMany(
+      {
+        category: {
+          $in: categoryIdsWithoutStation,
+        },
+      },
+      {
+        station: null,
+      },
+    );
     totalUpdated += clearResult.modifiedCount;
     return {
       success: true,
       totalUpdated,
-      message: `Synced stations for ${totalUpdated} menu items`
+      message: `Synced stations for ${totalUpdated} menu items`,
     };
   } catch (error) {
     logger.error("Error syncing stations from categories:", error);
     return {
       success: false,
-      error: error.message
+      error: error.message,
     };
   }
 };
-menuItemSchema.index({
-  tenantId: 1,
-  name: 1,
-  category: 1
-}, {
-  unique: true
-});
+menuItemSchema.index(
+  {
+    tenantId: 1,
+    name: 1,
+    category: 1,
+  },
+  {
+    unique: true,
+  },
+);
 menuItemSchema.index({
   category: 1,
   isAvailable: 1,
-  isActive: 1
+  isActive: 1,
 });
 menuItemSchema.index({
-  isAvailable: 1
+  isAvailable: 1,
 });
 menuItemSchema.index({
-  tags: 1
+  tags: 1,
 });
 menuItemSchema.index({
-  "prices.price": 1
+  "prices.price": 1,
 });
 menuItemSchema.index({
-  "seasonal.isSeasonal": 1
+  "seasonal.isSeasonal": 1,
 });
 menuItemSchema.index({
   station: 1,
-  isAvailable: 1
+  isAvailable: 1,
 });
 menuItemSchema.index({
   category: 1,
-  station: 1
+  station: 1,
 });
-menuItemSchema.index({
-  tenantId: 1,
-  name: 1
-}, {
-  unique: true
-});
+menuItemSchema.index(
+  {
+    tenantId: 1,
+    name: 1,
+  },
+  {
+    unique: true,
+  },
+);
 menuItemSchema.plugin(tenantScoped);
 module.exports = mongoose.model("MenuItem", menuItemSchema);

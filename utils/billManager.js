@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const crypto = require("crypto");
 const Bill = require("../models/Bill");
 const Order = require("../models/Order");
@@ -11,24 +9,18 @@ const PDFDocument = require("pdfkit");
 const nodemailer = require("nodemailer");
 const notificationManager = require("./notificationManager");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
-const {
-  uploadBuffer,
-  fetchRemoteBuffer
-} = require("./cloudinaryStorage");
-const {
-  createTaxSnapshot,
-  getTenantTaxSettings
-} = require("./taxCalculator");
+const { uploadBuffer, fetchRemoteBuffer } = require("./cloudinaryStorage");
+const { createTaxSnapshot, getTenantTaxSettings } = require("./taxCalculator");
 const getBaseUrl = () => process.env.BACKEND_URL;
 const createEmailTransporter = () => {
   return nodemailer.createTransport({
     service: "gmail",
     auth: {
       user: process.env.EMAIL_USERNAME,
-      pass: process.env.EMAIL_PASSWORD
-    }
+      pass: process.env.EMAIL_PASSWORD,
+    },
   });
 };
 const uploadBillPDFToCloudinary = async (bill, pdfBuffer) => {
@@ -38,15 +30,15 @@ const uploadBillPDFToCloudinary = async (bill, pdfBuffer) => {
     originalname: filename,
     mimetype: "application/pdf",
     folder: "bills",
-    resourceType: "raw"
+    resourceType: "raw",
   });
   return {
     publicId: uploaded.publicId,
     url: uploaded.url,
-    provider: "cloudinary"
+    provider: "cloudinary",
   };
 };
-const getTimeSince = date => {
+const getTimeSince = (date) => {
   const seconds = Math.floor((new Date() - new Date(date)) / 1000);
   let interval = seconds / 31536000;
   if (interval > 1) return Math.floor(interval) + " years ago";
@@ -74,7 +66,7 @@ const formatMoney = (value = 0, currency = "INR", currencySymbol = null) => {
       style: "currency",
       currency,
       maximumFractionDigits: 2,
-      minimumFractionDigits: 2
+      minimumFractionDigits: 2,
     }).format(Number(value || 0));
   } catch (_error) {
     return `${currency} ${amount}`;
@@ -88,7 +80,7 @@ const getBillTaxSnapshot = async (orders = []) => {
       serviceCharge: orderSnapshot.serviceChargeRate,
       taxInclusive: orderSnapshot.taxInclusive,
       currency: orderSnapshot.currency,
-      currencySymbol: orderSnapshot.currencySymbol
+      currencySymbol: orderSnapshot.currencySymbol,
     });
   }
   const tenantTaxSettings = await getTenantTaxSettings();
@@ -105,7 +97,7 @@ const toMetadataObject = (metadata = {}) => {
     return metadata.toObject();
   }
   return {
-    ...metadata
+    ...metadata,
   };
 };
 const getMetadataValue = (metadata = {}, key = "") => {
@@ -117,22 +109,29 @@ const getMetadataValue = (metadata = {}, key = "") => {
   }
   return metadata[key];
 };
-const toComparableItems = (items = []) => (Array.isArray(items) ? items : []).map((item = {}) => ({
-  menuItem: String(item.menuItem?._id || item.menuItem || ""),
-  name: item.name || "Unknown Item",
-  size: item.size || "",
-  quantity: Number(item.quantity || 0),
-  unitPrice: Number(item.unitPrice || 0),
-  totalPrice: Number(item.totalPrice || 0)
-}));
-const buildBillContentFingerprint = (orders = [], totals = {}, customer = null) => {
+const toComparableItems = (items = []) =>
+  (Array.isArray(items) ? items : []).map((item = {}) => ({
+    menuItem: String(item.menuItem?._id || item.menuItem || ""),
+    name: item.name || "Unknown Item",
+    size: item.size || "",
+    quantity: Number(item.quantity || 0),
+    unitPrice: Number(item.unitPrice || 0),
+    totalPrice: Number(item.totalPrice || 0),
+  }));
+const buildBillContentFingerprint = (
+  orders = [],
+  totals = {},
+  customer = null,
+) => {
   const payload = {
-    orderIds: orders.map(order => String(order?._id || "")),
-    orderNumbers: orders.map(order => order?.orderNumber || ""),
-    orders: orders.map(order => ({
+    orderIds: orders.map((order) => String(order?._id || "")),
+    orderNumbers: orders.map((order) => order?.orderNumber || ""),
+    orders: orders.map((order) => ({
       id: String(order?._id || ""),
       number: order?.orderNumber || "",
-      updatedAt: order?.updatedAt ? new Date(order.updatedAt).toISOString() : "",
+      updatedAt: order?.updatedAt
+        ? new Date(order.updatedAt).toISOString()
+        : "",
       status: order?.status || "",
       paymentStatus: order?.paymentStatus || "",
       subtotal: Number(order?.subtotal || 0),
@@ -140,14 +139,16 @@ const buildBillContentFingerprint = (orders = [], totals = {}, customer = null) 
       serviceCharge: Number(order?.serviceCharge || 0),
       discountAmount: Number(order?.discountAmount || 0),
       totalAmount: Number(order?.totalAmount || 0),
-      items: toComparableItems((order?.items || []).map((item = {}) => ({
-        menuItem: item.menuItem?._id || item.menuItem,
-        name: item.menuItem?.name || item.name || "Unknown Item",
-        size: item.sizeName || item.size?.name || "Regular",
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice
-      })))
+      items: toComparableItems(
+        (order?.items || []).map((item = {}) => ({
+          menuItem: item.menuItem?._id || item.menuItem,
+          name: item.menuItem?.name || item.name || "Unknown Item",
+          size: item.sizeName || item.size?.name || "Regular",
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+        })),
+      ),
     })),
     totals: {
       subtotal: Number(totals?.subtotal || 0),
@@ -160,34 +161,37 @@ const buildBillContentFingerprint = (orders = [], totals = {}, customer = null) 
       totalAmount: Number(totals?.totalAmount || 0),
       currency: totals?.currency || "INR",
       currencySymbol: totals?.currencySymbol || "₹",
-      items: toComparableItems(totals?.items)
+      items: toComparableItems(totals?.items),
     },
     customer: {
       id: String(customer?._id || ""),
       tableId: String(customer?.table?._id || customer?.table || ""),
-      sessionId: customer?.sessionId || ""
-    }
+      sessionId: customer?.sessionId || "",
+    },
   };
-  return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex");
+  return crypto
+    .createHash("sha1")
+    .update(JSON.stringify(payload))
+    .digest("hex");
 };
 const buildBillMetadata = ({
   orders = [],
   customer = null,
-  contentFingerprint = ""
+  contentFingerprint = "",
 }) => ({
   orderCount: orders.length,
-  orderIds: orders.map(order => String(order?._id || "")),
-  orderNumbers: orders.map(order => order?.orderNumber || ""),
+  orderIds: orders.map((order) => String(order?._id || "")),
+  orderNumbers: orders.map((order) => order?.orderNumber || ""),
   customerSessionStart: customer?.sessionStart || null,
   tableNumber: customer?.table?.tableNumber || null,
   generatedAt: new Date(),
   lastSyncedAt: new Date(),
-  contentFingerprint
+  contentFingerprint,
 });
-const resetBillGeneratedAssets = (bill, {
-  resetEmail = true,
-  resetView = true
-} = {}) => {
+const resetBillGeneratedAssets = (
+  bill,
+  { resetEmail = true, resetView = true } = {},
+) => {
   bill.pdfMinioPath = undefined;
   bill.pdfBucket = undefined;
   bill.pdfPublicId = undefined;
@@ -206,16 +210,47 @@ const resetBillGeneratedAssets = (bill, {
     bill.lastViewedAt = undefined;
   }
 };
-const hasBillContentChanged = (existingBill, totals, orders, contentFingerprint) => {
-  const storedFingerprint = getMetadataValue(existingBill?.metadata, "contentFingerprint");
+const hasBillContentChanged = (
+  existingBill,
+  totals,
+  orders,
+  contentFingerprint,
+) => {
+  const storedFingerprint = getMetadataValue(
+    existingBill?.metadata,
+    "contentFingerprint",
+  );
   if (storedFingerprint) {
     return storedFingerprint !== contentFingerprint;
   }
-  const existingOrderNumbers = Array.isArray(getMetadataValue(existingBill?.metadata, "orderNumbers")) ? getMetadataValue(existingBill?.metadata, "orderNumbers") : [];
-  const nextOrderNumbers = orders.map(order => order?.orderNumber || "");
-  return Number(existingBill?.subtotal || 0) !== Number(totals?.subtotal || 0) || Number(existingBill?.taxAmount || 0) !== Number(totals?.taxAmount || 0) || Number(existingBill?.serviceCharge || 0) !== Number(totals?.serviceCharge || 0) || Number(existingBill?.discountAmount || 0) !== Number(totals?.discountAmount || 0) || Number(existingBill?.totalAmount || 0) !== Number(totals?.totalAmount || 0) || JSON.stringify(toComparableItems(existingBill?.items)) !== JSON.stringify(toComparableItems(totals?.items)) || JSON.stringify(existingOrderNumbers) !== JSON.stringify(nextOrderNumbers);
+  const existingOrderNumbers = Array.isArray(
+    getMetadataValue(existingBill?.metadata, "orderNumbers"),
+  )
+    ? getMetadataValue(existingBill?.metadata, "orderNumbers")
+    : [];
+  const nextOrderNumbers = orders.map((order) => order?.orderNumber || "");
+  return (
+    Number(existingBill?.subtotal || 0) !== Number(totals?.subtotal || 0) ||
+    Number(existingBill?.taxAmount || 0) !== Number(totals?.taxAmount || 0) ||
+    Number(existingBill?.serviceCharge || 0) !==
+      Number(totals?.serviceCharge || 0) ||
+    Number(existingBill?.discountAmount || 0) !==
+      Number(totals?.discountAmount || 0) ||
+    Number(existingBill?.totalAmount || 0) !==
+      Number(totals?.totalAmount || 0) ||
+    JSON.stringify(toComparableItems(existingBill?.items)) !==
+      JSON.stringify(toComparableItems(totals?.items)) ||
+    JSON.stringify(existingOrderNumbers) !== JSON.stringify(nextOrderNumbers)
+  );
 };
-const syncExistingBill = async (existingBill, customer, orders, totals, customerEmail, contentFingerprint) => {
+const syncExistingBill = async (
+  existingBill,
+  customer,
+  orders,
+  totals,
+  customerEmail,
+  contentFingerprint,
+) => {
   existingBill.orderId = orders[0]?._id || existingBill.orderId;
   existingBill.customerId = customer?._id || existingBill.customerId;
   existingBill.tableId = customer?.table?._id || existingBill.tableId;
@@ -230,7 +265,8 @@ const syncExistingBill = async (existingBill, customer, orders, totals, customer
   existingBill.currency = totals.currency;
   existingBill.currencySymbol = totals.currencySymbol;
   existingBill.items = totals.items;
-  existingBill.customerEmail = customerEmail || existingBill.customerEmail || customer?.email;
+  existingBill.customerEmail =
+    customerEmail || existingBill.customerEmail || customer?.email;
   existingBill.customerPhone = customer?.phone || existingBill.customerPhone;
   existingBill.customerName = customer?.name || existingBill.customerName;
   existingBill.requestedAt = new Date();
@@ -239,8 +275,8 @@ const syncExistingBill = async (existingBill, customer, orders, totals, customer
     ...buildBillMetadata({
       orders,
       customer,
-      contentFingerprint
-    })
+      contentFingerprint,
+    }),
   };
   existingBill.version = Number(existingBill.version || 1) + 1;
   existingBill.billStatus = customerEmail ? "sent" : "draft";
@@ -251,7 +287,7 @@ const syncExistingBill = async (existingBill, customer, orders, totals, customer
 const getPdfBranding = async () => {
   try {
     const settings = await AppSetting.findOne({
-      key: "app-settings"
+      key: "app-settings",
     }).lean();
     return {
       name: settings?.restaurant?.name || "Tableloom Restaurant",
@@ -259,7 +295,7 @@ const getPdfBranding = async () => {
       phone: settings?.restaurant?.phone || "Phone unavailable",
       email: settings?.restaurant?.email || "Email unavailable",
       website: settings?.restaurant?.website || "",
-      currency: settings?.taxSettings?.currency || "INR"
+      currency: settings?.taxSettings?.currency || "INR",
     };
   } catch (_error) {
     return {
@@ -268,59 +304,79 @@ const getPdfBranding = async () => {
       phone: "Phone unavailable",
       email: "Email unavailable",
       website: "",
-      currency: "INR"
+      currency: "INR",
     };
   }
 };
-exports.generateBillPDF = async bill => {
+exports.generateBillPDF = async (bill) => {
   const branding = await getPdfBranding();
   const billCurrency = bill?.currency || branding.currency;
   const items = Array.isArray(bill?.items) ? [...bill.items] : [];
-  const unresolvedMenuItemIds = items.filter(item => (!item?.name || item.name === "Unknown Item" || item.name === "Menu item") && item?.menuItem).map(item => String(item.menuItem));
+  const unresolvedMenuItemIds = items
+    .filter(
+      (item) =>
+        (!item?.name ||
+          item.name === "Unknown Item" ||
+          item.name === "Menu item") &&
+        item?.menuItem,
+    )
+    .map((item) => String(item.menuItem));
   if (unresolvedMenuItemIds.length > 0) {
     const menuItems = await MenuItem.find({
       _id: {
-        $in: unresolvedMenuItemIds
-      }
-    }).select("name").lean();
-    const nameMap = new Map(menuItems.map(item => [String(item._id), item.name]));
-    items.forEach(item => {
-      if ((!item?.name || item.name === "Unknown Item" || item.name === "Menu item") && item?.menuItem) {
-        item.name = nameMap.get(String(item.menuItem)) || item.name || "Menu item";
+        $in: unresolvedMenuItemIds,
+      },
+    })
+      .select("name")
+      .lean();
+    const nameMap = new Map(
+      menuItems.map((item) => [String(item._id), item.name]),
+    );
+    items.forEach((item) => {
+      if (
+        (!item?.name ||
+          item.name === "Unknown Item" ||
+          item.name === "Menu item") &&
+        item?.menuItem
+      ) {
+        item.name =
+          nameMap.get(String(item.menuItem)) || item.name || "Menu item";
       }
     });
   }
   return new Promise((resolve, reject) => {
     try {
       const doc = new PDFDocument({
-        margin: 50
+        margin: 50,
       });
       const chunks = [];
       const pageWidth = doc.page.width;
       const contentWidth = pageWidth - 100;
       const rightEdge = pageWidth - 50;
       let currentY = 50;
-      doc.on("data", chunk => chunks.push(chunk));
+      doc.on("data", (chunk) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
-      doc.roundedRect(50, currentY, contentWidth, 78, 18).fillAndStroke("#FFF7ED", "#F59E0B");
+      doc
+        .roundedRect(50, currentY, contentWidth, 78, 18)
+        .fillAndStroke("#FFF7ED", "#F59E0B");
       doc.fillColor("#9A3412").font("Helvetica-Bold").fontSize(22);
       doc.text(branding.name, 68, currentY + 18, {
-        width: 270
+        width: 270,
       });
       doc.font("Helvetica").fontSize(10).fillColor("#7C2D12");
       doc.text(branding.address, 68, currentY + 45, {
-        width: 290
+        width: 290,
       });
       doc.font("Helvetica-Bold").fontSize(20).fillColor("#111827");
       doc.text("INVOICE", 370, currentY + 18, {
         width: 130,
-        align: "right"
+        align: "right",
       });
       doc.font("Helvetica").fontSize(10).fillColor("#4B5563");
       doc.text(`Bill No: ${bill.billNumber}`, 350, currentY + 46, {
         width: 150,
-        align: "right"
+        align: "right",
       });
       currentY += 104;
       doc.font("Helvetica-Bold").fontSize(11).fillColor("#111827");
@@ -329,65 +385,88 @@ exports.generateBillPDF = async bill => {
       currentY += 18;
       doc.font("Helvetica").fontSize(10).fillColor("#374151");
       doc.text(`Name: ${bill.customerName || "Guest"}`, 50, currentY);
-      doc.text(`Date: ${new Date(bill.billDate || bill.createdAt).toLocaleDateString()}`, 320, currentY);
+      doc.text(
+        `Date: ${new Date(bill.billDate || bill.createdAt).toLocaleDateString()}`,
+        320,
+        currentY,
+      );
       currentY += 16;
       doc.text(`Phone: ${bill.customerPhone || "Not available"}`, 50, currentY);
-      doc.text(`Time: ${new Date(bill.billDate || bill.createdAt).toLocaleTimeString()}`, 320, currentY);
+      doc.text(
+        `Time: ${new Date(bill.billDate || bill.createdAt).toLocaleTimeString()}`,
+        320,
+        currentY,
+      );
       currentY += 16;
-      doc.text(`Email: ${bill.customerEmail || "Not available"}`, 50, currentY, {
-        width: 210
-      });
-      doc.text(`Table: ${bill.metadata?.get?.("tableNumber") || bill.metadata?.tableNumber || "N/A"}`, 320, currentY);
+      doc.text(
+        `Email: ${bill.customerEmail || "Not available"}`,
+        50,
+        currentY,
+        {
+          width: 210,
+        },
+      );
+      doc.text(
+        `Table: ${bill.metadata?.get?.("tableNumber") || bill.metadata?.tableNumber || "N/A"}`,
+        320,
+        currentY,
+      );
       currentY += 28;
       doc.roundedRect(50, currentY, contentWidth, 28, 10).fill("#111827");
       doc.font("Helvetica-Bold").fontSize(10).fillColor("#FFFFFF");
       doc.text("Item", 62, currentY + 9, {
-        width: 190
+        width: 190,
       });
       doc.text("Size", 255, currentY + 9, {
-        width: 80
+        width: 80,
       });
       doc.text("Qty", 340, currentY + 9, {
         width: 40,
-        align: "center"
+        align: "center",
       });
       doc.text("Rate", 390, currentY + 9, {
         width: 60,
-        align: "right"
+        align: "right",
       });
       doc.text("Amount", 455, currentY + 9, {
         width: 75,
-        align: "right"
+        align: "right",
       });
       currentY += 40;
       items.forEach((item, index) => {
         const rowHeight = 24;
         if (index % 2 === 0) {
-          doc.roundedRect(50, currentY - 4, contentWidth, rowHeight, 8).fill("#F9FAFB");
+          doc
+            .roundedRect(50, currentY - 4, contentWidth, rowHeight, 8)
+            .fill("#F9FAFB");
         }
         doc.font("Helvetica").fontSize(10).fillColor("#111827");
         doc.text(item.name || "Menu item", 62, currentY, {
-          width: 180
+          width: 180,
         });
         doc.text(item.size || "-", 255, currentY, {
-          width: 75
+          width: 75,
         });
         doc.text(String(item.quantity || 0), 340, currentY, {
           width: 40,
-          align: "center"
+          align: "center",
         });
         doc.text(formatMoney(item.unitPrice, billCurrency), 390, currentY, {
           width: 60,
-          align: "right"
+          align: "right",
         });
         doc.text(formatMoney(item.totalPrice, billCurrency), 455, currentY, {
           width: 75,
-          align: "right"
+          align: "right",
         });
         currentY += rowHeight;
       });
       currentY += 8;
-      doc.moveTo(50, currentY).lineTo(rightEdge, currentY).strokeColor("#E5E7EB").stroke();
+      doc
+        .moveTo(50, currentY)
+        .lineTo(rightEdge, currentY)
+        .strokeColor("#E5E7EB")
+        .stroke();
       currentY += 18;
       const totalLine = (label, value, options = {}) => {
         const fontName = options.bold ? "Helvetica-Bold" : "Helvetica";
@@ -395,55 +474,80 @@ exports.generateBillPDF = async bill => {
         doc.font(fontName).fontSize(fontSize).fillColor("#111827");
         doc.text(label, 350, currentY, {
           width: 90,
-          align: "right"
+          align: "right",
         });
         doc.text(formatMoney(value, billCurrency), 445, currentY, {
           width: 85,
-          align: "right"
+          align: "right",
         });
         currentY += options.large ? 20 : 16;
       };
       totalLine("Subtotal", bill.subtotal || 0);
       if (bill.taxAmount > 0) {
-        totalLine(bill.taxInclusive ? `Tax (${Number(bill.taxRate || 0)}% included)` : `Tax (${Number(bill.taxRate || 0)}%)`, bill.taxAmount);
+        totalLine(
+          bill.taxInclusive
+            ? `Tax (${Number(bill.taxRate || 0)}% included)`
+            : `Tax (${Number(bill.taxRate || 0)}%)`,
+          bill.taxAmount,
+        );
       }
       if (bill.serviceCharge > 0) totalLine("Service", bill.serviceCharge);
-      if (bill.discountAmount > 0) totalLine("Discount", -Math.abs(bill.discountAmount));
+      if (bill.discountAmount > 0)
+        totalLine("Discount", -Math.abs(bill.discountAmount));
       doc.roundedRect(330, currentY - 4, 200, 34, 12).fill("#EFF6FF");
       totalLine("Grand Total", bill.totalAmount || 0, {
         bold: true,
-        large: true
+        large: true,
       });
       currentY += 8;
       doc.roundedRect(50, currentY, contentWidth, 62, 14).fill("#F8FAFC");
       doc.font("Helvetica-Bold").fontSize(11).fillColor("#0F172A");
-      doc.text(`Payment Status: ${String(bill.paymentStatus || "pending").toUpperCase()}`, 64, currentY + 14);
+      doc.text(
+        `Payment Status: ${String(bill.paymentStatus || "pending").toUpperCase()}`,
+        64,
+        currentY + 14,
+      );
       doc.font("Helvetica").fontSize(10).fillColor("#334155");
-      doc.text(`Method: ${bill.paymentMethod ? String(bill.paymentMethod).toUpperCase() : "PENDING"}`, 64, currentY + 32);
-      doc.text(bill.paidAt ? `Paid At: ${new Date(bill.paidAt).toLocaleString()}` : "Awaiting payment confirmation", 280, currentY + 32, {
-        width: 230,
-        align: "right"
-      });
+      doc.text(
+        `Method: ${bill.paymentMethod ? String(bill.paymentMethod).toUpperCase() : "PENDING"}`,
+        64,
+        currentY + 32,
+      );
+      doc.text(
+        bill.paidAt
+          ? `Paid At: ${new Date(bill.paidAt).toLocaleString()}`
+          : "Awaiting payment confirmation",
+        280,
+        currentY + 32,
+        {
+          width: 230,
+          align: "right",
+        },
+      );
       currentY += 92;
-      doc.moveTo(50, currentY).lineTo(rightEdge, currentY).strokeColor("#E5E7EB").stroke();
+      doc
+        .moveTo(50, currentY)
+        .lineTo(rightEdge, currentY)
+        .strokeColor("#E5E7EB")
+        .stroke();
       currentY += 16;
       doc.font("Helvetica").fontSize(9).fillColor("#6B7280");
       doc.text(`Contact: ${branding.phone} • ${branding.email}`, 50, currentY, {
         width: contentWidth,
-        align: "center"
+        align: "center",
       });
       if (branding.website) {
         currentY += 12;
         doc.text(branding.website, 50, currentY, {
           width: contentWidth,
-          align: "center"
+          align: "center",
         });
       }
       currentY += 16;
       doc.font("Helvetica-Bold").fontSize(10).fillColor("#111827");
       doc.text("Thank you for dining with us.", 50, currentY, {
         width: contentWidth,
-        align: "center"
+        align: "center",
       });
       doc.end();
     } catch (error) {
@@ -451,7 +555,7 @@ exports.generateBillPDF = async bill => {
     }
   });
 };
-exports.generateAndSavePDF = async bill => {
+exports.generateAndSavePDF = async (bill) => {
   try {
     const pdfBuffer = await exports.generateBillPDF(bill);
     const upload = await uploadBillPDFToCloudinary(bill, pdfBuffer);
@@ -470,27 +574,27 @@ exports.generateAndSavePDF = async bill => {
     throw error;
   }
 };
-const calculateBillTotals = async orders => {
+const calculateBillTotals = async (orders) => {
   let subtotal = 0;
   let taxAmount = 0;
   let serviceCharge = 0;
   let discountAmount = 0;
   let totalAmount = 0;
   const allItems = [];
-  orders.forEach(order => {
+  orders.forEach((order) => {
     subtotal += order.subtotal || 0;
     taxAmount += order.taxAmount || 0;
     serviceCharge += order.serviceCharge || 0;
     discountAmount += order.discountAmount || 0;
     totalAmount += order.totalAmount || 0;
-    order.items.forEach(item => {
+    order.items.forEach((item) => {
       allItems.push({
         menuItem: item.menuItem?._id || item.menuItem,
         name: item.menuItem?.name || "Unknown Item",
         size: item.sizeName || item.size?.name || "Regular",
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice
+        totalPrice: item.totalPrice,
       });
     });
   });
@@ -502,23 +606,39 @@ const calculateBillTotals = async orders => {
     discountAmount,
     totalAmount,
     items: allItems,
-    ...taxSnapshot
+    ...taxSnapshot,
   };
 };
-const createBillDocument = async (sessionId, customer, orders, totals, customerEmail, forceNew = false) => {
-  const contentFingerprint = buildBillContentFingerprint(orders, totals, customer);
+const createBillDocument = async (
+  sessionId,
+  customer,
+  orders,
+  totals,
+  customerEmail,
+  forceNew = false,
+) => {
+  const contentFingerprint = buildBillContentFingerprint(
+    orders,
+    totals,
+    customer,
+  );
   if (!forceNew) {
     const existingBill = await Bill.findOne({
       sessionId,
       paymentStatus: "pending",
       billStatus: {
-        $in: ["draft", "sent", "viewed"]
-      }
+        $in: ["draft", "sent", "viewed"],
+      },
     }).sort({
-      createdAt: -1
+      createdAt: -1,
     });
     if (existingBill) {
-      const contentChanged = hasBillContentChanged(existingBill, totals, orders, contentFingerprint);
+      const contentChanged = hasBillContentChanged(
+        existingBill,
+        totals,
+        orders,
+        contentFingerprint,
+      );
       if (!contentChanged) {
         let requiresSave = false;
         const storedMetadata = toMetadataObject(existingBill.metadata);
@@ -532,27 +652,36 @@ const createBillDocument = async (sessionId, customer, orders, totals, customerE
             ...buildBillMetadata({
               orders,
               customer,
-              contentFingerprint
-            })
+              contentFingerprint,
+            }),
           };
           requiresSave = true;
         }
         if (requiresSave) {
           await existingBill.save();
         }
-        logger.info(`Reusing existing bill without changes: ${existingBill.billNumber}`);
+        logger.info(
+          `Reusing existing bill without changes: ${existingBill.billNumber}`,
+        );
         return {
           bill: existingBill,
           action: "unchanged",
-          contentFingerprint
+          contentFingerprint,
         };
       }
-      const updatedBill = await syncExistingBill(existingBill, customer, orders, totals, customerEmail, contentFingerprint);
+      const updatedBill = await syncExistingBill(
+        existingBill,
+        customer,
+        orders,
+        totals,
+        customerEmail,
+        contentFingerprint,
+      );
       logger.info(`Updated existing bill: ${updatedBill.billNumber}`);
       return {
         bill: updatedBill,
         action: "updated",
-        contentFingerprint
+        contentFingerprint,
       };
     }
   }
@@ -584,17 +713,17 @@ const createBillDocument = async (sessionId, customer, orders, totals, customerE
     metadata: buildBillMetadata({
       orders,
       customer,
-      contentFingerprint
-    })
+      contentFingerprint,
+    }),
   });
   logger.info(`Bill created in database: ${bill.billNumber}`);
   return {
     bill,
     action: "created",
-    contentFingerprint
+    contentFingerprint,
   };
 };
-const createBillEmailHtml = bill => {
+const createBillEmailHtml = (bill) => {
   return `
     <!DOCTYPE html>
     <html>
@@ -635,7 +764,9 @@ const createBillEmailHtml = bill => {
                     </tr>
                 </thead>
                 <tbody>
-                    ${bill.items.map(item => `
+                    ${bill.items
+                      .map(
+                        (item) => `
                         <tr>
                             <td>${item.name}</td>
                             <td>${item.size || "-"}</td>
@@ -643,7 +774,9 @@ const createBillEmailHtml = bill => {
                             <td>₹${item.unitPrice.toFixed(2)}</td>
                             <td>₹${item.totalPrice.toFixed(2)}</td>
                         </tr>
-                    `).join("")}
+                    `,
+                      )
+                      .join("")}
                 </tbody>
             </table>
             
@@ -723,11 +856,13 @@ exports.sendBillEmail = async (bill, pdfBuffer = null) => {
       to: bill.customerEmail,
       subject: emailSubject,
       html: emailHtml,
-      attachments: [{
-        filename: `bill_${bill.billNumber}.pdf`,
-        content: pdfAttachment,
-        contentType: "application/pdf"
-      }]
+      attachments: [
+        {
+          filename: `bill_${bill.billNumber}.pdf`,
+          content: pdfAttachment,
+          contentType: "application/pdf",
+        },
+      ],
     };
     const transporter = createEmailTransporter();
     await transporter.sendMail(mailOptions);
@@ -757,7 +892,7 @@ const sendPaymentConfirmationEmail = async (bill, paymentData) => {
       from: process.env.EMAIL_FROM || "restaurant@example.com",
       to: bill.customerEmail,
       subject: emailSubject,
-      html: emailHtml
+      html: emailHtml,
     };
     const transporter = createEmailTransporter();
     await transporter.sendMail(mailOptions);
@@ -768,15 +903,19 @@ const sendPaymentConfirmationEmail = async (bill, paymentData) => {
     return false;
   }
 };
-exports.generateBill = async (sessionId, customerEmail = null, forceNew = false) => {
+exports.generateBill = async (
+  sessionId,
+  customerEmail = null,
+  forceNew = false,
+) => {
   try {
     logger.info(`Generating bill for session: ${sessionId}`);
     const customer = await Customer.findOne({
       sessionId,
       isActive: true,
       sessionStatus: {
-        $in: ["active", "payment_pending"]
-      }
+        $in: ["active", "payment_pending"],
+      },
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
@@ -785,26 +924,41 @@ exports.generateBill = async (sessionId, customerEmail = null, forceNew = false)
     const orders = await Order.find({
       customer: customer._id,
       paymentStatus: {
-        $ne: "paid"
-      }
-    }).populate("items.menuItem", "name description category").populate("items.sizeId", "name code").sort({
-      orderPlacedAt: 1
-    });
+        $ne: "paid",
+      },
+    })
+      .populate("items.menuItem", "name description category")
+      .populate("items.sizeId", "name code")
+      .sort({
+        orderPlacedAt: 1,
+      });
     if (orders.length === 0) {
       throw new Error("No unpaid orders found for this session");
     }
     logger.info(`Found ${orders.length} orders`);
     const totals = await calculateBillTotals(orders);
-    logger.info(`Calculated totals - Subtotal: ${totals.subtotal}, Total: ${totals.totalAmount}`);
-    const {
-      bill,
-      action
-    } = await createBillDocument(sessionId, customer, orders, totals, customerEmail, forceNew);
-    const shouldGeneratePdf = action === "created" || action === "updated" || !bill.pdfUrl;
+    logger.info(
+      `Calculated totals - Subtotal: ${totals.subtotal}, Total: ${totals.totalAmount}`,
+    );
+    const { bill, action } = await createBillDocument(
+      sessionId,
+      customer,
+      orders,
+      totals,
+      customerEmail,
+      forceNew,
+    );
+    const shouldGeneratePdf =
+      action === "created" || action === "updated" || !bill.pdfUrl;
     if (shouldGeneratePdf) {
       await exports.generateAndSavePDF(bill);
     }
-    const shouldSendEmail = Boolean(customerEmail) && (action !== "unchanged" || !bill.emailSent || bill.customerEmail !== customerEmail || bill.emailRecipient !== customerEmail);
+    const shouldSendEmail =
+      Boolean(customerEmail) &&
+      (action !== "unchanged" ||
+        !bill.emailSent ||
+        bill.customerEmail !== customerEmail ||
+        bill.emailRecipient !== customerEmail);
     if (shouldSendEmail) {
       if (bill.customerEmail !== customerEmail) {
         bill.customerEmail = customerEmail;
@@ -814,15 +968,18 @@ exports.generateBill = async (sessionId, customerEmail = null, forceNew = false)
     }
     if (action !== "unchanged") {
       try {
-        await notificationManager.createPaymentNotification({
-          _id: bill._id,
-          billNumber: bill.billNumber,
-          tableNumber: customer.table?.tableNumber,
-          totalAmount: bill.totalAmount,
-          paymentMethod: bill.paymentMethod,
-          customerName: bill.customerName,
-          customerId: customer._id
-        }, "request");
+        await notificationManager.createPaymentNotification(
+          {
+            _id: bill._id,
+            billNumber: bill.billNumber,
+            tableNumber: customer.table?.tableNumber,
+            totalAmount: bill.totalAmount,
+            paymentMethod: bill.paymentMethod,
+            customerName: bill.customerName,
+            customerId: customer._id,
+          },
+          "request",
+        );
       } catch (notifError) {
         logger.error("Failed to create payment notification:", notifError);
       }
@@ -835,12 +992,12 @@ exports.generateBill = async (sessionId, customerEmail = null, forceNew = false)
     throw error;
   }
 };
-exports.getBillBySession = async sessionId => {
+exports.getBillBySession = async (sessionId) => {
   try {
     const bill = await Bill.findOne({
-      sessionId
+      sessionId,
     }).sort({
-      createdAt: -1
+      createdAt: -1,
     });
     if (!bill) {
       return null;
@@ -850,7 +1007,7 @@ exports.getBillBySession = async sessionId => {
     throw error;
   }
 };
-exports.getBillById = async billId => {
+exports.getBillById = async (billId) => {
   try {
     const bill = await Bill.findById(billId);
     if (!bill) {
@@ -867,14 +1024,14 @@ exports.markBillAsViewed = async (billId, sessionId = null) => {
       billViewed: true,
       lastViewedAt: new Date(),
       $inc: {
-        viewCount: 1
-      }
+        viewCount: 1,
+      },
     };
     if (sessionId) {
       updateData.sessionId = sessionId;
     }
     const bill = await Bill.findByIdAndUpdate(billId, updateData, {
-      new: true
+      new: true,
     });
     if (!bill) {
       throw new Error("Bill not found");
@@ -903,17 +1060,23 @@ exports.updateBillPayment = async (billId, paymentData) => {
     await bill.save();
     await exports.generateAndSavePDF(bill);
     try {
-      await notificationManager.createPaymentNotification({
-        _id: bill._id,
-        billNumber: bill.billNumber,
-        tableNumber: bill.tableNumber,
-        totalAmount: bill.totalAmount,
-        paymentMethod: bill.paymentMethod,
-        customerName: bill.customerName,
-        customerId: bill.customerId
-      }, "received");
+      await notificationManager.createPaymentNotification(
+        {
+          _id: bill._id,
+          billNumber: bill.billNumber,
+          tableNumber: bill.tableNumber,
+          totalAmount: bill.totalAmount,
+          paymentMethod: bill.paymentMethod,
+          customerName: bill.customerName,
+          customerId: bill.customerId,
+        },
+        "received",
+      );
     } catch (notifError) {
-      logger.error("Failed to create payment received notification:", notifError);
+      logger.error(
+        "Failed to create payment received notification:",
+        notifError,
+      );
     }
     if (bill.customerEmail) {
       await sendPaymentConfirmationEmail(bill, paymentData);
@@ -945,7 +1108,7 @@ exports.resendBillEmail = async (billId, newEmail = null) => {
     throw error;
   }
 };
-const enrichBillData = async bill => {
+const enrichBillData = async (bill) => {
   const billObj = bill.toObject ? bill.toObject() : bill;
   if (!billObj.pdfUrl && billObj._id) {
     billObj.pdfUrl = `${getBaseUrl()}/images/bills/${billObj._id}/pdf`;

@@ -1,6 +1,4 @@
-const {
-  logger
-} = require("./../utils/logger.js");
+const { logger } = require("./../utils/logger.js");
 const billManager = require("../utils/billManager");
 const sessionManager = require("../utils/sessionManager");
 const Bill = require("../models/Bill");
@@ -8,13 +6,11 @@ const Order = require("../models/Order");
 const {
   sendError,
   sendPaginated,
-  sendSuccess
+  sendSuccess,
 } = require("../utils/httpResponse");
-const {
-  getOrSetCache
-} = require("../utils/responseCache");
+const { getOrSetCache } = require("../utils/responseCache");
 require("dotenv").config({
-  quiet: true
+  quiet: true,
 });
 const BILL_CACHE_PREFIX = "bill:";
 const BILL_LIST_CACHE_TTL_MS = 15 * 1000;
@@ -24,7 +20,7 @@ const toBillPaymentSummary = (bill = {}) => ({
   billNumber: bill?.billNumber || "",
   totalAmount: Number(bill?.totalAmount || 0),
   paymentStatus: bill?.paymentStatus || "pending",
-  pdfUrl: bill?.pdfUrl || ""
+  pdfUrl: bill?.pdfUrl || "",
 });
 const toBillAdminItem = (bill = {}) => ({
   _id: bill?._id,
@@ -39,8 +35,9 @@ const toBillAdminItem = (bill = {}) => ({
   paidAt: bill?.paidAt || null,
   totalAmount: Number(bill?.totalAmount || 0),
   createdAt: bill?.createdAt || null,
-  tableNumber: bill?.tableId?.tableNumber || bill?.metadata?.tableNumber || null,
-  itemCount: Array.isArray(bill?.items) ? bill.items.length : 0
+  tableNumber:
+    bill?.tableId?.tableNumber || bill?.metadata?.tableNumber || null,
+  itemCount: Array.isArray(bill?.items) ? bill.items.length : 0,
 });
 const getBillRequestResponse = (bill = {}, email = "") => {
   const action = bill?.generationAction || "created";
@@ -48,18 +45,22 @@ const getBillRequestResponse = (bill = {}, email = "") => {
   if (action === "unchanged") {
     return {
       statusCode: 200,
-      message: "Existing bill reused. No new changes found for this session"
+      message: "Existing bill reused. No new changes found for this session",
     };
   }
   if (action === "updated") {
     return {
       statusCode: 200,
-      message: sentViaEmail ? "Existing bill updated and sent via email" : "Existing bill updated successfully"
+      message: sentViaEmail
+        ? "Existing bill updated and sent via email"
+        : "Existing bill updated successfully",
     };
   }
   return {
     statusCode: 201,
-    message: sentViaEmail ? "Bill generated and sent via email" : "Bill generated successfully"
+    message: sentViaEmail
+      ? "Bill generated and sent via email"
+      : "Bill generated successfully",
   };
 };
 const buildLiveBillAdminItem = async (bill = {}) => {
@@ -70,25 +71,30 @@ const buildLiveBillAdminItem = async (bill = {}) => {
   const liveOrders = await Order.find({
     customer: bill.customerId,
     paymentStatus: {
-      $ne: "paid"
-    }
-  }).select("totalAmount items").lean();
+      $ne: "paid",
+    },
+  })
+    .select("totalAmount items")
+    .lean();
   if (liveOrders.length === 0) {
     return baseItem;
   }
   return {
     ...baseItem,
-    totalAmount: liveOrders.reduce((sum, order) => sum + Number(order?.totalAmount || 0), 0),
-    itemCount: liveOrders.reduce((sum, order) => sum + (Array.isArray(order?.items) ? order.items.length : 0), 0)
+    totalAmount: liveOrders.reduce(
+      (sum, order) => sum + Number(order?.totalAmount || 0),
+      0,
+    ),
+    itemCount: liveOrders.reduce(
+      (sum, order) =>
+        sum + (Array.isArray(order?.items) ? order.items.length : 0),
+      0,
+    ),
   };
 };
 exports.requestBill = async (req, res) => {
   try {
-    const {
-      sessionId,
-      email,
-      forceNew = false
-    } = req.body;
+    const { sessionId, email, forceNew = false } = req.body;
     if (!sessionId) {
       return sendError(res, 400, "Session ID is required");
     }
@@ -103,8 +109,8 @@ exports.requestBill = async (req, res) => {
         _id: bill?._id,
         billNumber: bill?.billNumber || "",
         pdfUrl: bill?.pdfUrl || "",
-        generationAction: bill?.generationAction || "created"
-      }
+        generationAction: bill?.generationAction || "created",
+      },
     });
   } catch (error) {
     logger.error("Bill request failed:", error);
@@ -113,9 +119,7 @@ exports.requestBill = async (req, res) => {
 };
 exports.getBillBySession = async (req, res) => {
   try {
-    const {
-      sessionId
-    } = req.params;
+    const { sessionId } = req.params;
     const bill = await billManager.getBillBySession(sessionId);
     if (!bill) {
       return sendError(res, 404, "No active bill found for this session");
@@ -131,9 +135,7 @@ exports.getBillBySession = async (req, res) => {
 };
 exports.getBillById = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
+    const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
     return sendSuccess(res, 200, null, bill);
   } catch (error) {
@@ -143,12 +145,8 @@ exports.getBillById = async (req, res) => {
 };
 exports.sendBillEmail = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
-    const {
-      email
-    } = req.body;
+    const { billId } = req.params;
+    const { email } = req.body;
     if (!email) {
       return sendError(res, 400, "Email address is required");
     }
@@ -161,30 +159,29 @@ exports.sendBillEmail = async (req, res) => {
 };
 exports.processPayment = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
-    const {
-      paymentMethod,
-      transactionId,
-      gateway
-    } = req.body;
+    const { billId } = req.params;
+    const { paymentMethod, transactionId, gateway } = req.body;
     if (!paymentMethod) {
       return sendError(res, 400, "Payment method is required");
     }
     const paymentData = {
       method: paymentMethod,
       transactionId: transactionId || `payment_${Date.now()}`,
-      gateway: gateway || (paymentMethod === "online" ? "payment_gateway" : "offline")
+      gateway:
+        gateway || (paymentMethod === "online" ? "payment_gateway" : "offline"),
     };
-    const result = await sessionManager.markBillAsPaid(billId, paymentData, req.user?._id || null);
+    const result = await sessionManager.markBillAsPaid(
+      billId,
+      paymentData,
+      req.user?._id || null,
+    );
     return sendSuccess(res, 200, "Payment processed successfully", {
       bill: toBillPaymentSummary(result?.data?.bill || null),
       session: {
         status: result?.data?.customer?.status || "completed",
         paymentMethod: result?.data?.customer?.paymentMethod || paymentMethod,
-        paymentStatus: result?.data?.customer?.paymentStatus || "paid"
-      }
+        paymentStatus: result?.data?.customer?.paymentStatus || "paid",
+      },
     });
   } catch (error) {
     logger.error("Payment processing failed:", error);
@@ -193,14 +190,12 @@ exports.processPayment = async (req, res) => {
 };
 exports.downloadBillPDF = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
+    const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
     if (!bill) {
       return res.status(404).json({
         success: false,
-        message: "Bill not found"
+        message: "Bill not found",
       });
     }
     if (!bill.pdfUrl) {
@@ -219,32 +214,35 @@ exports.downloadBillPDF = async (req, res) => {
     } catch (fallbackError) {
       res.status(500).json({
         success: false,
-        message: `Failed to get PDF: ${error.message}`
+        message: `Failed to get PDF: ${error.message}`,
       });
     }
   }
 };
 exports.generatePDFOnTheFly = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
+    const { billId } = req.params;
     logger.info(`Generating PDF on-the-fly for bill: ${billId}`);
     const bill = await billManager.getBillById(billId);
     if (!bill) {
       return res.status(404).json({
         success: false,
-        message: "Bill not found"
+        message: "Bill not found",
       });
     }
     const pdfBuffer = await billManager.generateBillPDF(bill);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="bill_${bill.billNumber}_generated.pdf"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="bill_${bill.billNumber}_generated.pdf"`,
+    );
     res.setHeader("Content-Length", pdfBuffer.length);
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", 0);
-    logger.info(`Sending on-the-fly PDF for bill: ${bill.billNumber}, Size: ${pdfBuffer.length} bytes`);
+    logger.info(
+      `Sending on-the-fly PDF for bill: ${bill.billNumber}, Size: ${pdfBuffer.length} bytes`,
+    );
     res.send(pdfBuffer);
   } catch (error) {
     logger.error("On-the-fly PDF generation failed:", error);
@@ -274,7 +272,9 @@ exports.generatePDFOnTheFly = async (req, res) => {
           <p>PDF generation failed. Showing HTML version.</p>
           <p>Error: ${error.message}</p>
         </div>
-        ${bill ? `
+        ${
+          bill
+            ? `
         <table>
           <thead>
             <tr>
@@ -286,7 +286,10 @@ exports.generatePDFOnTheFly = async (req, res) => {
             </tr>
           </thead>
           <tbody>
-            ${bill.items?.map(item => `
+            ${
+              bill.items
+                ?.map(
+                  (item) => `
               <tr>
                 <td>${item.name || "Item"}</td>
                 <td>${item.size || "-"}</td>
@@ -294,14 +297,19 @@ exports.generatePDFOnTheFly = async (req, res) => {
                 <td>₹${item.unitPrice?.toFixed(2) || "0.00"}</td>
                 <td>₹${item.totalPrice?.toFixed(2) || "0.00"}</td>
               </tr>
-            `).join("") || '<tr><td colspan="5">No items found</td></tr>'}
+            `,
+                )
+                .join("") || '<tr><td colspan="5">No items found</td></tr>'
+            }
           </tbody>
         </table>
         <div class="total">
           <p>Total Amount: ₹${bill.totalAmount?.toFixed(2) || "0.00"}</p>
           <p>Payment Status: ${bill.paymentStatus || "Pending"}</p>
         </div>
-        ` : "<p>Bill data not available</p>"}
+        `
+            : "<p>Bill data not available</p>"
+        }
       </body>
       </html>
     `);
@@ -309,14 +317,12 @@ exports.generatePDFOnTheFly = async (req, res) => {
 };
 exports.viewBillPDF = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
+    const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
     if (!bill) {
       return res.status(404).json({
         success: false,
-        message: "Bill not found"
+        message: "Bill not found",
       });
     }
     if (!bill.pdfUrl) {
@@ -332,15 +338,13 @@ exports.viewBillPDF = async (req, res) => {
     logger.error("PDF view failed:", error);
     res.status(404).json({
       success: false,
-      message: error.message
+      message: error.message,
     });
   }
 };
 exports.getPaymentQR = async (req, res) => {
   try {
-    const {
-      billId
-    } = req.params;
+    const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
     const qr = require("qrcode");
     const upiId = process.env.UPI_ID || "restaurant@upi";
@@ -355,15 +359,15 @@ exports.getPaymentQR = async (req, res) => {
           qrCode: qrDataUrl,
           upiId,
           amount: Number(bill.totalAmount || 0),
-          billNumber: bill.billNumber
-        }
+          billNumber: bill.billNumber,
+        },
       });
     });
   } catch (error) {
     logger.error("QR generation failed:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to generate payment QR"
+      message: "Failed to generate payment QR",
     });
   }
 };
@@ -377,7 +381,7 @@ exports.getBillsAdmin = async (req, res) => {
       page = 1,
       limit = 20,
       dateFrom,
-      dateTo
+      dateTo,
     } = req.query;
     const query = {};
     if (status) {
@@ -390,32 +394,38 @@ exports.getBillsAdmin = async (req, res) => {
       query.paymentMethod = paymentMethod;
     }
     if (search) {
-      query.$or = [{
-        billNumber: {
-          $regex: search,
-          $options: "i"
-        }
-      }, {
-        sessionId: {
-          $regex: search,
-          $options: "i"
-        }
-      }, {
-        customerName: {
-          $regex: search,
-          $options: "i"
-        }
-      }, {
-        customerEmail: {
-          $regex: search,
-          $options: "i"
-        }
-      }, {
-        customerPhone: {
-          $regex: search,
-          $options: "i"
-        }
-      }];
+      query.$or = [
+        {
+          billNumber: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          sessionId: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          customerName: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          customerEmail: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+        {
+          customerPhone: {
+            $regex: search,
+            $options: "i",
+          },
+        },
+      ];
     }
     if (dateFrom || dateTo) {
       query.createdAt = {};
@@ -430,19 +440,34 @@ exports.getBillsAdmin = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
     const cacheKey = `${BILL_CACHE_PREFIX}list:${req.tenantId || "default"}:${JSON.stringify(req.query || {})}`;
-    const cached = await getOrSetCache(cacheKey, BILL_LIST_CACHE_TTL_MS, async () => {
-      const [bills, total] = await Promise.all([Bill.find(query).select("billNumber sessionId customerId customerName customerEmail customerPhone paymentStatus billStatus paymentMethod paidAt totalAmount createdAt tableId items metadata").sort({
-        createdAt: -1
-      }).skip(skip).limit(limitNum).populate("tableId", "tableNumber tableName").lean(), Bill.countDocuments(query)]);
-      return {
-        data: await Promise.all(bills.map(buildLiveBillAdminItem)),
-        pagination: {
-          page: pageNum,
-          pages: Math.ceil(total / limitNum),
-          total
-        }
-      };
-    });
+    const cached = await getOrSetCache(
+      cacheKey,
+      BILL_LIST_CACHE_TTL_MS,
+      async () => {
+        const [bills, total] = await Promise.all([
+          Bill.find(query)
+            .select(
+              "billNumber sessionId customerId customerName customerEmail customerPhone paymentStatus billStatus paymentMethod paidAt totalAmount createdAt tableId items metadata",
+            )
+            .sort({
+              createdAt: -1,
+            })
+            .skip(skip)
+            .limit(limitNum)
+            .populate("tableId", "tableNumber tableName")
+            .lean(),
+          Bill.countDocuments(query),
+        ]);
+        return {
+          data: await Promise.all(bills.map(buildLiveBillAdminItem)),
+          pagination: {
+            page: pageNum,
+            pages: Math.ceil(total / limitNum),
+            total,
+          },
+        };
+      },
+    );
     return sendPaginated(res, 200, cached.data, cached.pagination);
   } catch (error) {
     logger.error("Get bills failed:", error);
@@ -454,54 +479,82 @@ exports.getBillStatistics = async (req, res) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const cacheKey = `${BILL_CACHE_PREFIX}stats:${req.tenantId || "default"}`;
-    const data = await getOrSetCache(cacheKey, BILL_STATS_CACHE_TTL_MS, async () => {
-      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-      const [totalBills, pendingBills, paidBills, todayBills, todayRevenue, monthlyRevenue] = await Promise.all([Bill.countDocuments(), Bill.countDocuments({
-        paymentStatus: "pending"
-      }), Bill.countDocuments({
-        paymentStatus: "paid"
-      }), Bill.countDocuments({
-        createdAt: {
-          $gte: today
-        }
-      }), Bill.aggregate([{
-        $match: {
-          paymentStatus: "paid",
-          paidAt: {
-            $gte: today
-          }
-        }
-      }, {
-        $group: {
-          _id: null,
-          total: {
-            $sum: "$totalAmount"
-          }
-        }
-      }]), Bill.aggregate([{
-        $match: {
-          paymentStatus: "paid",
-          paidAt: {
-            $gte: monthStart
-          }
-        }
-      }, {
-        $group: {
-          _id: null,
-          total: {
-            $sum: "$totalAmount"
-          }
-        }
-      }])]);
-      return {
-        totalBills,
-        pendingBills,
-        paidBills,
-        todayBills,
-        todayRevenue: todayRevenue[0]?.total || 0,
-        monthlyRevenue: monthlyRevenue[0]?.total || 0
-      };
-    });
+    const data = await getOrSetCache(
+      cacheKey,
+      BILL_STATS_CACHE_TTL_MS,
+      async () => {
+        const monthStart = new Date(
+          new Date().getFullYear(),
+          new Date().getMonth(),
+          1,
+        );
+        const [
+          totalBills,
+          pendingBills,
+          paidBills,
+          todayBills,
+          todayRevenue,
+          monthlyRevenue,
+        ] = await Promise.all([
+          Bill.countDocuments(),
+          Bill.countDocuments({
+            paymentStatus: "pending",
+          }),
+          Bill.countDocuments({
+            paymentStatus: "paid",
+          }),
+          Bill.countDocuments({
+            createdAt: {
+              $gte: today,
+            },
+          }),
+          Bill.aggregate([
+            {
+              $match: {
+                paymentStatus: "paid",
+                paidAt: {
+                  $gte: today,
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                total: {
+                  $sum: "$totalAmount",
+                },
+              },
+            },
+          ]),
+          Bill.aggregate([
+            {
+              $match: {
+                paymentStatus: "paid",
+                paidAt: {
+                  $gte: monthStart,
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                total: {
+                  $sum: "$totalAmount",
+                },
+              },
+            },
+          ]),
+        ]);
+        return {
+          totalBills,
+          pendingBills,
+          paidBills,
+          todayBills,
+          todayRevenue: todayRevenue[0]?.total || 0,
+          monthlyRevenue: monthlyRevenue[0]?.total || 0,
+        };
+      },
+    );
     return sendSuccess(res, 200, null, data);
   } catch (error) {
     logger.error("Get bill statistics failed:", error);

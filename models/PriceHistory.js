@@ -4,50 +4,50 @@ const priceHistorySchema = new mongoose.Schema({
   menuItem: {
     type: mongoose.Schema.ObjectId,
     ref: "MenuItem",
-    required: true
+    required: true,
   },
   sizeId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Size"
+    ref: "Size",
   },
   oldPrice: {
     type: Number,
     required: true,
-    min: 0
+    min: 0,
   },
   newPrice: {
     type: Number,
     required: true,
-    min: 0
+    min: 0,
   },
   changeType: {
     type: String,
     enum: ["increase", "decrease", "initial"],
-    required: true
+    required: true,
   },
   changePercentage: {
-    type: Number
+    type: Number,
   },
   changedBy: {
     type: mongoose.Schema.ObjectId,
     ref: "User",
-    required: true
+    required: true,
   },
   changedAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   reason: {
     type: String,
-    maxlength: 200
-  }
+    maxlength: 200,
+  },
 });
 priceHistorySchema.index({
   menuItem: 1,
-  changedAt: -1
+  changedAt: -1,
 });
 priceHistorySchema.index({
-  changedAt: -1
+  changedAt: -1,
 });
 priceHistorySchema.plugin(tenantScoped);
 module.exports = mongoose.model("PriceHistory", priceHistorySchema);

@@ -1,13 +1,9 @@
-const {
-  logger
-} = require("./logger.js");
+const { logger } = require("./logger.js");
 const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
-const {
-  getCurrentTenantId
-} = require("./tenantContext");
+const { getCurrentTenantId } = require("./tenantContext");
 class NotificationManager {
   constructor() {
     this.cleanupTimer = null;
@@ -19,7 +15,7 @@ class NotificationManager {
     return {
       label: String(action.label || "").trim(),
       type: String(action.type || "button").trim(),
-      action: String(action.action || "").trim()
+      action: String(action.action || "").trim(),
     };
   }
   shapeSender(sender = null) {
@@ -29,14 +25,18 @@ class NotificationManager {
     return {
       _id: sender._id,
       name: sender.name || "",
-      role: sender.role || ""
+      role: sender.role || "",
     };
   }
   shapeNotification(notification = {}, overrides = {}) {
     if (!notification) {
       return null;
     }
-    const actions = Array.isArray(notification.actions) ? notification.actions.map(action => this.shapeAction(action)).filter(Boolean) : [];
+    const actions = Array.isArray(notification.actions)
+      ? notification.actions
+          .map((action) => this.shapeAction(action))
+          .filter(Boolean)
+      : [];
     return {
       _id: notification._id,
       title: notification.title || "",
@@ -44,14 +44,18 @@ class NotificationManager {
       type: notification.type || "system_alert",
       priority: notification.priority || "medium",
       status: notification.status || "unread",
-      effectiveStatus: overrides.effectiveStatus || notification.effectiveStatus || notification.status || "unread",
+      effectiveStatus:
+        overrides.effectiveStatus ||
+        notification.effectiveStatus ||
+        notification.status ||
+        "unread",
       isRead: Boolean(overrides.isRead ?? notification.isRead),
       actionRequired: Boolean(notification.actionRequired),
       relatedModel: notification.relatedModel || null,
       actions,
       createdAt: notification.createdAt || null,
       expiresAt: notification.expiresAt || null,
-      sender: this.shapeSender(notification.sender)
+      sender: this.shapeSender(notification.sender),
     };
   }
   resolveTenantId(data = {}) {
@@ -64,81 +68,111 @@ class NotificationManager {
     if (!Array.isArray(actions)) {
       return [];
     }
-    return actions.map(action => {
-      if (typeof action === "string") {
-        const label = action.trim();
+    return actions
+      .map((action) => {
+        if (typeof action === "string") {
+          const label = action.trim();
+          if (!label) {
+            return null;
+          }
+          return {
+            label,
+            type: "button",
+            action: "",
+            color: "secondary",
+          };
+        }
+        if (!action || typeof action !== "object") {
+          return null;
+        }
+        const label = String(action.label || "").trim();
         if (!label) {
           return null;
         }
         return {
           label,
-          type: "button",
-          action: "",
-          color: "secondary"
+          type: String(action.type || "button").trim(),
+          action: String(action.action || "").trim(),
+          color: String(action.color || "secondary").trim(),
         };
-      }
-      if (!action || typeof action !== "object") {
-        return null;
-      }
-      const label = String(action.label || "").trim();
-      if (!label) {
-        return null;
-      }
-      return {
-        label,
-        type: String(action.type || "button").trim(),
-        action: String(action.action || "").trim(),
-        color: String(action.color || "secondary").trim()
-      };
-    }).filter(Boolean);
+      })
+      .filter(Boolean);
   }
   buildRecipientQuery(userId, role) {
     return {
-      $or: [{
-        recipientType: "user",
-        recipients: userId
-      }, {
-        recipientType: "role",
-        roles: role
-      }, {
-        recipientType: "all"
-      }],
+      $or: [
+        {
+          recipientType: "user",
+          recipients: userId,
+        },
+        {
+          recipientType: "role",
+          roles: role,
+        },
+        {
+          recipientType: "all",
+        },
+      ],
       "hiddenFor.user": {
-        $ne: userId
-      }
+        $ne: userId,
+      },
     };
   }
   buildSessionQuery(sessionId) {
     return {
       customerSessionId: sessionId,
       "hiddenForSessions.sessionId": {
-        $ne: sessionId
-      }
+        $ne: sessionId,
+      },
     };
   }
   buildUserNotificationActionQuery(notificationId, userId, role) {
     return {
       _id: notificationId,
-      ...this.buildRecipientQuery(userId, role)
+      ...this.buildRecipientQuery(userId, role),
     };
   }
   decorateNotificationForUser(notification, userId) {
-    const serialized = notification.toObject ? notification.toObject() : notification;
+    const serialized = notification.toObject
+      ? notification.toObject()
+      : notification;
     const normalizedUserId = String(userId);
-    const isRead = (serialized.readBy || []).some(entry => String(entry.user) === normalizedUserId);
-    const isAcknowledged = (serialized.acknowledgedBy || []).some(entry => String(entry.user) === normalizedUserId);
+    const isRead = (serialized.readBy || []).some(
+      (entry) => String(entry.user) === normalizedUserId,
+    );
+    const isAcknowledged = (serialized.acknowledgedBy || []).some(
+      (entry) => String(entry.user) === normalizedUserId,
+    );
     return this.shapeNotification(serialized, {
       isRead,
       isAcknowledged,
-      effectiveStatus: serialized.status === "dismissed" ? "dismissed" : isAcknowledged ? "acknowledged" : isRead ? "read" : "unread"
+      effectiveStatus:
+        serialized.status === "dismissed"
+          ? "dismissed"
+          : isAcknowledged
+            ? "acknowledged"
+            : isRead
+              ? "read"
+              : "unread",
     });
   }
   async createNotification(data) {
     try {
-      const allowedRoles = Notification.schema.path("roles").caster?.enumValues || [];
-      const normalizedRoles = [...new Set((data.roles || []).map(role => String(role || "").trim()).filter(Boolean))];
-      const roles = normalizedRoles.filter(role => allowedRoles.includes(role));
-      const invalidRoles = normalizedRoles.filter(role => !allowedRoles.includes(role));
+      const allowedRoles =
+        Notification.schema.path("roles").caster?.enumValues || [];
+      const normalizedRoles = [
+        ...new Set(
+          (data.roles || [])
+            .map((role) => String(role || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      const roles = normalizedRoles.filter((role) =>
+        allowedRoles.includes(role),
+      );
+      const invalidRoles = normalizedRoles.filter(
+        (role) => !allowedRoles.includes(role),
+      );
       if (invalidRoles.length > 0) {
         logger.warn("Ignoring unsupported notification roles:", invalidRoles);
       }
@@ -159,17 +193,19 @@ class NotificationManager {
         actionRequired: data.actionRequired || false,
         actions: this.normalizeActions(data.actions),
         metadata: data.metadata || {},
-        expiresAt: data.expiresAt || null
+        expiresAt: data.expiresAt || null,
       });
       await notification.populate("sender", "name role");
       await this.emitNotification(notification);
       const pushNotificationManager = require("./pushNotificationManager");
-      pushNotificationManager.sendNotificationPush(notification).catch(pushError => {
-        logger.error("Push notification dispatch failed:", pushError);
-      });
+      pushNotificationManager
+        .sendNotificationPush(notification)
+        .catch((pushError) => {
+          logger.error("Push notification dispatch failed:", pushError);
+        });
       return this.shapeNotification(notification, {
         isRead: false,
-        effectiveStatus: notification.status || "unread"
+        effectiveStatus: notification.status || "unread",
       });
     } catch (error) {
       logger.error("Create notification failed:", error);
@@ -193,7 +229,7 @@ class NotificationManager {
       metadata: data.metadata || {},
       actions: data.actions || [],
       actionRequired: Boolean(data.actionRequired),
-      expiresAt: data.expiresAt || null
+      expiresAt: data.expiresAt || null,
     });
   }
   async createWaiterCallNotification(callData) {
@@ -201,7 +237,7 @@ class NotificationManager {
       critical: "urgent",
       high: "high",
       medium: "medium",
-      low: "low"
+      low: "low",
     };
     return this.createNotification({
       title: `Waiter Call - Table ${callData.tableNumber}`,
@@ -215,25 +251,28 @@ class NotificationManager {
       relatedTo: callData._id,
       relatedModel: "WaiterCall",
       actionRequired: true,
-      actions: [{
-        label: "Acknowledge",
-        type: "button",
-        action: `/api/waiter-calls/${callData.callId}/acknowledge`,
-        color: "primary"
-      }, {
-        label: "View Details",
-        type: "link",
-        action: `/dashboard/waiter-calls/${callData.callId}`,
-        color: "secondary"
-      }],
+      actions: [
+        {
+          label: "Acknowledge",
+          type: "button",
+          action: `/api/waiter-calls/${callData.callId}/acknowledge`,
+          color: "primary",
+        },
+        {
+          label: "View Details",
+          type: "link",
+          action: `/dashboard/waiter-calls/${callData.callId}`,
+          color: "secondary",
+        },
+      ],
       metadata: {
         tableNumber: callData.tableNumber,
         tableName: callData.tableName,
         location: callData.location,
         callType: callData.callType,
         customerName: callData.customerName,
-        createdAt: callData.createdAt
-      }
+        createdAt: callData.createdAt,
+      },
     });
   }
   async createOrderReadyNotification(orderData, itemData) {
@@ -249,25 +288,28 @@ class NotificationManager {
       relatedTo: orderData._id,
       relatedModel: "KitchenOrder",
       actionRequired: true,
-      actions: [{
-        label: "Mark as Served",
-        type: "button",
-        action: `/api/kitchen-orders/${orderData._id}/items/${itemData._id}/served`,
-        color: "success"
-      }, {
-        label: "View Order",
-        type: "link",
-        action: `/dashboard/kitchen/orders/${orderData._id}`,
-        color: "secondary"
-      }],
+      actions: [
+        {
+          label: "Mark as Served",
+          type: "button",
+          action: `/api/kitchen-orders/${orderData._id}/items/${itemData._id}/served`,
+          color: "success",
+        },
+        {
+          label: "View Order",
+          type: "link",
+          action: `/dashboard/kitchen/orders/${orderData._id}`,
+          color: "secondary",
+        },
+      ],
       metadata: {
         orderNumber: orderData.orderNumber,
         tableNumber: orderData.tableNumber,
         itemName: itemData.menuItemName,
         quantity: itemData.quantity,
         station: itemData.station,
-        readyTime: itemData.readyTime
-      }
+        readyTime: itemData.readyTime,
+      },
     });
     if (orderData.assignedWaiter) {
       await this.createNotification({
@@ -283,8 +325,8 @@ class NotificationManager {
         metadata: {
           orderNumber: orderData.orderNumber,
           tableNumber: orderData.tableNumber,
-          itemName: itemData.menuItemName
-        }
+          itemName: itemData.menuItemName,
+        },
       });
     }
     return notification;
@@ -303,17 +345,20 @@ class NotificationManager {
       relatedTo: orderData._id,
       relatedModel: "KitchenOrder",
       actionRequired: true,
-      actions: [{
-        label: "View Details",
-        type: "link",
-        action: `/dashboard/kitchen/orders/${orderData._id}`,
-        color: "warning"
-      }, {
-        label: "Update Status",
-        type: "button",
-        action: `/api/kitchen-orders/${orderData._id}/update-priority`,
-        color: "primary"
-      }],
+      actions: [
+        {
+          label: "View Details",
+          type: "link",
+          action: `/dashboard/kitchen/orders/${orderData._id}`,
+          color: "warning",
+        },
+        {
+          label: "Update Status",
+          type: "button",
+          action: `/api/kitchen-orders/${orderData._id}/update-priority`,
+          color: "primary",
+        },
+      ],
       metadata: {
         tenantId: orderData.tenantId || null,
         orderNumber: orderData.orderNumber,
@@ -321,41 +366,56 @@ class NotificationManager {
         delayMinutes: delayMinutes,
         delayedItems: delayedItems,
         priority: orderData.priority,
-        createdAt: orderData.createdAt
-      }
+        createdAt: orderData.createdAt,
+      },
     });
   }
   async createPaymentNotification(billData, paymentType) {
-    const title = paymentType === "request" ? `Payment Request - Table ${billData.tableNumber}` : `Payment Received - #${billData.billNumber}`;
-    const message = paymentType === "request" ? `Bill #${billData.billNumber} ready for payment. Amount: ₹${billData.totalAmount}` : `Payment of ₹${billData.totalAmount} received for Bill #${billData.billNumber}`;
+    const title =
+      paymentType === "request"
+        ? `Payment Request - Table ${billData.tableNumber}`
+        : `Payment Received - #${billData.billNumber}`;
+    const message =
+      paymentType === "request"
+        ? `Bill #${billData.billNumber} ready for payment. Amount: ₹${billData.totalAmount}`
+        : `Payment of ₹${billData.totalAmount} received for Bill #${billData.billNumber}`;
     return this.createNotification({
       title: title,
       message: message,
       type: paymentType === "request" ? "payment_request" : "payment_received",
       priority: paymentType === "request" ? "high" : "medium",
       recipientType: "role",
-      roles: paymentType === "request" ? ["waiter", "cashier"] : ["manager", "admin", "cashier"],
+      roles:
+        paymentType === "request"
+          ? ["waiter", "cashier"]
+          : ["manager", "admin", "cashier"],
       relatedTo: billData._id,
       relatedModel: "Bill",
       actionRequired: paymentType === "request",
-      actions: paymentType === "request" ? [{
-        label: "Process Payment",
-        type: "link",
-        action: `/dashboard/bills/${billData._id}/payment`,
-        color: "success"
-      }, {
-        label: "View Bill",
-        type: "link",
-        action: `/dashboard/bills/${billData._id}`,
-        color: "secondary"
-      }] : [],
+      actions:
+        paymentType === "request"
+          ? [
+              {
+                label: "Process Payment",
+                type: "link",
+                action: `/dashboard/bills/${billData._id}/payment`,
+                color: "success",
+              },
+              {
+                label: "View Bill",
+                type: "link",
+                action: `/dashboard/bills/${billData._id}`,
+                color: "secondary",
+              },
+            ]
+          : [],
       metadata: {
         billNumber: billData.billNumber,
         tableNumber: billData.tableNumber,
         totalAmount: billData.totalAmount,
         paymentMethod: billData.paymentMethod,
-        customerName: billData.customerName
-      }
+        customerName: billData.customerName,
+      },
     });
   }
   async createTableAssignmentNotification(tableData, waiterId) {
@@ -376,12 +436,14 @@ class NotificationManager {
         tableName: tableData.tableName,
         location: tableData.location,
         customerCount: tableData.customerCount,
-        assignedAt: new Date()
-      }
+        assignedAt: new Date(),
+      },
     });
   }
   async createReservationAlert(reservationData) {
-    const minutesUntil = Math.floor((new Date(reservationData.reservationTime) - Date.now()) / 60000);
+    const minutesUntil = Math.floor(
+      (new Date(reservationData.reservationTime) - Date.now()) / 60000,
+    );
     return this.createNotification({
       title: `Upcoming Reservation - Table ${reservationData.tableNumber}`,
       message: `Reservation for ${reservationData.customerName} in ${minutesUntil} minutes`,
@@ -393,25 +455,28 @@ class NotificationManager {
       relatedTo: reservationData._id,
       relatedModel: "Reservation",
       actionRequired: true,
-      actions: [{
-        label: "Prepare Table",
-        type: "button",
-        action: `/api/tables/${reservationData.tableId}/prepare`,
-        color: "primary"
-      }, {
-        label: "View Details",
-        type: "link",
-        action: `/dashboard/reservations/${reservationData._id}`,
-        color: "secondary"
-      }],
+      actions: [
+        {
+          label: "Prepare Table",
+          type: "button",
+          action: `/api/tables/${reservationData.tableId}/prepare`,
+          color: "primary",
+        },
+        {
+          label: "View Details",
+          type: "link",
+          action: `/dashboard/reservations/${reservationData._id}`,
+          color: "secondary",
+        },
+      ],
       metadata: {
         customerName: reservationData.customerName,
         tableNumber: reservationData.tableNumber,
         partySize: reservationData.partySize,
         reservationTime: reservationData.reservationTime,
         phone: reservationData.phone,
-        notes: reservationData.notes
-      }
+        notes: reservationData.notes,
+      },
     });
   }
   async createShiftChangeNotification(shiftData) {
@@ -428,18 +493,18 @@ class NotificationManager {
         shiftName: shiftData.shiftName,
         startTime: shiftData.startTime,
         endTime: shiftData.endTime,
-        type: shiftData.type
-      }
+        type: shiftData.type,
+      },
     });
   }
   async createStaffAnnouncement(announcementData, senderId) {
     const activeStaff = await User.find({
       isActive: true,
       role: {
-        $in: ["admin", "manager", "chef", "waiter", "cashier"]
-      }
+        $in: ["admin", "manager", "chef", "waiter", "cashier"],
+      },
     }).select("_id");
-    const staffIds = activeStaff.map(staff => staff._id);
+    const staffIds = activeStaff.map((staff) => staff._id);
     return this.createNotification({
       title: announcementData.title,
       message: announcementData.message,
@@ -453,8 +518,8 @@ class NotificationManager {
       metadata: {
         announcementType: announcementData.type,
         expiresAt: announcementData.expiresAt,
-        important: announcementData.important || false
-      }
+        important: announcementData.important || false,
+      },
     });
   }
   async getUserNotifications(userId, options = {}) {
@@ -469,38 +534,65 @@ class NotificationManager {
         limit = 50,
         skip = 0,
         unreadOnly = false,
-        actionRequired = false
+        actionRequired = false,
       } = options;
       const query = this.buildRecipientQuery(userId, user.role);
       if (type) query.type = type;
       if (priority) query.priority = priority;
-      if (unreadOnly) query["readBy.user"] = {
-        $ne: userId
-      };
+      if (unreadOnly)
+        query["readBy.user"] = {
+          $ne: userId,
+        };
       if (actionRequired) query.actionRequired = true;
-      const notifications = await Notification.find(query).select("title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy createdAt expiresAt").populate("sender", "name role").sort({
-        createdAt: -1,
-        priority: -1
-      });
-      let decoratedNotifications = notifications.map(notification => this.decorateNotificationForUser(notification, userId));
+      const notifications = await Notification.find(query)
+        .select(
+          "title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy createdAt expiresAt",
+        )
+        .populate("sender", "name role")
+        .sort({
+          createdAt: -1,
+          priority: -1,
+        });
+      let decoratedNotifications = notifications.map((notification) =>
+        this.decorateNotificationForUser(notification, userId),
+      );
       if (search) {
         const keyword = search.trim().toLowerCase();
-        decoratedNotifications = decoratedNotifications.filter(notification => String(notification.title || "").toLowerCase().includes(keyword) || String(notification.message || "").toLowerCase().includes(keyword) || String(notification.type || "").toLowerCase().includes(keyword) || String(notification.sender?.name || "").toLowerCase().includes(keyword));
+        decoratedNotifications = decoratedNotifications.filter(
+          (notification) =>
+            String(notification.title || "")
+              .toLowerCase()
+              .includes(keyword) ||
+            String(notification.message || "")
+              .toLowerCase()
+              .includes(keyword) ||
+            String(notification.type || "")
+              .toLowerCase()
+              .includes(keyword) ||
+            String(notification.sender?.name || "")
+              .toLowerCase()
+              .includes(keyword),
+        );
       }
       if (status && status !== "all") {
-        decoratedNotifications = decoratedNotifications.filter(notification => notification.effectiveStatus === status);
+        decoratedNotifications = decoratedNotifications.filter(
+          (notification) => notification.effectiveStatus === status,
+        );
       }
-      const paginatedNotifications = decoratedNotifications.slice(skip, skip + limit);
+      const paginatedNotifications = decoratedNotifications.slice(
+        skip,
+        skip + limit,
+      );
       const unreadCount = await Notification.countDocuments({
         ...query,
         "readBy.user": {
-          $ne: userId
-        }
+          $ne: userId,
+        },
       });
       return {
         notifications: paginatedNotifications,
         unreadCount,
-        total: decoratedNotifications.length
+        total: decoratedNotifications.length,
       };
     } catch (error) {
       logger.error("Get user notifications failed:", error);
@@ -508,38 +600,50 @@ class NotificationManager {
     }
   }
   async getSessionNotifications(sessionId, options = {}) {
-    const {
-      limit = 50,
-      skip = 0,
-      unreadOnly = false,
-      search
-    } = options;
+    const { limit = 50, skip = 0, unreadOnly = false, search } = options;
     const query = this.buildSessionQuery(sessionId);
     if (unreadOnly) {
       query["readBySessions.sessionId"] = {
-        $ne: sessionId
+        $ne: sessionId,
       };
     }
-    let notifications = await Notification.find(query).select("title message type priority status actionRequired actions createdAt expiresAt readBySessions").sort({
-      createdAt: -1,
-      priority: -1
-    }).lean();
-    notifications = notifications.map(notification => {
-      const isRead = (notification.readBySessions || []).some(entry => String(entry.sessionId) === String(sessionId));
+    let notifications = await Notification.find(query)
+      .select(
+        "title message type priority status actionRequired actions createdAt expiresAt readBySessions",
+      )
+      .sort({
+        createdAt: -1,
+        priority: -1,
+      })
+      .lean();
+    notifications = notifications.map((notification) => {
+      const isRead = (notification.readBySessions || []).some(
+        (entry) => String(entry.sessionId) === String(sessionId),
+      );
       return this.shapeNotification(notification, {
         isRead,
-        effectiveStatus: isRead ? "read" : "unread"
+        effectiveStatus: isRead ? "read" : "unread",
       });
     });
     if (search) {
       const keyword = String(search).trim().toLowerCase();
-      notifications = notifications.filter(notification => String(notification.title || "").toLowerCase().includes(keyword) || String(notification.message || "").toLowerCase().includes(keyword));
+      notifications = notifications.filter(
+        (notification) =>
+          String(notification.title || "")
+            .toLowerCase()
+            .includes(keyword) ||
+          String(notification.message || "")
+            .toLowerCase()
+            .includes(keyword),
+      );
     }
-    const unreadCount = notifications.filter(notification => !notification.isRead).length;
+    const unreadCount = notifications.filter(
+      (notification) => !notification.isRead,
+    ).length;
     return {
       notifications: notifications.slice(skip, skip + limit),
       unreadCount,
-      total: notifications.length
+      total: notifications.length,
     };
   }
   async markAsRead(notificationId, userId) {
@@ -548,34 +652,42 @@ class NotificationManager {
       if (!user) {
         throw new Error("User not found");
       }
-      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
-        $addToSet: {
-          readBy: {
-            user: userId,
-            readAt: Date.now()
-          }
+      const notification = await Notification.findOneAndUpdate(
+        this.buildUserNotificationActionQuery(
+          notificationId,
+          userId,
+          user.role,
+        ),
+        {
+          $addToSet: {
+            readBy: {
+              user: userId,
+              readAt: Date.now(),
+            },
+          },
+          $set: {
+            status: "read",
+          },
         },
-        $set: {
-          status: "read"
-        }
-      }, {
-        new: true
-      });
+        {
+          new: true,
+        },
+      );
       if (!notification) {
         throw new Error("Notification not found");
       }
       socketManager.emitNotificationUpdate(notification._id, userId, "read");
       const unreadCount = await Notification.countDocuments({
         "hiddenFor.user": {
-          $ne: userId
+          $ne: userId,
         },
         "readBy.user": {
-          $ne: userId
+          $ne: userId,
         },
-        $or: this.buildRecipientQuery(userId, user.role).$or
+        $or: this.buildRecipientQuery(userId, user.role).$or,
       });
       socketManager.emitNotificationCountUpdate(userId, {
-        unreadCount
+        unreadCount,
       });
       return this.decorateNotificationForUser(notification, userId);
     } catch (error) {
@@ -589,23 +701,35 @@ class NotificationManager {
       if (!user) {
         throw new Error("User not found");
       }
-      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
-        $addToSet: {
-          acknowledgedBy: {
-            user: userId,
-            acknowledgedAt: Date.now()
-          }
+      const notification = await Notification.findOneAndUpdate(
+        this.buildUserNotificationActionQuery(
+          notificationId,
+          userId,
+          user.role,
+        ),
+        {
+          $addToSet: {
+            acknowledgedBy: {
+              user: userId,
+              acknowledgedAt: Date.now(),
+            },
+          },
+          $set: {
+            status: "acknowledged",
+          },
         },
-        $set: {
-          status: "acknowledged"
-        }
-      }, {
-        new: true
-      });
+        {
+          new: true,
+        },
+      );
       if (!notification) {
         throw new Error("Notification not found");
       }
-      socketManager.emitNotificationUpdate(notification._id, userId, "acknowledged");
+      socketManager.emitNotificationUpdate(
+        notification._id,
+        userId,
+        "acknowledged",
+      );
       return this.decorateNotificationForUser(notification, userId);
     } catch (error) {
       logger.error("Mark as acknowledged failed:", error);
@@ -619,19 +743,21 @@ class NotificationManager {
       const query = {
         ...this.buildRecipientQuery(userId, user.role),
         "readBy.user": {
-          $ne: userId
-        }
+          $ne: userId,
+        },
       };
       const notifications = await Notification.find(query);
-      const updatePromises = notifications.map(notification => Notification.markAsRead(notification._id, userId));
+      const updatePromises = notifications.map((notification) =>
+        Notification.markAsRead(notification._id, userId),
+      );
       await Promise.all(updatePromises);
       socketManager.emitNotificationCountUpdate(userId, {
-        unreadCount: 0
+        unreadCount: 0,
       });
       socketManager.emitNotificationUpdate("all", userId, "read");
       return {
         success: true,
-        count: notifications.length
+        count: notifications.length,
       };
     } catch (error) {
       logger.error("Mark all as read failed:", error);
@@ -644,22 +770,34 @@ class NotificationManager {
       if (!user) {
         throw new Error("User not found");
       }
-      const notification = await Notification.findOneAndUpdate(this.buildUserNotificationActionQuery(notificationId, userId, user.role), {
-        $push: {
-          hiddenFor: {
-            user: userId,
-            hiddenAt: new Date()
-          }
-        }
-      }, {
-        new: true
-      });
+      const notification = await Notification.findOneAndUpdate(
+        this.buildUserNotificationActionQuery(
+          notificationId,
+          userId,
+          user.role,
+        ),
+        {
+          $push: {
+            hiddenFor: {
+              user: userId,
+              hiddenAt: new Date(),
+            },
+          },
+        },
+        {
+          new: true,
+        },
+      );
       if (!notification) {
         throw new Error("Notification not found");
       }
-      socketManager.emitNotificationUpdate(notification._id, userId, "dismissed");
+      socketManager.emitNotificationUpdate(
+        notification._id,
+        userId,
+        "dismissed",
+      );
       socketManager.emitNotificationCountUpdate(userId, {
-        unreadCount: await this.getUnreadCount(userId)
+        unreadCount: await this.getUnreadCount(userId),
       });
       return this.decorateNotificationForUser(notification, userId);
     } catch (error) {
@@ -671,21 +809,24 @@ class NotificationManager {
     try {
       const user = await User.findById(userId).select("role");
       if (!user) throw new Error("User not found");
-      const result = await Notification.updateMany(this.buildRecipientQuery(userId, user.role), {
-        $push: {
-          hiddenFor: {
-            user: userId,
-            hiddenAt: new Date()
-          }
-        }
-      });
+      const result = await Notification.updateMany(
+        this.buildRecipientQuery(userId, user.role),
+        {
+          $push: {
+            hiddenFor: {
+              user: userId,
+              hiddenAt: new Date(),
+            },
+          },
+        },
+      );
       socketManager.emitNotificationUpdate("all", userId, "cleared");
       socketManager.emitNotificationCountUpdate(userId, {
-        unreadCount: 0
+        unreadCount: 0,
       });
       return {
         success: true,
-        count: result.modifiedCount || 0
+        count: result.modifiedCount || 0,
       };
     } catch (error) {
       logger.error("Clear notifications failed:", error);
@@ -693,73 +834,84 @@ class NotificationManager {
     }
   }
   async markSessionNotificationAsRead(notificationId, sessionId) {
-    const notification = await Notification.findOneAndUpdate({
-      _id: notificationId,
-      customerSessionId: sessionId
-    }, {
-      $addToSet: {
-        readBySessions: {
-          sessionId,
-          readAt: new Date()
-        }
+    const notification = await Notification.findOneAndUpdate(
+      {
+        _id: notificationId,
+        customerSessionId: sessionId,
       },
-      $set: {
-        status: "read"
-      }
-    }, {
-      new: true
-    });
+      {
+        $addToSet: {
+          readBySessions: {
+            sessionId,
+            readAt: new Date(),
+          },
+        },
+        $set: {
+          status: "read",
+        },
+      },
+      {
+        new: true,
+      },
+    );
     if (!notification) {
       throw new Error("Notification not found");
     }
     return this.shapeNotification(notification, {
       isRead: true,
-      effectiveStatus: "read"
+      effectiveStatus: "read",
     });
   }
   async markAllSessionNotificationsAsRead(sessionId) {
     const notifications = await Notification.find({
       ...this.buildSessionQuery(sessionId),
       "readBySessions.sessionId": {
-        $ne: sessionId
-      }
-    });
-    await Promise.all(notifications.map(notification => Notification.findByIdAndUpdate(notification._id, {
-      $addToSet: {
-        readBySessions: {
-          sessionId,
-          readAt: new Date()
-        }
+        $ne: sessionId,
       },
-      $set: {
-        status: "read"
-      }
-    })));
+    });
+    await Promise.all(
+      notifications.map((notification) =>
+        Notification.findByIdAndUpdate(notification._id, {
+          $addToSet: {
+            readBySessions: {
+              sessionId,
+              readAt: new Date(),
+            },
+          },
+          $set: {
+            status: "read",
+          },
+        }),
+      ),
+    );
     return {
       success: true,
-      count: notifications.length
+      count: notifications.length,
     };
   }
   async clearAllSessionNotifications(sessionId) {
-    const result = await Notification.updateMany(this.buildSessionQuery(sessionId), {
-      $push: {
-        hiddenForSessions: {
-          sessionId,
-          hiddenAt: new Date()
-        }
-      }
-    });
+    const result = await Notification.updateMany(
+      this.buildSessionQuery(sessionId),
+      {
+        $push: {
+          hiddenForSessions: {
+            sessionId,
+            hiddenAt: new Date(),
+          },
+        },
+      },
+    );
     return {
       success: true,
-      count: result.modifiedCount || 0
+      count: result.modifiedCount || 0,
     };
   }
   async cleanupExpiredNotifications() {
     try {
       const result = await Notification.deleteMany({
         expiresAt: {
-          $lt: new Date()
-        }
+          $lt: new Date(),
+        },
       });
       logger.info(`Cleaned up ${result.deletedCount} expired notifications`);
       return result;
@@ -776,30 +928,38 @@ class NotificationManager {
       const dateFilter = this.getDateFilter(period);
       const baseQuery = {
         ...this.buildRecipientQuery(notificationUserId, user.role),
-        createdAt: dateFilter
+        createdAt: dateFilter,
       };
-      const stats = await Notification.aggregate([{
-        $match: baseQuery
-      }, {
-        $facet: {
-          total: [{
-            $count: "count"
-          }],
-          unreadCount: [{
-            $match: {
-              "readBy.user": {
-                $ne: notificationUserId
-              }
-            }
-          }, {
-            $count: "count"
-          }]
-        }
-      }]);
+      const stats = await Notification.aggregate([
+        {
+          $match: baseQuery,
+        },
+        {
+          $facet: {
+            total: [
+              {
+                $count: "count",
+              },
+            ],
+            unreadCount: [
+              {
+                $match: {
+                  "readBy.user": {
+                    $ne: notificationUserId,
+                  },
+                },
+              },
+              {
+                $count: "count",
+              },
+            ],
+          },
+        },
+      ]);
       return {
         total: stats[0]?.total[0]?.count || 0,
         unreadCount: stats[0]?.unreadCount[0]?.count || 0,
-        period
+        period,
       };
     } catch (error) {
       logger.error("Get notification stats failed:", error);
@@ -822,17 +982,20 @@ class NotificationManager {
           relatedTo: orderData._id,
           relatedModel: "KitchenOrder",
           actionRequired: true,
-          actions: [{
-            label: "Start Preparing",
-            type: "button",
-            action: `/api/kitchen-orders/${orderData._id}/start`,
-            color: "primary"
-          }, {
-            label: "View Order Details",
-            type: "link",
-            action: `/dashboard/kitchen/orders/${orderData._id}`,
-            color: "secondary"
-          }],
+          actions: [
+            {
+              label: "Start Preparing",
+              type: "button",
+              action: `/api/kitchen-orders/${orderData._id}/start`,
+              color: "primary",
+            },
+            {
+              label: "View Order Details",
+              type: "link",
+              action: `/dashboard/kitchen/orders/${orderData._id}`,
+              color: "secondary",
+            },
+          ],
           metadata: {
             orderNumber: orderData.orderNumber,
             tableNumber: orderData.tableNumber,
@@ -840,8 +1003,8 @@ class NotificationManager {
             stationName: assignment.stationName,
             stationType: assignment.stationType,
             itemCount: assignment.items.length,
-            items: assignment.items.map(String)
-          }
+            items: assignment.items.map(String),
+          },
         });
         notifications.push(notification);
       }
@@ -858,25 +1021,31 @@ class NotificationManager {
     } catch (_error) {
       return;
     }
-    if (notification.recipientType === "user" && notification.recipients.length > 0) {
-      notification.recipients.forEach(recipientId => {
+    if (
+      notification.recipientType === "user" &&
+      notification.recipients.length > 0
+    ) {
+      notification.recipients.forEach((recipientId) => {
         io.to(`user-${recipientId}`).emit("new_notification", {
           ...this.shapeNotification(notification, {
             isRead: false,
-            effectiveStatus: "unread"
+            effectiveStatus: "unread",
           }),
-          isUnread: true
+          isUnread: true,
         });
       });
     }
-    if (notification.recipientType === "role" && notification.roles.length > 0) {
-      notification.roles.forEach(role => {
+    if (
+      notification.recipientType === "role" &&
+      notification.roles.length > 0
+    ) {
+      notification.roles.forEach((role) => {
         io.to(`role-${role}`).emit("new_notification", {
           ...this.shapeNotification(notification, {
             isRead: false,
-            effectiveStatus: "unread"
+            effectiveStatus: "unread",
           }),
-          isUnread: true
+          isUnread: true,
         });
       });
     }
@@ -884,24 +1053,30 @@ class NotificationManager {
       io.to("staff-room").emit("new_notification", {
         ...this.shapeNotification(notification, {
           isRead: false,
-          effectiveStatus: "unread"
+          effectiveStatus: "unread",
         }),
-        isUnread: true
+        isUnread: true,
       });
     }
     if (notification.customerSessionId) {
-      io.to(`customer-${notification.customerSessionId}`).emit("new_notification", {
-        ...this.shapeNotification(notification, {
-          isRead: false,
-          effectiveStatus: "unread"
-        }),
-        isUnread: true
-      });
+      io.to(`customer-${notification.customerSessionId}`).emit(
+        "new_notification",
+        {
+          ...this.shapeNotification(notification, {
+            isRead: false,
+            effectiveStatus: "unread",
+          }),
+          isUnread: true,
+        },
+      );
     }
-    if (notification.priority === "urgent" || notification.priority === "high") {
+    if (
+      notification.priority === "urgent" ||
+      notification.priority === "high"
+    ) {
       io.to("staff-room").emit("notification_sound", {
         type: "urgent",
-        notificationId: notification._id
+        notificationId: notification._id,
       });
     }
   }
@@ -913,8 +1088,8 @@ class NotificationManager {
     return Notification.countDocuments({
       ...this.buildRecipientQuery(userId, user.role),
       "readBy.user": {
-        $ne: userId
-      }
+        $ne: userId,
+      },
     });
   }
   getDateFilter(period) {
@@ -931,7 +1106,7 @@ class NotificationManager {
         endDate.setHours(23, 59, 59, 999);
         return {
           $gte: startDate,
-          $lte: endDate
+          $lte: endDate,
         };
       case "week":
         startDate = new Date(now.setDate(now.getDate() - 7));
@@ -943,7 +1118,7 @@ class NotificationManager {
         startDate = new Date(0);
     }
     return {
-      $gte: startDate
+      $gte: startDate,
     };
   }
   async scheduleCleanup() {
@@ -951,9 +1126,12 @@ class NotificationManager {
       if (this.cleanupTimer) {
         return;
       }
-      this.cleanupTimer = setInterval(async () => {
-        await this.cleanupExpiredNotifications();
-      }, 60 * 60 * 1000);
+      this.cleanupTimer = setInterval(
+        async () => {
+          await this.cleanupExpiredNotifications();
+        },
+        60 * 60 * 1000,
+      );
       this.cleanupTimer.unref?.();
     } catch (error) {
       logger.error("Schedule cleanup failed:", error);

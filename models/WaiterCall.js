@@ -1,162 +1,180 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 const waiterCallSchema = new mongoose.Schema({
   callId: {
     type: String,
     unique: true,
-    required: true
+    required: true,
   },
   sessionId: {
     type: String,
-    required: true
+    required: true,
   },
   customer: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Customer',
-    required: true
+    ref: "Customer",
+    required: true,
   },
   table: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Table',
-    required: true
+    ref: "Table",
+    required: true,
   },
   tableNumber: {
     type: String,
-    required: true
+    required: true,
   },
   tableName: {
-    type: String
+    type: String,
   },
   location: {
-    type: String
+    type: String,
   },
   coordinates: {
-    type: mongoose.Schema.Types.Mixed
+    type: mongoose.Schema.Types.Mixed,
   },
   status: {
     type: String,
-    enum: ['pending', 'assigned', 'acknowledged', 'in_progress', 'completed', 'cancelled'],
-    default: 'pending'
+    enum: [
+      "pending",
+      "assigned",
+      "acknowledged",
+      "in_progress",
+      "completed",
+      "cancelled",
+    ],
+    default: "pending",
   },
   callType: {
     type: String,
-    enum: ['waiter', 'bill', 'assistance', 'order_help', 'other', 'emergency', 'billing', 'order'],
-    default: 'waiter'
+    enum: [
+      "waiter",
+      "bill",
+      "assistance",
+      "order_help",
+      "other",
+      "emergency",
+      "billing",
+      "order",
+    ],
+    default: "waiter",
   },
   priority: {
     type: String,
-    enum: ['low', 'medium', 'high', 'urgent', 'critical'],
-    default: 'medium'
+    enum: ["low", "medium", "high", "urgent", "critical"],
+    default: "medium",
   },
   urgencyLevel: {
     type: String,
-    enum: ['low', 'medium', 'high', 'critical'],
-    default: 'medium'
+    enum: ["low", "medium", "high", "critical"],
+    default: "medium",
   },
   message: {
     type: String,
-    maxlength: 200
+    maxlength: 200,
   },
   assignedTo: {
     type: mongoose.Schema.ObjectId,
-    ref: 'User'
+    ref: "User",
   },
   assignedBy: {
     type: mongoose.Schema.ObjectId,
-    ref: 'User'
+    ref: "User",
   },
   assignedAt: {
-    type: Date
+    type: Date,
   },
   acknowledgedBy: {
     type: mongoose.Schema.ObjectId,
-    ref: 'User'
+    ref: "User",
   },
   acknowledgedAt: {
-    type: Date
+    type: Date,
   },
   completedBy: {
     type: mongoose.Schema.ObjectId,
-    ref: 'User'
+    ref: "User",
   },
   startedBy: {
     type: mongoose.Schema.ObjectId,
-    ref: 'User'
+    ref: "User",
   },
   startedAt: {
-    type: Date
+    type: Date,
   },
   completedAt: {
-    type: Date
+    type: Date,
   },
   estimatedArrival: {
-    type: Date
+    type: Date,
   },
   notes: {
     type: String,
-    maxlength: 1000
+    maxlength: 1000,
   },
   resolutionNotes: {
     type: String,
-    maxlength: 1000
+    maxlength: 1000,
   },
   cancellationReason: {
     type: String,
-    maxlength: 500
+    maxlength: 500,
   },
   cancelledAt: {
-    type: Date
+    type: Date,
   },
   staffName: {
-    type: String
+    type: String,
   },
   staffRole: {
-    type: String
+    type: String,
   },
   responseTime: {
-    type: Number
+    type: Number,
   },
   resolutionTime: {
-    type: Number
+    type: Number,
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   updatedAt: {
     type: Date,
-    default: Date.now
-  }
+    default: Date.now,
+  },
 });
 waiterCallSchema.plugin(tenantScoped);
-waiterCallSchema.pre('save', function () {
+waiterCallSchema.pre("save", function () {
   this.updatedAt = Date.now();
 });
-waiterCallSchema.pre('validate', function () {
+waiterCallSchema.pre("validate", function () {
   if (this.isNew && !this.callId) {
     const timestamp = Date.now().toString().slice(-6);
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    const random = Math.floor(Math.random() * 1000)
+      .toString()
+      .padStart(3, "0");
     this.callId = `CALL-${timestamp}${random}`;
   }
 });
 waiterCallSchema.index({
-  sessionId: 1
+  sessionId: 1,
 });
 waiterCallSchema.index({
-  table: 1
+  table: 1,
 });
 waiterCallSchema.index({
-  status: 1
+  status: 1,
 });
 waiterCallSchema.index({
   assignedTo: 1,
-  status: 1
+  status: 1,
 });
 waiterCallSchema.index({
-  createdAt: -1
+  createdAt: -1,
 });
 waiterCallSchema.index({
   priority: 1,
-  createdAt: 1
+  createdAt: 1,
 });
-module.exports = mongoose.model('WaiterCall', waiterCallSchema);
+module.exports = mongoose.model("WaiterCall", waiterCallSchema);

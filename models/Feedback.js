@@ -1,216 +1,262 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
 const feedbackSchema = new mongoose.Schema({
   customer: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Customer',
-    required: true
+    ref: "Customer",
+    required: true,
   },
   order: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Order',
-    required: true
+    ref: "Order",
+    required: true,
   },
   table: {
     type: mongoose.Schema.ObjectId,
-    ref: 'Table'
+    ref: "Table",
   },
   sessionId: {
     type: String,
-    required: true
+    required: true,
   },
   ratings: {
     overall: {
       type: Number,
       required: true,
       min: 1,
-      max: 5
+      max: 5,
     },
     food: {
       type: Number,
       min: 1,
-      max: 5
+      max: 5,
     },
     service: {
       type: Number,
       min: 1,
-      max: 5
+      max: 5,
     },
     ambiance: {
       type: Number,
       min: 1,
-      max: 5
+      max: 5,
     },
     value: {
       type: Number,
       min: 1,
-      max: 5
-    }
+      max: 5,
+    },
   },
   comments: {
     type: String,
-    maxlength: 1000
+    maxlength: 1000,
   },
-  categories: [{
-    type: String,
-    enum: ['food_quality', 'service_speed', 'staff_friendliness', 'cleanliness', 'value_for_money', 'atmosphere', 'menu_variety', 'waiting_time', 'order_accuracy']
-  }],
+  categories: [
+    {
+      type: String,
+      enum: [
+        "food_quality",
+        "service_speed",
+        "staff_friendliness",
+        "cleanliness",
+        "value_for_money",
+        "atmosphere",
+        "menu_variety",
+        "waiting_time",
+        "order_accuracy",
+      ],
+    },
+  ],
   sentiment: {
     type: String,
-    enum: ['positive', 'neutral', 'negative'],
-    default: 'neutral'
+    enum: ["positive", "neutral", "negative"],
+    default: "neutral",
   },
-  highlights: [{
-    type: String,
-    maxlength: 100
-  }],
-  issues: [{
-    type: String,
-    maxlength: 100
-  }],
-  staffMentions: [{
-    staff: {
-      type: mongoose.Schema.ObjectId,
-      ref: 'User'
+  highlights: [
+    {
+      type: String,
+      maxlength: 100,
     },
-    comment: String,
-    rating: Number
-  }],
-  menuItemRatings: [{
-    menuItem: {
-      type: mongoose.Schema.ObjectId,
-      ref: 'MenuItem'
+  ],
+  issues: [
+    {
+      type: String,
+      maxlength: 100,
     },
-    rating: {
-      type: Number,
-      min: 1,
-      max: 5
+  ],
+  staffMentions: [
+    {
+      staff: {
+        type: mongoose.Schema.ObjectId,
+        ref: "User",
+      },
+      comment: String,
+      rating: Number,
     },
-    comment: String
-  }],
+  ],
+  menuItemRatings: [
+    {
+      menuItem: {
+        type: mongoose.Schema.ObjectId,
+        ref: "MenuItem",
+      },
+      rating: {
+        type: Number,
+        min: 1,
+        max: 5,
+      },
+      comment: String,
+    },
+  ],
   wouldRecommend: {
-    type: Boolean
+    type: Boolean,
   },
   visitPurpose: {
     type: String,
-    enum: ['business', 'casual_dining', 'celebration', 'date', 'family', 'quick_meal']
+    enum: [
+      "business",
+      "casual_dining",
+      "celebration",
+      "date",
+      "family",
+      "quick_meal",
+    ],
   },
   waitTime: {
-    type: Number
+    type: Number,
   },
   response: {
     message: String,
     respondedBy: {
       type: mongoose.Schema.ObjectId,
-      ref: 'User'
+      ref: "User",
     },
-    respondedAt: Date
+    respondedAt: Date,
   },
   status: {
     type: String,
-    enum: ['new', 'reviewed', 'action_required', 'resolved', 'archived'],
-    default: 'new'
+    enum: ["new", "reviewed", "action_required", "resolved", "archived"],
+    default: "new",
   },
   priority: {
     type: String,
-    enum: ['low', 'medium', 'high', 'critical'],
-    default: 'medium'
+    enum: ["low", "medium", "high", "critical"],
+    default: "medium",
   },
   followUpRequired: {
     type: Boolean,
-    default: false
+    default: false,
   },
   isAnonymous: {
     type: Boolean,
-    default: false
+    default: false,
   },
   source: {
     type: String,
-    enum: ['qr_system', 'email', 'website', 'social_media', 'phone'],
-    default: 'qr_system'
+    enum: ["qr_system", "email", "website", "social_media", "phone"],
+    default: "qr_system",
   },
   metadata: {
     device: String,
     browser: String,
-    ipAddress: String
+    ipAddress: String,
   },
   isActive: {
     type: Boolean,
-    default: true
+    default: true,
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now,
   },
   updatedAt: {
     type: Date,
-    default: Date.now
-  }
+    default: Date.now,
+  },
 });
 feedbackSchema.plugin(tenantScoped);
-feedbackSchema.pre('save', function () {
+feedbackSchema.pre("save", function () {
   this.updatedAt = Date.now();
-  if (this.isModified('ratings') || this.isModified('comments')) {
+  if (this.isModified("ratings") || this.isModified("comments")) {
     this.detectSentiment();
   }
-  if (this.isModified('ratings') || this.isModified('comments')) {
+  if (this.isModified("ratings") || this.isModified("comments")) {
     this.assignPriority();
   }
 });
 feedbackSchema.methods.detectSentiment = function () {
   const overallRating = this.ratings.overall;
   if (overallRating >= 4) {
-    this.sentiment = 'positive';
+    this.sentiment = "positive";
   } else if (overallRating <= 2) {
-    this.sentiment = 'negative';
+    this.sentiment = "negative";
   } else {
-    this.sentiment = 'neutral';
+    this.sentiment = "neutral";
   }
   if (this.comments) {
-    const positiveWords = ['great', 'excellent', 'amazing', 'wonderful', 'good', 'love', 'perfect'];
-    const negativeWords = ['bad', 'terrible', 'awful', 'horrible', 'disappointing', 'poor'];
+    const positiveWords = [
+      "great",
+      "excellent",
+      "amazing",
+      "wonderful",
+      "good",
+      "love",
+      "perfect",
+    ];
+    const negativeWords = [
+      "bad",
+      "terrible",
+      "awful",
+      "horrible",
+      "disappointing",
+      "poor",
+    ];
     const comment = this.comments.toLowerCase();
-    const positiveCount = positiveWords.filter(word => comment.includes(word)).length;
-    const negativeCount = negativeWords.filter(word => comment.includes(word)).length;
+    const positiveCount = positiveWords.filter((word) =>
+      comment.includes(word),
+    ).length;
+    const negativeCount = negativeWords.filter((word) =>
+      comment.includes(word),
+    ).length;
     if (negativeCount > positiveCount) {
-      this.sentiment = 'negative';
+      this.sentiment = "negative";
     } else if (positiveCount > negativeCount) {
-      this.sentiment = 'positive';
+      this.sentiment = "positive";
     }
   }
 };
 feedbackSchema.methods.assignPriority = function () {
-  if (this.ratings.overall <= 2 || this.sentiment === 'negative') {
-    this.priority = 'high';
+  if (this.ratings.overall <= 2 || this.sentiment === "negative") {
+    this.priority = "high";
     this.followUpRequired = true;
   } else if (this.ratings.overall === 3) {
-    this.priority = 'medium';
+    this.priority = "medium";
   } else {
-    this.priority = 'low';
+    this.priority = "low";
   }
 };
 feedbackSchema.index({
-  order: 1
+  order: 1,
 });
 feedbackSchema.index({
-  customer: 1
+  customer: 1,
 });
 feedbackSchema.index({
-  sessionId: 1
+  sessionId: 1,
 });
 feedbackSchema.index({
-  sentiment: 1
+  sentiment: 1,
 });
 feedbackSchema.index({
-  status: 1
+  status: 1,
 });
 feedbackSchema.index({
-  priority: 1
+  priority: 1,
 });
 feedbackSchema.index({
-  createdAt: -1
+  createdAt: -1,
 });
 feedbackSchema.index({
-  'ratings.overall': 1
+  "ratings.overall": 1,
 });
-module.exports = mongoose.model('Feedback', feedbackSchema);
+module.exports = mongoose.model("Feedback", feedbackSchema);
