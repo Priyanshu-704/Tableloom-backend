@@ -56,7 +56,7 @@ const notificationSchema = new mongoose.Schema({
   }],
   roles: [{
     type: String,
-    enum: ["super_admin", "admin", "manager", "chef", "waiter", "cashier", "customer"]
+    enum: ["super_admin", "admin", "manager", "chef", "waiter", "cashier", "expediter", "customer"]
   }],
   customerSessionId: {
     type: String,

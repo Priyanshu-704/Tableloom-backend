@@ -23,9 +23,13 @@ const {
 const {
   resolveTenant
 } = require("./middleware/tenant");
+const {
+  assertAuthConfig
+} = require("./utils/authTokens");
 dotenv.config({
   quiet: true
 });
+assertAuthConfig();
 const connectDB = require("./config/database");
 const app = express();
 const API_PREFIX = "/api";

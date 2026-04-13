@@ -132,6 +132,13 @@ class NotificationManager {
   }
   async createNotification(data) {
     try {
+      const allowedRoles = Notification.schema.path("roles").caster?.enumValues || [];
+      const normalizedRoles = [...new Set((data.roles || []).map(role => String(role || "").trim()).filter(Boolean))];
+      const roles = normalizedRoles.filter(role => allowedRoles.includes(role));
+      const invalidRoles = normalizedRoles.filter(role => !allowedRoles.includes(role));
+      if (invalidRoles.length > 0) {
+        logger.warn("Ignoring unsupported notification roles:", invalidRoles);
+      }
       const notification = await Notification.create({
         tenantId: this.resolveTenantId(data),
         title: data.title,
@@ -140,7 +147,7 @@ class NotificationManager {
         priority: data.priority || "medium",
         recipientType: data.recipientType || "all",
         recipients: data.recipients || [],
-        roles: data.roles || [],
+        roles,
         customerSessionId: data.customerSessionId || null,
         sender: data.sender || null,
         senderType: data.senderType || "system",

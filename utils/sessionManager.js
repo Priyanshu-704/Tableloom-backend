@@ -1128,14 +1128,15 @@ exports.requestBillForSession = async (sessionId, email = null, forceNew = false
     if (!customer) {
       throw new Error("Active customer session not found");
     }
-    const bill = await billManager.generateBill(sessionId, email, forceNew);
+    const resolvedEmail = String(email || customer.email || "").trim().toLowerCase() || null;
+    const bill = await billManager.generateBill(sessionId, resolvedEmail, forceNew);
     const action = bill?.generationAction || "created";
     const normalizedPaymentMethod = String(paymentMethod || "").trim().toLowerCase();
     if (normalizedPaymentMethod) {
       customer.paymentMethod = normalizedPaymentMethod;
     }
-    if (email && !customer.email) {
-      customer.email = email;
+    if (resolvedEmail && customer.email !== resolvedEmail) {
+      customer.email = resolvedEmail;
     }
     await customer.save();
     if (normalizedPaymentMethod && bill && bill.paymentStatus === "pending" && bill.paymentMethod !== normalizedPaymentMethod) {
@@ -1146,7 +1147,7 @@ exports.requestBillForSession = async (sessionId, email = null, forceNew = false
     }
     return {
       success: true,
-      message: email ? action === "unchanged" ? "Existing bill reused successfully" : action === "updated" ? "Existing bill updated and sent via email" : "Bill generated and sent via email" : action === "unchanged" ? "Existing bill reused. No new changes found for this session" : action === "updated" ? "Existing bill updated successfully" : "Bill generated successfully",
+      message: resolvedEmail ? action === "unchanged" ? "Existing bill reused successfully" : action === "updated" ? "Existing bill updated and sent via email" : "Bill generated and sent via email" : action === "unchanged" ? "Existing bill reused. No new changes found for this session" : action === "updated" ? "Existing bill updated successfully" : "Bill generated successfully",
       data: {
         bill,
         session: customer

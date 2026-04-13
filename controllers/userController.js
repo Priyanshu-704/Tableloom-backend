@@ -5,7 +5,6 @@ const User = require("../models/User");
 require("dotenv").config({
   quiet: true
 });
-const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const generatePassword = require("../utils/passwordGenerator");
 const {
@@ -23,13 +22,9 @@ const {
 const {
   normalizeTenantId
 } = require("../utils/tenantContext");
-const generateAccessToken = id => {
-  return jwt.sign({
-    id
-  }, process.env.JWT_SECRET, {
-    expiresIn: process.env.ACCESS_TOKEN_EXPIRE || "1h"
-  });
-};
+const {
+  signAccessToken
+} = require("../utils/authTokens");
 const setTokensInCookies = (res, refreshToken) => {
   const isProd = process.env.NODE_ENV === "production";
   res.cookie("refreshToken", refreshToken, {
@@ -236,7 +231,7 @@ exports.loginStaff = async (req, res) => {
           message: "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL."
         });
       }
-      const accessToken = generateAccessToken(user._id);
+      const accessToken = signAccessToken(user);
       const refreshToken = user.generateRefreshToken();
       user.lastLogin = Date.now();
       user.loginCount = (user.loginCount || 0) + 1;
@@ -312,7 +307,7 @@ exports.refreshToken = async (req, res) => {
         message: "Invalid or expired refresh token. Please login again."
       });
     }
-    const accessToken = generateAccessToken(user._id);
+    const accessToken = signAccessToken(user);
     res.status(200).json({
       success: true,
       message: "Token refreshed successfully",

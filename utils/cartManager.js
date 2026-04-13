@@ -5,6 +5,7 @@ const Cart = require("../models/Cart");
 const Coupon = require("../models/Coupon");
 const Customer = require("../models/Customer");
 const MenuItem = require("../models/MenuItem");
+const Table = require("../models/Table");
 const orderManager = require("./orderManager");
 const {
   buildTenantImageAssetUrl
@@ -95,18 +96,49 @@ const calculateCouponDiscount = (coupon, subtotalAfterItemDiscounts) => {
   }
   return Math.min(couponDiscount, baseAmount);
 };
-const recalculateCartPricing = async cart => {
+const buildCartMenuItemMap = async (cart, {
+  activeOnly = true
+} = {}) => {
+  const menuItemIds = [...new Set((cart?.items || []).map(item => String(item?.menuItem?._id || item?.menuItem || "")).filter(Boolean))];
+  if (menuItemIds.length === 0) {
+    return new Map();
+  }
+  const query = {
+    _id: {
+      $in: menuItemIds
+    }
+  };
+  if (activeOnly) {
+    query.isActive = true;
+  }
+  const menuItems = await MenuItem.find(query).select("name image thumbnail prices discount isActive isAvailable").populate("prices.sizeId", "name code").lean();
+  return new Map(menuItems.map(item => [String(item._id), item]));
+};
+const getTableSummary = async cart => {
+  if (!cart?.table) {
+    return null;
+  }
+  const existingTableNumber = cart?.table?.tableNumber;
+  if (existingTableNumber) {
+    return {
+      number: cart.table.tableNumber,
+      name: cart.table.tableName
+    };
+  }
+  const table = await Table.findById(cart.table).select("tableNumber tableName").lean();
+  if (!table) {
+    return null;
+  }
+  return {
+    number: table.tableNumber,
+    name: table.tableName
+  };
+};
+const recalculateCartPricing = async (cart, options = {}) => {
   if (!cart) {
     return cart;
   }
-  const menuItemIds = cart.items.map(item => item.menuItem);
-  const menuItems = await MenuItem.find({
-    _id: {
-      $in: menuItemIds
-    },
-    isActive: true
-  }).populate("prices.sizeId", "name code").lean();
-  const menuItemMap = new Map(menuItems.map(item => [String(item._id), item]));
+  const menuItemMap = options.menuItemMap || await buildCartMenuItemMap(cart);
   let grossSubtotal = 0;
   let itemDiscountTotal = 0;
   let netSubtotal = 0;
@@ -188,13 +220,14 @@ exports.getOrCreateCart = async sessionId => {
   try {
     let cart = await Cart.findOne({
       sessionId
-    }).populate("items.menuItem", "name image thumbnail").populate("table", "tableNumber tableName");
+    });
+    let tableSummary = null;
     if (!cart) {
       const customer = await Customer.findOne({
         sessionId,
         isActive: true,
         sessionStatus: "active"
-      }).populate("table");
+      }).populate("table", "tableNumber tableName");
       if (!customer) {
         throw new Error("Active customer session not found");
       }
@@ -203,12 +236,20 @@ exports.getOrCreateCart = async sessionId => {
         customer: customer._id,
         table: customer.table._id
       });
-      await cart.populate("items.menuItem", "name image thumbnail");
-      await cart.populate("table", "tableNumber tableName");
+      tableSummary = customer.table ? {
+        number: customer.table.tableNumber,
+        name: customer.table.tableName
+      } : null;
     }
-    await recalculateCartPricing(cart);
+    const menuItemMap = await buildCartMenuItemMap(cart);
+    await recalculateCartPricing(cart, {
+      menuItemMap
+    });
     await cart.save();
-    const transformedCart = transformCartData(cart);
+    const transformedCart = await transformCartData(cart, {
+      menuItemMap,
+      tableSummary
+    });
     return transformedCart;
   } catch (error) {
     logger.error("Get or create cart failed:", error);
@@ -287,12 +328,15 @@ exports.addItemToCart = async (sessionId, itemData) => {
         costPrice: selectedPrice.costPrice || 0
       });
     }
-    await recalculateCartPricing(cart);
+    const menuItemMap = await buildCartMenuItemMap(cart);
+    await recalculateCartPricing(cart, {
+      menuItemMap
+    });
     normalizeCartDiscount(cart);
     await cart.save();
-    await cart.populate("items.menuItem", "name image thumbnail");
-    await cart.populate("table", "tableNumber tableName");
-    return transformCartData(cart);
+    return await transformCartData(cart, {
+      menuItemMap
+    });
   } catch (error) {
     throw error;
   }
@@ -301,19 +345,24 @@ exports.incrementItemQuantity = async (sessionId, menuItemId, sizeId = null) => 
   try {
     const cart = await Cart.findOne({
       sessionId
-    }).populate("items.menuItem", "name image thumbnail").populate("table", "tableNumber tableName");
+    });
     if (!cart) {
       throw new Error("Cart not found");
     }
-    const itemIndex = cart.items.findIndex(item => item.menuItem._id.toString() === menuItemId && (!sizeId || item.sizeId.toString() === sizeId));
+    const itemIndex = cart.items.findIndex(item => String(item.menuItem) === String(menuItemId) && (!sizeId || String(item.sizeId) === String(sizeId)));
     if (itemIndex === -1) {
       throw new Error("Item not found in cart");
     }
     cart.items[itemIndex].quantity += 1;
-    await recalculateCartPricing(cart);
+    const menuItemMap = await buildCartMenuItemMap(cart);
+    await recalculateCartPricing(cart, {
+      menuItemMap
+    });
     normalizeCartDiscount(cart);
     await cart.save();
-    return transformCartData(cart);
+    return await transformCartData(cart, {
+      menuItemMap
+    });
   } catch (error) {
     logger.error("Increment item quantity failed:", error);
     throw error;
@@ -323,11 +372,11 @@ exports.decrementItemQuantity = async (sessionId, menuItemId, sizeId = null) => 
   try {
     const cart = await Cart.findOne({
       sessionId
-    }).populate("items.menuItem", "name image thumbnail").populate("table", "tableNumber tableName");
+    });
     if (!cart) {
       throw new Error("Cart not found");
     }
-    const itemIndex = cart.items.findIndex(item => item.menuItem._id.toString() === menuItemId && (!sizeId || item.sizeId.toString() === sizeId));
+    const itemIndex = cart.items.findIndex(item => String(item.menuItem) === String(menuItemId) && (!sizeId || String(item.sizeId) === String(sizeId)));
     if (itemIndex === -1) {
       throw new Error("Item not found in cart");
     }
@@ -336,10 +385,15 @@ exports.decrementItemQuantity = async (sessionId, menuItemId, sizeId = null) => 
       return await this.removeItemFromCart(sessionId, menuItemId, sizeId);
     }
     cart.items[itemIndex].quantity = currentQty - 1;
-    await recalculateCartPricing(cart);
+    const menuItemMap = await buildCartMenuItemMap(cart);
+    await recalculateCartPricing(cart, {
+      menuItemMap
+    });
     normalizeCartDiscount(cart);
     await cart.save();
-    return transformCartData(cart);
+    return await transformCartData(cart, {
+      menuItemMap
+    });
   } catch (error) {
     logger.error("Decrement item quantity failed:", error);
     throw error;
@@ -349,19 +403,24 @@ exports.removeItemFromCart = async (sessionId, menuItemId, sizeId = null) => {
   try {
     const cart = await Cart.findOne({
       sessionId
-    }).populate("items.menuItem", "name image thumbnail").populate("table", "tableNumber tableName");
+    });
     if (!cart) {
       throw new Error("Cart not found");
     }
     cart.items = cart.items.filter(item => {
-      const isMenuItemMatch = item.menuItem._id.toString() === menuItemId;
-      const isSizeMatch = !sizeId || item.sizeId.toString() === sizeId;
+      const isMenuItemMatch = String(item.menuItem) === String(menuItemId);
+      const isSizeMatch = !sizeId || String(item.sizeId) === String(sizeId);
       return !(isMenuItemMatch && isSizeMatch);
     });
-    await recalculateCartPricing(cart);
+    const menuItemMap = await buildCartMenuItemMap(cart);
+    await recalculateCartPricing(cart, {
+      menuItemMap
+    });
     normalizeCartDiscount(cart);
     await cart.save();
-    return transformCartData(cart);
+    return await transformCartData(cart, {
+      menuItemMap
+    });
   } catch (error) {
     logger.error("Remove item from cart failed:", error);
     throw error;
@@ -371,7 +430,7 @@ exports.clearCart = async sessionId => {
   try {
     const cart = await Cart.findOne({
       sessionId
-    }).populate("items.menuItem", "name image thumbnail").populate("table", "tableNumber tableName");
+    });
     if (!cart) {
       throw new Error("Cart not found");
     }
@@ -392,7 +451,9 @@ exports.clearCart = async sessionId => {
     };
     normalizeCartDiscount(cart);
     await cart.save();
-    return transformCartData(cart);
+    return await transformCartData(cart, {
+      menuItemMap: new Map()
+    });
   } catch (error) {
     logger.error("Clear cart failed:", error);
     throw error;
@@ -491,8 +552,12 @@ exports.convertCartToOrder = async (sessionId, orderData = {}) => {
     throw error;
   }
 };
-const transformCartData = cart => {
+const transformCartData = async (cart, options = {}) => {
   if (!cart) return null;
+  const menuItemMap = options.menuItemMap || await buildCartMenuItemMap(cart, {
+    activeOnly: false
+  });
+  const tableSummary = options.tableSummary || await getTableSummary(cart);
   const summary = {
     itemCount: cart.items.reduce((sum, i) => sum + i.quantity, 0),
     subtotal: cart.subtotal,
@@ -516,20 +581,17 @@ const transformCartData = cart => {
     total: cart.totalAmount
   };
   return {
-    table: cart.table ? {
-      number: cart.table.tableNumber,
-      name: cart.table.tableName
-    } : null,
+    table: tableSummary,
     summary,
     items: cart.items.map(item => ({
-      _id: item._id,
-      menuItemId: item.menuItem._id,
+      menuItemId: item.menuItem?._id || item.menuItem,
       sizeId: item.sizeId,
-      name: item.menuItem.name,
-      image: item.menuItem.image || item.menuItem.thumbnail ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem._id}`) : null,
-      thumbnail: item.menuItem.image || item.menuItem.thumbnail ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem._id}`, {
+      name: menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.name || item.menuItem?.name || "Menu item",
+      image: menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.image || menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.thumbnail ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem?._id || item.menuItem}`) : null,
+      thumbnail: menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.image || menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.thumbnail ? buildTenantImageAssetUrl(null, `/images/menu-item/${item.menuItem?._id || item.menuItem}`, {
         variant: "thumbnail"
       }) : null,
+      _id: item._id,
       size: item.sizeName,
       quantity: item.quantity,
       unitPrice: item.unitPrice,

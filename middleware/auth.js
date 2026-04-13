@@ -1,7 +1,6 @@
 const {
   logger
 } = require("./../utils/logger.js");
-const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 const {
   Permissions
@@ -14,6 +13,11 @@ const crypto = require("crypto");
 const {
   normalizeTenantId
 } = require("../utils/tenantContext");
+const {
+  getTokenUserId,
+  signAccessToken,
+  verifyAccessToken
+} = require("../utils/authTokens");
 require("dotenv").config({
   quiet: true
 });
@@ -40,8 +44,8 @@ exports.protect = async (req, res, next) => {
     });
   }
   try {
-    const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    const decoded = verifyAccessToken(accessToken);
+    req.user = await User.findById(getTokenUserId(decoded));
     await hydrateUserPermissions(req.user);
     if (!req.user || req.user.isActive === false) {
       return res.status(401).json({
@@ -93,11 +97,7 @@ exports.refreshAccessToken = async (req, res, next) => {
         message: "Invalid or expired refresh token. Please login again."
       });
     }
-    const newAccessToken = jwt.sign({
-      id: user._id
-    }, process.env.JWT_SECRET, {
-      expiresIn: process.env.ACCESS_TOKEN_EXPIRE || "1h"
-    });
+    const newAccessToken = signAccessToken(user);
     const cookieOptions = {
       httpOnly: process.env.COOKIE_HTTPONLY === "true",
       secure: process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE === "true",
@@ -194,8 +194,8 @@ exports.optionalAuth = async (req, res, next) => {
   }
   if (!accessToken) return next();
   try {
-    const decoded = jwt.verify(accessToken, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    const decoded = verifyAccessToken(accessToken);
+    req.user = await User.findById(getTokenUserId(decoded));
     await hydrateUserPermissions(req.user);
   } catch (e) {}
   next();
