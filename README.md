@@ -89,6 +89,13 @@ npm start
 
 Swagger is configured in the project. After starting the server, open the configured Swagger route in your browser to explore available endpoints.
 
+### Tenant Testing In Swagger
+
+- Use the Tenant Tester bar below the Swagger top header to set `x-tenant-id` or `x-tenant-slug` plus `x-tenant-key` once.
+- You can also paste a tenant workspace URL such as `/restaurant-slug/tenantkey/admin` and Swagger will extract the slug and key for you.
+- Swagger docs accept `tenantId`, `tenantSlug`, and `tenantKey` as query params so you can bookmark a tenant-specific docs URL.
+- Tenant admin and staff login requires tenant context before calling `/users/login`.
+
 ## Deployment Notes
 
 - Make sure production environment variables are configured before deployment.
@@ -98,4 +105,3 @@ Swagger is configured in the project. After starting the server, open the config
 ## Repository
 
 - GitHub: `https://github.com/Priyanshu-704/Tableloom-backend.git`
-

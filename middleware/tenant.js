@@ -1,6 +1,8 @@
 const Tenant = require("../models/Tenant");
+const User = require("../models/User");
 const { runWithTenant } = require("../utils/tenantContext");
 const { getCacheEntry, setCacheEntry } = require("../utils/responseCache");
+const { getTokenUserId, verifyAccessToken } = require("../utils/authTokens");
 const TENANT_LOOKUP_CACHE_TTL_MS = 60 * 1000;
 const SUPER_ADMIN_MONITORING_ROLES = new Set(["super_admin"]);
 const SUPER_ADMIN_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -31,9 +33,48 @@ const resolveTenantLookup = (req) => {
   }
   return null;
 };
+const extractAccessToken = (req) => {
+  if (
+    req.headers.authorization &&
+    req.headers.authorization.startsWith("Bearer ")
+  ) {
+    return req.headers.authorization.split(" ")[1];
+  }
+  if (req.cookies?.accessToken) {
+    return req.cookies.accessToken;
+  }
+  return null;
+};
+const resolveTenantLookupFromAccessToken = async (req) => {
+  const accessToken = extractAccessToken(req);
+  if (!accessToken) {
+    return null;
+  }
+  try {
+    const decoded = verifyAccessToken(accessToken);
+    const userId = getTokenUserId(decoded);
+    if (!userId) {
+      return null;
+    }
+    const user = await User.findById(userId).select("role tenantId").lean();
+    if (
+      !user ||
+      String(user.role || "").toLowerCase() === "super_admin" ||
+      !user.tenantId
+    ) {
+      return null;
+    }
+    return {
+      _id: user.tenantId,
+    };
+  } catch (_error) {
+    return null;
+  }
+};
 exports.resolveTenant = async (req, res, next) => {
   try {
-    const lookup = resolveTenantLookup(req);
+    const lookup =
+      resolveTenantLookup(req) || (await resolveTenantLookupFromAccessToken(req));
     if (!lookup) {
       req.tenant = null;
       return runWithTenant(null, next);
