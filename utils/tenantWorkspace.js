@@ -9,9 +9,11 @@ const normalizeTenantKey = (value = "") =>
   String(value)
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
 const TENANT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const TENANT_KEY_PATTERN = /^[a-z0-9]+$/;
+const TENANT_KEY_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const isTenantSlugValid = (value = "") =>
   TENANT_SLUG_PATTERN.test(
     String(value || "")

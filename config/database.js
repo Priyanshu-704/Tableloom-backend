@@ -5,10 +5,11 @@ require("dotenv").config({
 });
 const reconcileIndexes = async () => {
   const AppSetting = require("../models/AppSetting");
+  const Tenant = require("../models/Tenant");
   try {
-    const collection = AppSetting.collection;
-    const existingIndexes = await collection.indexes();
-    const legacyKeyIndex = existingIndexes.find((index) => {
+    const appSettingCollection = AppSetting.collection;
+    const appSettingIndexes = await appSettingCollection.indexes();
+    const legacyAppSettingKeyIndex = appSettingIndexes.find((index) => {
       const keyEntries = Object.entries(index.key || {});
       return (
         index.unique === true &&
@@ -16,13 +17,32 @@ const reconcileIndexes = async () => {
         keyEntries[0][0] === "key"
       );
     });
-    if (legacyKeyIndex) {
-      await collection.dropIndex(legacyKeyIndex.name);
-      logger.info(`Dropped legacy AppSetting index: ${legacyKeyIndex.name}`);
+    if (legacyAppSettingKeyIndex) {
+      await appSettingCollection.dropIndex(legacyAppSettingKeyIndex.name);
+      logger.info(
+        `Dropped legacy AppSetting index: ${legacyAppSettingKeyIndex.name}`,
+      );
     }
+
+    const tenantCollection = Tenant.collection;
+    const tenantIndexes = await tenantCollection.indexes();
+    const legacyTenantKeyIndex = tenantIndexes.find((index) => {
+      const keyEntries = Object.entries(index.key || {});
+      return (
+        index.unique === true &&
+        keyEntries.length === 1 &&
+        keyEntries[0][0] === "key"
+      );
+    });
+    if (legacyTenantKeyIndex) {
+      await tenantCollection.dropIndex(legacyTenantKeyIndex.name);
+      logger.info(`Dropped legacy Tenant index: ${legacyTenantKeyIndex.name}`);
+    }
+
     await AppSetting.syncIndexes();
+    await Tenant.syncIndexes();
   } catch (error) {
-    logger.error("Failed to reconcile AppSetting indexes:", error.message);
+    logger.error("Failed to reconcile model indexes:", error.message);
   }
 };
 const connectDB = async () => {

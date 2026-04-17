@@ -25,7 +25,12 @@ const {
   verifyRazorpaySignature,
 } = require("../utils/razorpay");
 const { hydrateUserPermissions } = require("../utils/permissionSettings");
-const { sendError, sendSuccess, pickFields } = require("../utils/httpResponse");
+const {
+  sendError,
+  sendSuccess,
+  sendPaginated,
+  pickFields,
+} = require("../utils/httpResponse");
 const {
   isTenantKeyValid,
   isTenantSlugValid,
@@ -65,54 +70,112 @@ const getTenantPaymentSummary = (tenant = {}) =>
   ]);
 const toTenantPaymentObject = (tenant = {}) =>
   tenant?.payment?.toObject?.() || tenant?.payment || {};
-const isTenantPaymentReadyForApproval = (tenant = {}) =>
-  ["paid", "approval_requested", "approved"].includes(
-    String(tenant?.payment?.status || "").toLowerCase(),
-  );
-const assertTenantRegistrationPaymentReady = (tenant = {}) => {
-  if (tenant?.onboarding?.source !== "self_service") {
-    return;
-  }
-  if (isTenantPaymentReadyForApproval(tenant)) {
-    return;
-  }
-  throw new Error(
-    "Tenant payment is still pending. Collect or approve the registration payment before sending credentials.",
-  );
-};
 const ensureTenantUniqueness = async ({
   slug,
   key,
   email,
   excludeTenantId = null,
 }) => {
-  const tenantFilter = {
-    $or: [
-      {
-        slug,
-      },
-      {
-        key,
-      },
-    ],
+  const buildTenantQuery = (query = {}) =>
+    excludeTenantId
+      ? {
+          ...query,
+          _id: {
+            $ne: excludeTenantId,
+          },
+        }
+      : query;
+  const [existingSlugTenant, existingKeyTenant, existingAdmin] =
+    await Promise.all([
+      Tenant.findOne(
+        buildTenantQuery({
+          slug,
+        }),
+      ),
+      Tenant.findOne(
+        buildTenantQuery({
+          slug,
+          key,
+        }),
+      ),
+      User.findOne({
+        email,
+        tenantId: {
+          $ne: null,
+        },
+      }),
+    ]);
+  return {
+    existingSlugTenant,
+    existingKeyTenant,
+    existingAdmin,
   };
-  if (excludeTenantId) {
-    tenantFilter._id = {
-      $ne: excludeTenantId,
+};
+const getTenantApprovalNote = (tenant = {}) => {
+  const paymentStatus = String(tenant?.payment?.status || "").toLowerCase();
+  if (paymentStatus === "approval_requested") {
+    return "Manual/testing payment approved by super admin";
+  }
+  if (paymentStatus === "paid") {
+    return "Registration payment approved by super admin";
+  }
+  if (paymentStatus === "initiated") {
+    return "Tenant approved by super admin before online payment was confirmed";
+  }
+  if (paymentStatus === "unpaid") {
+    return "Tenant approved by super admin without a recorded payment";
+  }
+  return "Tenant approved by super admin";
+};
+const buildTenantSectionFilter = (section = "all") => {
+  const normalizedSection = String(section || "all")
+    .trim()
+    .toLowerCase();
+  if (normalizedSection === "pending") {
+    return {
+      adminUser: null,
+      status: {
+        $nin: ["cancelled"],
+      },
+      $or: [
+        {
+          "onboarding.verificationStatus": "pending",
+        },
+        {
+          status: "pending",
+        },
+      ],
     };
   }
-  const [existingTenant, existingAdmin] = await Promise.all([
-    Tenant.findOne(tenantFilter),
-    User.findOne({
-      email,
-      tenantId: {
-        $ne: null,
+  if (normalizedSection === "registered") {
+    return {
+      status: {
+        $nin: ["pending", "cancelled"],
       },
-    }),
-  ]);
+      $or: [
+        {
+          "onboarding.verificationStatus": "verified",
+        },
+        {
+          adminUser: {
+            $ne: null,
+          },
+        },
+      ],
+    };
+  }
+  return {};
+};
+const parsePagination = (page, limit, defaultLimit = 10) => {
+  const pageNum = Math.max(parseInt(page || 1, 10), 1);
+  const limitNum = Math.min(
+    Math.max(parseInt(limit || defaultLimit, 10), 1),
+    100,
+  );
   return {
-    existingTenant,
-    existingAdmin,
+    pageNum,
+    limitNum,
+    skip: (pageNum - 1) * limitNum,
   };
 };
 const ensureAppSettings = async (
@@ -412,22 +475,33 @@ const createSuperAdminTenantRegistrationNotification = (tenant) =>
       adminName: tenant?.requestedAdmin?.name || "",
     },
   });
-const createSuperAdminTenantPaymentNotification = (tenant) =>
-  notificationManager.createNotification({
+const createPlatformAdminTenantPaymentNotification = async (tenant) => {
+  const platformAdmins = await User.find({
+    role: {
+      $in: ["super_admin", "admin"],
+    },
+    tenantId: null,
+    isActive: true,
+  }).select("_id");
+  const recipientIds = platformAdmins.map((admin) => admin._id);
+  if (recipientIds.length === 0) {
+    return null;
+  }
+  return notificationManager.createNotification({
     tenantId: null,
     title: "Tenant Registration Payment Update",
-    message: `${tenant?.name || "A restaurant"} submitted the registration payment and is waiting for approval.`,
+    message: `${tenant?.name || "A restaurant"} completed the online registration payment and is waiting for approval.`,
     type: "system_alert",
     priority: "high",
-    recipientType: "role",
-    roles: ["super_admin"],
+    recipientType: "user",
+    recipients: recipientIds,
     senderType: "system",
     actionRequired: true,
     actions: [
       {
         label: "Review Tenant",
         type: "link",
-        action: "/admin/tenant-management",
+        action: "/admin/tenant-management?tab=pending",
       },
     ],
     metadata: {
@@ -442,14 +516,37 @@ const createSuperAdminTenantPaymentNotification = (tenant) =>
       adminName: tenant?.requestedAdmin?.name || "",
     },
   });
-exports.getTenants = async (_req, res) => {
-  const tenants = await Tenant.find({})
-    .populate("adminUser", "name email role isActive")
-    .sort({
-      createdAt: -1,
-    })
-    .lean();
-  return sendSuccess(res, 200, null, tenants.map(toTenantListItem));
+};
+exports.getTenants = async (req, res) => {
+  const { section = "all", page = 1, limit = 10 } = req.query || {};
+  const filter = buildTenantSectionFilter(section);
+  const { pageNum, limitNum, skip } = parsePagination(page, limit);
+  const [tenants, total] = await Promise.all([
+    Tenant.find(filter)
+      .populate("adminUser", "name email role isActive")
+      .sort({
+        createdAt: -1,
+      })
+      .skip(skip)
+      .limit(limitNum)
+      .lean(),
+    Tenant.countDocuments(filter),
+  ]);
+  return sendPaginated(
+    res,
+    200,
+    tenants.map(toTenantListItem),
+    {
+      page: pageNum,
+      limit: limitNum,
+      total,
+      pages: Math.ceil(total / limitNum) || 1,
+    },
+    null,
+    {
+      section: String(section || "all").trim().toLowerCase(),
+    },
+  );
 };
 exports.getTenantOverview = async (req, res) => {
   const tenant = await Tenant.findById(req.params.id)
@@ -658,19 +755,28 @@ exports.createTenant = async (req, res) => {
     return sendError(
       res,
       400,
-      "Tenant key must contain lowercase letters and numbers only",
+      "Tenant key must contain lowercase letters, numbers, and optional hyphens",
     );
   }
-  const { existingTenant, existingAdmin } = await ensureTenantUniqueness({
-    slug: normalizedSlug,
-    key: normalizedKey,
-    email: normalizedAdminEmail,
-  });
-  if (existingTenant) {
-    return res.status(400).json({
-      success: false,
-      message: "Restaurant slug or key already exists",
+  const { existingSlugTenant, existingKeyTenant, existingAdmin } =
+    await ensureTenantUniqueness({
+      slug: normalizedSlug,
+      key: normalizedKey,
+      email: normalizedAdminEmail,
     });
+  if (existingSlugTenant) {
+    return sendError(
+      res,
+      400,
+      "Restaurant slug already exists. Choose a different slug for this restaurant.",
+    );
+  }
+  if (existingKeyTenant) {
+    return sendError(
+      res,
+      400,
+      "This workspace key already exists for the selected restaurant slug.",
+    );
   }
   if (existingAdmin) {
     return res.status(400).json({
@@ -784,19 +890,28 @@ exports.registerTenant = async (req, res) => {
     return sendError(
       res,
       400,
-      "Tenant key must contain lowercase letters and numbers only",
+      "Tenant key must contain lowercase letters, numbers, and optional hyphens",
     );
   }
-  const { existingTenant, existingAdmin } = await ensureTenantUniqueness({
-    slug: normalizedSlug,
-    key: normalizedKey,
-    email: normalizedAdminEmail,
-  });
-  if (existingTenant) {
-    return res.status(400).json({
-      success: false,
-      message: "Restaurant slug or key already exists",
+  const { existingSlugTenant, existingKeyTenant, existingAdmin } =
+    await ensureTenantUniqueness({
+      slug: normalizedSlug,
+      key: normalizedKey,
+      email: normalizedAdminEmail,
     });
+  if (existingSlugTenant) {
+    return sendError(
+      res,
+      400,
+      "Restaurant slug already exists. Choose a different slug for this restaurant.",
+    );
+  }
+  if (existingKeyTenant) {
+    return sendError(
+      res,
+      400,
+      "This workspace key already exists for the selected restaurant slug.",
+    );
   }
   if (existingAdmin) {
     return res.status(400).json({
@@ -1032,8 +1147,11 @@ exports.verifyRegistrationPayment = async (req, res) => {
         "Online payment received. Awaiting super admin approval before credentials are sent.",
     };
     await tenant.save();
-    createSuperAdminTenantPaymentNotification(tenant).catch((error) => {
-      logger.error("Failed to create tenant payment notification:", error);
+    createPlatformAdminTenantPaymentNotification(tenant).catch((error) => {
+      logger.error(
+        "Failed to create platform admin tenant payment notification:",
+        error,
+      );
     });
     return sendSuccess(
       res,
@@ -1074,11 +1192,6 @@ exports.verifyTenant = async (req, res) => {
       "Tenant does not have a pending admin email to verify",
     );
   }
-  try {
-    assertTenantRegistrationPaymentReady(tenant);
-  } catch (error) {
-    return sendError(res, 400, error.message);
-  }
   const existingAdmin = await User.findOne({
     email: adminEmail,
     tenantId: {
@@ -1113,13 +1226,10 @@ exports.verifyTenant = async (req, res) => {
     amount: Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
     currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
     status: "approved",
-    depositedAt: tenant?.payment?.depositedAt || new Date(),
+    depositedAt: tenant?.payment?.depositedAt || null,
     approvedAt: new Date(),
     approvedBy: req.user?._id || null,
-    approvalNotes:
-      tenant?.payment?.status === "approval_requested"
-        ? "Manual/testing payment approved by super admin"
-        : "Registration payment approved by super admin",
+    approvalNotes: getTenantApprovalNote(tenant),
   };
   tenant.onboarding = {
     ...tenant.onboarding,

@@ -378,7 +378,6 @@ const buildSwaggerTenantUiScript = (contextPath = "") => `
       '<div>' +
       '<p class="swagger-tenant-toolbar__eyebrow">Tenant Tester</p>' +
       '<h2>Switch tenant context once, then test normally</h2>' +
-      '<p class="swagger-tenant-toolbar__copy">Use tenant ID, slug/key, or paste a workspace URL like /my-restaurant/mykey/admin. These values are saved in your browser and injected into every Swagger request.</p>' +
       '</div>' +
       '<div class="swagger-tenant-toolbar__meta">' +
       '<span>Docs path: ' +

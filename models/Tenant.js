@@ -26,10 +26,9 @@ const tenantSchema = new mongoose.Schema(
       required: true,
       trim: true,
       lowercase: true,
-      unique: true,
       match: [
         TENANT_KEY_PATTERN,
-        "Tenant key can include lowercase letters and numbers only",
+        "Tenant key can include lowercase letters, numbers, and hyphens only",
       ],
     },
     status: {

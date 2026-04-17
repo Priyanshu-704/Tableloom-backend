@@ -58,16 +58,7 @@ module.exports = (contextPath = "", { req = null } = {}) => {
         title: "Restaurant Management API",
         version: "1.0.0",
         description:
-          "API documentation for Restaurant Management System with tenant-aware restaurant routes and optional deployment context path support.\n\n" +
-          "Tenant testing flow in Swagger:\n" +
-          "1. Use the Tenant Tester bar at the top of Swagger to set tenant ID, slug/key, or paste a workspace URL.\n" +
-          "2. Tenant admin login requires tenant context before you submit `/users/login`.\n" +
-          "3. For restaurant-scoped routes, Swagger injects either `x-tenant-id` or the pair `x-tenant-slug` + `x-tenant-key` into every request.\n" +
-          "4. `x-tenant-id` takes precedence when both styles are provided.\n" +
-          "5. You can prefill the docs with `?tenantId=...` or `?tenantSlug=...&tenantKey=...` in the docs URL.\n" +
-          "6. Super admin can read tenant routes in monitoring mode, but write operations return `403` inside tenant workspaces.\n" +
-          "7. Tenant settings, bills, backups, tables, menu, and similar data are isolated per tenant under the current tenant context.",
-      },
+          "API documentation for Restaurant Management System with tenant-aware restaurant routes and optional deployment context path support."},
       servers: dedupeServers([
         {
           url: serverUrl,
