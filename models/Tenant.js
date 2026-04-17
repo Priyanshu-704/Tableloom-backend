@@ -129,6 +129,76 @@ const tenantSchema = new mongoose.Schema(
         default: "",
       },
     },
+    payment: {
+      amount: {
+        type: Number,
+        default: 10000,
+        min: 0,
+      },
+      currency: {
+        type: String,
+        default: "INR",
+      },
+      method: {
+        type: String,
+        enum: ["online", "manual", ""],
+        default: "",
+      },
+      status: {
+        type: String,
+        enum: [
+          "not_required",
+          "unpaid",
+          "initiated",
+          "approval_requested",
+          "paid",
+          "approved",
+          "rejected",
+        ],
+        default: "not_required",
+      },
+      gateway: {
+        type: String,
+        default: "",
+      },
+      transactionId: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      reference: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      razorpayOrderId: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      requestedAt: {
+        type: Date,
+        default: null,
+      },
+      depositedAt: {
+        type: Date,
+        default: null,
+      },
+      approvedAt: {
+        type: Date,
+        default: null,
+      },
+      approvedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+      approvalNotes: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

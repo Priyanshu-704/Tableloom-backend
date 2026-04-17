@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const {
   registerTenant,
+  createRegistrationPaymentOrder,
+  verifyRegistrationPayment,
   createTenant,
   getTenants,
   getTenantOverview,
@@ -11,6 +13,8 @@ const {
 } = require("../controllers/tenantController");
 const { protect, requireRole } = require("../middleware/auth");
 router.post("/register", registerTenant);
+router.post("/:id/registration-payment-order", createRegistrationPaymentOrder);
+router.post("/:id/registration-payment-verify", verifyRegistrationPayment);
 router.use(protect, requireRole("super_admin"));
 router.get("/", getTenants);
 router.post("/", createTenant);

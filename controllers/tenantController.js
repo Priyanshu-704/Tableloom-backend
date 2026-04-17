@@ -18,6 +18,12 @@ const {
   sendTenantRejectionEmail,
   buildTenantAdminLoginUrl,
 } = require("../utils/emailService");
+const {
+  convertAmountToSubunits,
+  getRazorpayClient,
+  getRazorpayPublicConfig,
+  verifyRazorpaySignature,
+} = require("../utils/razorpay");
 const { hydrateUserPermissions } = require("../utils/permissionSettings");
 const { sendError, sendSuccess, pickFields } = require("../utils/httpResponse");
 const {
@@ -26,6 +32,54 @@ const {
   normalizeTenantKey,
   normalizeTenantSlug,
 } = require("../utils/tenantWorkspace");
+const TENANT_REGISTRATION_AMOUNT = 10000;
+const TENANT_REGISTRATION_CURRENCY = "INR";
+const normalizeTenantRegistrationPaymentMethod = (value = "") => {
+  const normalizedValue = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalizedValue === "manual" ? "manual" : "online";
+};
+const buildTenantRegistrationReceipt = (tenant = {}) => {
+  const baseReceipt =
+    String(tenant?.slug || tenant?._id || "tenant")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 24) || "tenant";
+  const suffix = Date.now().toString().slice(-8);
+  return `${baseReceipt}-${suffix}`.slice(0, 40);
+};
+const getTenantPaymentSummary = (tenant = {}) =>
+  pickFields(tenant?.payment || {}, [
+    "amount",
+    "currency",
+    "method",
+    "status",
+    "gateway",
+    "transactionId",
+    "reference",
+    "razorpayOrderId",
+    "requestedAt",
+    "depositedAt",
+    "approvedAt",
+    "approvalNotes",
+  ]);
+const toTenantPaymentObject = (tenant = {}) =>
+  tenant?.payment?.toObject?.() || tenant?.payment || {};
+const isTenantPaymentReadyForApproval = (tenant = {}) =>
+  ["paid", "approval_requested", "approved"].includes(
+    String(tenant?.payment?.status || "").toLowerCase(),
+  );
+const assertTenantRegistrationPaymentReady = (tenant = {}) => {
+  if (tenant?.onboarding?.source !== "self_service") {
+    return;
+  }
+  if (isTenantPaymentReadyForApproval(tenant)) {
+    return;
+  }
+  throw new Error(
+    "Tenant payment is still pending. Collect or approve the registration payment before sending credentials.",
+  );
+};
 const ensureTenantUniqueness = async ({
   slug,
   key,
@@ -172,6 +226,7 @@ const toTenantListItem = (tenant = {}) => ({
     ? pickFields(tenant.adminUser, ["_id", "name", "email", "role", "isActive"])
     : null,
   subscription: pickFields(tenant?.subscription || {}, ["plan", "status"]),
+  payment: getTenantPaymentSummary(tenant),
   onboarding: pickFields(tenant?.onboarding || {}, [
     "source",
     "verificationStatus",
@@ -253,6 +308,7 @@ const toTenantOverviewPayload = ({ tenant, settings, summary, workspace }) => ({
       "startsAt",
       "trialEndsAt",
     ]),
+    payment: getTenantPaymentSummary(tenant),
     onboarding: pickFields(tenant?.onboarding || {}, [
       "source",
       "verificationStatus",
@@ -306,6 +362,12 @@ const getNormalizedTenantPayload = (payload = {}, tenant = null) => {
   const subscriptionPlan = String(
     payload.subscriptionPlan ?? tenant?.subscription?.plan ?? "starter",
   ).trim();
+  const paymentMethod = normalizeTenantRegistrationPaymentMethod(
+    payload.paymentMethod ?? tenant?.payment?.method ?? "online",
+  );
+  const paymentReference = String(
+    payload.paymentReference ?? tenant?.payment?.reference ?? "",
+  ).trim();
   return {
     restaurantName,
     slug,
@@ -314,6 +376,8 @@ const getNormalizedTenantPayload = (payload = {}, tenant = null) => {
     adminEmail,
     phone,
     subscriptionPlan,
+    paymentMethod,
+    paymentReference,
   };
 };
 const createSuperAdminTenantRegistrationNotification = (tenant) =>
@@ -340,7 +404,40 @@ const createSuperAdminTenantRegistrationNotification = (tenant) =>
       tenantSlug: tenant?.slug || "",
       tenantKey: tenant?.key || "",
       verificationStatus: tenant?.onboarding?.verificationStatus || "pending",
+      paymentMethod: tenant?.payment?.method || "",
+      paymentStatus: tenant?.payment?.status || "",
+      paymentAmount: Number(tenant?.payment?.amount || 0),
       contactEmail: tenant?.contact?.email || "",
+      adminEmail: tenant?.requestedAdmin?.email || "",
+      adminName: tenant?.requestedAdmin?.name || "",
+    },
+  });
+const createSuperAdminTenantPaymentNotification = (tenant) =>
+  notificationManager.createNotification({
+    tenantId: null,
+    title: "Tenant Registration Payment Update",
+    message: `${tenant?.name || "A restaurant"} submitted the registration payment and is waiting for approval.`,
+    type: "system_alert",
+    priority: "high",
+    recipientType: "role",
+    roles: ["super_admin"],
+    senderType: "system",
+    actionRequired: true,
+    actions: [
+      {
+        label: "Review Tenant",
+        type: "link",
+        action: "/admin/tenant-management",
+      },
+    ],
+    metadata: {
+      tenantId: String(tenant?._id || ""),
+      tenantName: tenant?.name || "",
+      tenantSlug: tenant?.slug || "",
+      tenantKey: tenant?.key || "",
+      paymentMethod: tenant?.payment?.method || "",
+      paymentStatus: tenant?.payment?.status || "",
+      paymentAmount: Number(tenant?.payment?.amount || 0),
       adminEmail: tenant?.requestedAdmin?.email || "",
       adminName: tenant?.requestedAdmin?.name || "",
     },
@@ -610,6 +707,17 @@ exports.createTenant = async (req, res) => {
         verifiedAt: new Date(),
         verifiedBy: req.user?._id || null,
       },
+      payment: {
+        amount: TENANT_REGISTRATION_AMOUNT,
+        currency: TENANT_REGISTRATION_CURRENCY,
+        method: "manual",
+        status: "approved",
+        requestedAt: new Date(),
+        depositedAt: new Date(),
+        approvedAt: new Date(),
+        approvedBy: req.user?._id || null,
+        approvalNotes: "Provisioned directly by platform admin",
+      },
       createdBy: req.user?._id || null,
       updatedBy: req.user?._id || null,
     });
@@ -652,6 +760,8 @@ exports.registerTenant = async (req, res) => {
     adminEmail,
     phone,
     subscriptionPlan,
+    paymentMethod,
+    paymentReference,
   } = getNormalizedTenantPayload(req.body);
   if (!restaurantName || !slug || !key || !adminName || !adminEmail) {
     return res.status(400).json({
@@ -719,6 +829,19 @@ exports.registerTenant = async (req, res) => {
       verificationStatus: "pending",
       submittedAt: new Date(),
     },
+    payment: {
+      amount: TENANT_REGISTRATION_AMOUNT,
+      currency: TENANT_REGISTRATION_CURRENCY,
+      method: paymentMethod,
+      status:
+        paymentMethod === "manual" ? "approval_requested" : "unpaid",
+      requestedAt: new Date(),
+      reference: paymentReference,
+      approvalNotes:
+        paymentMethod === "manual"
+          ? "Manual/testing payment approval requested"
+          : "",
+    },
   });
   createSuperAdminTenantRegistrationNotification(tenant).catch((error) => {
     logger.error(
@@ -729,13 +852,207 @@ exports.registerTenant = async (req, res) => {
   return sendSuccess(
     res,
     201,
-    "Tenant registration submitted successfully. Platform verification is pending.",
+    paymentMethod === "manual"
+      ? "Tenant registration submitted successfully. Payment approval and platform verification are pending."
+      : "Tenant registration submitted successfully. Complete the ₹10,000 payment to continue with platform approval.",
     {
       tenantId: tenant._id,
       status: tenant.status,
       verificationStatus: tenant.onboarding?.verificationStatus,
+      payment: getTenantPaymentSummary(tenant),
     },
   );
+};
+exports.createRegistrationPaymentOrder = async (req, res) => {
+  try {
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) {
+      return sendError(res, 404, "Tenant registration not found");
+    }
+    if (tenant.onboarding?.source !== "self_service") {
+      return sendError(
+        res,
+        400,
+        "Payment orders are only available for self-service registrations",
+      );
+    }
+    if (
+      tenant.adminUser ||
+      tenant.onboarding?.verificationStatus === "verified"
+    ) {
+      return sendError(res, 400, "Tenant has already been approved");
+    }
+    const razorpayClient = getRazorpayClient();
+    const amount = Number(
+      tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT,
+    );
+    const razorpayOrder = await razorpayClient.orders.create({
+      amount: convertAmountToSubunits(amount),
+      currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+      receipt: buildTenantRegistrationReceipt(tenant),
+      notes: {
+        tenantId: String(tenant._id),
+        tenantName: tenant.name || "",
+        adminEmail:
+          tenant.requestedAdmin?.email || tenant.contact?.email || "",
+      },
+    });
+    tenant.payment = {
+      ...toTenantPaymentObject(tenant),
+      amount,
+      currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+      method: "online",
+      status: "initiated",
+      gateway: "razorpay",
+      razorpayOrderId: razorpayOrder.id,
+      requestedAt: new Date(),
+      approvalNotes: "Online payment initiated. Awaiting payment confirmation.",
+    };
+    await tenant.save();
+    return sendSuccess(
+      res,
+      200,
+      "Registration payment order created successfully",
+      {
+        tenantId: tenant._id,
+        keyId: getRazorpayPublicConfig().keyId,
+        order: {
+          id: razorpayOrder.id,
+          amount: Number(razorpayOrder.amount || 0),
+          currency: razorpayOrder.currency || TENANT_REGISTRATION_CURRENCY,
+          receipt: razorpayOrder.receipt || "",
+          status: razorpayOrder.status || "created",
+        },
+        tenant: {
+          _id: tenant._id,
+          name: tenant.name,
+          adminName: tenant.requestedAdmin?.name || tenant.name,
+          adminEmail:
+            tenant.requestedAdmin?.email || tenant.contact?.email || "",
+          phone: tenant.requestedAdmin?.phone || tenant.contact?.phone || "",
+        },
+        payment: getTenantPaymentSummary(tenant),
+      },
+    );
+  } catch (error) {
+    return sendError(
+      res,
+      400,
+      error?.message || "Failed to create tenant payment order",
+    );
+  }
+};
+exports.verifyRegistrationPayment = async (req, res) => {
+  try {
+    const {
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body || {};
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      return sendError(
+        res,
+        400,
+        "Razorpay order, payment, and signature are required",
+      );
+    }
+    const tenant = await Tenant.findById(req.params.id);
+    if (!tenant) {
+      return sendError(res, 404, "Tenant registration not found");
+    }
+    if (tenant.onboarding?.source !== "self_service") {
+      return sendError(
+        res,
+        400,
+        "Payment verification is only available for self-service registrations",
+      );
+    }
+    const isSignatureValid = verifyRazorpaySignature({
+      orderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      signature: razorpaySignature,
+    });
+    if (!isSignatureValid) {
+      return sendError(
+        res,
+        400,
+        "Razorpay payment signature verification failed",
+      );
+    }
+    const razorpayClient = getRazorpayClient();
+    const [razorpayOrder, razorpayPayment] = await Promise.all([
+      razorpayClient.orders.fetch(razorpayOrderId),
+      razorpayClient.payments.fetch(razorpayPaymentId),
+    ]);
+    if (String(razorpayOrder.notes?.tenantId || "") !== String(tenant._id)) {
+      return sendError(
+        res,
+        400,
+        "Payment does not belong to this tenant registration",
+      );
+    }
+    if (String(razorpayPayment.order_id || "") !== String(razorpayOrderId)) {
+      return sendError(res, 400, "Payment does not match the created order");
+    }
+    if (
+      !["authorized", "captured"].includes(
+        String(razorpayPayment.status || "").toLowerCase(),
+      )
+    ) {
+      return sendError(res, 400, "Payment is not authorized yet");
+    }
+    const expectedAmount = convertAmountToSubunits(
+      Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
+    );
+    if (Number(razorpayOrder.amount || 0) !== expectedAmount) {
+      return sendError(
+        res,
+        400,
+        "Order amount does not match the registration fee",
+      );
+    }
+    if (Number(razorpayPayment.amount || 0) !== expectedAmount) {
+      return sendError(
+        res,
+        400,
+        "Payment amount does not match the registration fee",
+      );
+    }
+    tenant.payment = {
+      ...toTenantPaymentObject(tenant),
+      amount: Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
+      currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+      method: "online",
+      status: "paid",
+      gateway: "razorpay",
+      transactionId: razorpayPaymentId,
+      razorpayOrderId,
+      depositedAt: new Date(),
+      approvalNotes:
+        "Online payment received. Awaiting super admin approval before credentials are sent.",
+    };
+    await tenant.save();
+    createSuperAdminTenantPaymentNotification(tenant).catch((error) => {
+      logger.error("Failed to create tenant payment notification:", error);
+    });
+    return sendSuccess(
+      res,
+      200,
+      "Registration payment received successfully. Super admin approval is pending.",
+      {
+        tenantId: tenant._id,
+        status: tenant.status,
+        verificationStatus: tenant.onboarding?.verificationStatus,
+        payment: getTenantPaymentSummary(tenant),
+      },
+    );
+  } catch (error) {
+    return sendError(
+      res,
+      400,
+      error?.message || "Failed to verify tenant payment",
+    );
+  }
 };
 exports.verifyTenant = async (req, res) => {
   const tenant = await Tenant.findById(req.params.id);
@@ -756,6 +1073,11 @@ exports.verifyTenant = async (req, res) => {
       400,
       "Tenant does not have a pending admin email to verify",
     );
+  }
+  try {
+    assertTenantRegistrationPaymentReady(tenant);
+  } catch (error) {
+    return sendError(res, 400, error.message);
   }
   const existingAdmin = await User.findOne({
     email: adminEmail,
@@ -785,6 +1107,19 @@ exports.verifyTenant = async (req, res) => {
     trialEndsAt:
       tenant.subscription?.trialEndsAt ||
       new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+  };
+  tenant.payment = {
+    ...toTenantPaymentObject(tenant),
+    amount: Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
+    currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+    status: "approved",
+    depositedAt: tenant?.payment?.depositedAt || new Date(),
+    approvedAt: new Date(),
+    approvedBy: req.user?._id || null,
+    approvalNotes:
+      tenant?.payment?.status === "approval_requested"
+        ? "Manual/testing payment approved by super admin"
+        : "Registration payment approved by super admin",
   };
   tenant.onboarding = {
     ...tenant.onboarding,
@@ -830,6 +1165,16 @@ exports.rejectTenant = async (req, res) => {
   }
   const adminEmail = tenant.requestedAdmin?.email || tenant.contact?.email;
   tenant.status = "cancelled";
+  tenant.payment = {
+    ...toTenantPaymentObject(tenant),
+    status:
+      tenant?.payment?.status === "not_required"
+        ? "not_required"
+        : "rejected",
+    approvedAt: null,
+    approvedBy: req.user?._id || null,
+    approvalNotes: String(reason || "").trim(),
+  };
   tenant.onboarding = {
     ...tenant.onboarding,
     verificationStatus: "rejected",
