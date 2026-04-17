@@ -418,6 +418,36 @@ class NotificationManager {
       },
     });
   }
+  async createCashPaymentRequestNotification(billData) {
+    return this.createNotification({
+      title: `Cash Payment Request - Table ${billData.tableNumber || "N/A"}`,
+      message: `Customer ${billData.customerName || "Guest"} requested cash payment for Bill #${billData.billNumber}. Amount: ₹${billData.totalAmount}`,
+      type: "payment_request",
+      priority: "high",
+      recipientType: "role",
+      roles: ["admin"],
+      relatedTo: billData._id,
+      relatedModel: "Bill",
+      actionRequired: true,
+      actions: [
+        {
+          label: "Open Bills",
+          type: "link",
+          action: "/dashboard/customers/bills",
+          color: "success",
+        },
+      ],
+      metadata: {
+        billNumber: billData.billNumber,
+        tableNumber: billData.tableNumber,
+        totalAmount: billData.totalAmount,
+        paymentMethod: "cash",
+        customerName: billData.customerName,
+        customerId: billData.customerId || null,
+        sessionId: billData.sessionId || "",
+      },
+    });
+  }
   async createTableAssignmentNotification(tableData, waiterId) {
     return this.createNotification({
       title: `Table Assigned - ${tableData.tableName}`,

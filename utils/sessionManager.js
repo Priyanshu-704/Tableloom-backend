@@ -7,6 +7,7 @@ const Order = require("../models/Order");
 const mongoose = require("mongoose");
 const billManager = require("./billManager");
 const Bill = require("../models/Bill");
+const notificationManager = require("./notificationManager");
 const path = require("path");
 require("dotenv").config({
   quiet: true,
@@ -1267,6 +1268,12 @@ exports.requestBillForSession = async (
     const normalizedPaymentMethod = String(paymentMethod || "")
       .trim()
       .toLowerCase();
+    const previousCustomerPaymentMethod = String(customer.paymentMethod || "")
+      .trim()
+      .toLowerCase();
+    const previousBillPaymentMethod = String(bill?.paymentMethod || "")
+      .trim()
+      .toLowerCase();
     if (normalizedPaymentMethod) {
       customer.paymentMethod = normalizedPaymentMethod;
     }
@@ -1284,6 +1291,34 @@ exports.requestBillForSession = async (
         paymentMethod: normalizedPaymentMethod,
       });
       bill.paymentMethod = normalizedPaymentMethod;
+    }
+    const shouldNotifyAdminForCashRequest =
+      normalizedPaymentMethod === "cash" &&
+      bill &&
+      bill.paymentStatus === "pending" &&
+      previousCustomerPaymentMethod !== "cash" &&
+      previousBillPaymentMethod !== "cash";
+    if (shouldNotifyAdminForCashRequest) {
+      try {
+        await notificationManager.createCashPaymentRequestNotification({
+          _id: bill._id,
+          billNumber: bill.billNumber,
+          tableNumber:
+            customer.table?.tableNumber ||
+            bill.metadata?.get?.("tableNumber") ||
+            bill.metadata?.tableNumber ||
+            "",
+          totalAmount: bill.totalAmount,
+          customerName: customer.name || bill.customerName || "Customer",
+          customerId: customer._id,
+          sessionId: customer.sessionId,
+        });
+      } catch (notificationError) {
+        logger.error(
+          "Failed to create admin cash payment request notification:",
+          notificationError,
+        );
+      }
     }
     return {
       success: true,
