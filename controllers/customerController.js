@@ -724,6 +724,56 @@ exports.requestBillForSession = async (req, res) => {
     });
   }
 };
+exports.createRazorpayOrder = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { email, forceNew = false, paymentMethod = "online" } = req.body;
+    const result = await sessionManager.createRazorpayOrderForSession(
+      sessionId,
+      {
+        email,
+        forceNew,
+        paymentMethod,
+      },
+    );
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error("Create Razorpay order failed:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message || "Failed to create Razorpay order",
+    });
+  }
+};
+exports.verifyRazorpayPayment = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const {
+      billId,
+      paymentMethod = "online",
+      razorpayOrderId,
+      razorpayPaymentId,
+      razorpaySignature,
+    } = req.body;
+    const result = await sessionManager.verifyRazorpayPaymentForSession(
+      sessionId,
+      {
+        billId,
+        paymentMethod,
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+      },
+    );
+    res.status(200).json(result);
+  } catch (error) {
+    logger.error("Verify Razorpay payment failed:", error);
+    res.status(400).json({
+      success: false,
+      message: error.message || "Failed to verify Razorpay payment",
+    });
+  }
+};
 exports.markBillAsPaid = async (req, res) => {
   try {
     const { billId } = req.params;

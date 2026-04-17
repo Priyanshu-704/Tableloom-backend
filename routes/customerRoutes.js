@@ -17,6 +17,8 @@ const {
   markBillAsPaid,
   generateBillBeforePayment,
   requestBillForSession,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
 } = require("../controllers/customerController");
 const {
   protect,
@@ -35,6 +37,8 @@ router.put("/session/:sessionId/logout", customerLogout);
 router.get("/session/:sessionId/with-bill", getSessionWithBill);
 router.get("/session/:sessionId/bill-summary", getSessionBillSummary);
 router.post("/session/:sessionId/request-bill", requestBillForSession);
+router.post("/session/:sessionId/razorpay-order", createRazorpayOrder);
+router.post("/session/:sessionId/razorpay-verify", verifyRazorpayPayment);
 router.use(protect);
 router.get(
   "/session/table/:tableId",

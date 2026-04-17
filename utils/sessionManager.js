@@ -9,6 +9,12 @@ const billManager = require("./billManager");
 const Bill = require("../models/Bill");
 const notificationManager = require("./notificationManager");
 const path = require("path");
+const {
+  convertAmountToSubunits,
+  getRazorpayClient,
+  getRazorpayPublicConfig,
+  verifyRazorpaySignature,
+} = require("./razorpay");
 require("dotenv").config({
   quiet: true,
 });
@@ -18,6 +24,27 @@ const SESSION_TIMEOUT_MINUTES = 60;
 const SESSION_ACTIVITY_WRITE_TTL_MS = 30 * 1000;
 const generateSessionId = () => {
   return `sess_${crypto.randomBytes(16).toString("hex")}_${Date.now()}`;
+};
+const toSupportedPaymentMethod = (value = "") => {
+  const normalizedValue = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (["card", "upi", "wallet", "cash"].includes(normalizedValue)) {
+    return normalizedValue;
+  }
+
+  return "online";
+};
+
+const buildRazorpayReceipt = (bill = {}) => {
+  const baseReceipt =
+    String(bill?.billNumber || bill?._id || "bill")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 24) || "bill";
+  const suffix = Date.now().toString().slice(-8);
+
+  return `${baseReceipt}-${suffix}`.slice(0, 40);
 };
 exports.createCustomerSession = async (tableId, token, customerData = {}) => {
   try {
@@ -1340,6 +1367,189 @@ exports.requestBillForSession = async (
     };
   } catch (error) {
     logger.error("Request bill for session failed:", error);
+    throw error;
+  }
+};
+exports.createRazorpayOrderForSession = async (
+  sessionId,
+  { email = null, forceNew = false, paymentMethod = "online" } = {},
+) => {
+  try {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new Error("Valid sessionId is required");
+    }
+
+    const normalizedPaymentMethod = toSupportedPaymentMethod(paymentMethod);
+    const billResponse = await exports.requestBillForSession(
+      sessionId,
+      email,
+      forceNew,
+      normalizedPaymentMethod,
+    );
+    const bill = billResponse?.data?.bill || null;
+    const customer = billResponse?.data?.session || null;
+
+    if (!bill) {
+      throw new Error("Bill is not available for payment");
+    }
+
+    if (bill.paymentStatus === "paid") {
+      throw new Error("This bill has already been paid");
+    }
+
+    const totalAmount = Number(bill.totalAmount || 0);
+    if (totalAmount <= 0) {
+      throw new Error("Bill total must be greater than zero");
+    }
+
+    const razorpayClient = getRazorpayClient();
+    const razorpayOrder = await razorpayClient.orders.create({
+      amount: convertAmountToSubunits(totalAmount),
+      currency: bill.currency || "INR",
+      receipt: buildRazorpayReceipt(bill),
+      notes: {
+        billId: String(bill._id),
+        billNumber: String(bill.billNumber || ""),
+        sessionId: String(sessionId),
+        customerId: String(customer?._id || bill.customerId || ""),
+        preferredPaymentMethod: normalizedPaymentMethod,
+      },
+    });
+
+    return {
+      success: true,
+      message: "Razorpay order created successfully",
+      data: {
+        keyId: getRazorpayPublicConfig().keyId,
+        order: {
+          id: razorpayOrder.id,
+          amount: Number(razorpayOrder.amount || 0),
+          currency: razorpayOrder.currency || bill.currency || "INR",
+          receipt: razorpayOrder.receipt || "",
+          status: razorpayOrder.status || "created",
+        },
+        bill: {
+          _id: bill._id,
+          billNumber: bill.billNumber,
+          totalAmount,
+          currency: bill.currency || "INR",
+          paymentStatus: bill.paymentStatus || "pending",
+        },
+        session: customer
+          ? {
+              sessionId: customer.sessionId,
+              name: customer.name || "",
+              email: customer.email || "",
+              phone: customer.phone || "",
+            }
+          : null,
+        preferredPaymentMethod: normalizedPaymentMethod,
+      },
+    };
+  } catch (error) {
+    logger.error("Create Razorpay order for session failed:", error);
+    throw error;
+  }
+};
+exports.verifyRazorpayPaymentForSession = async (
+  sessionId,
+  {
+    billId,
+    paymentMethod = "online",
+    razorpayOrderId,
+    razorpayPaymentId,
+    razorpaySignature,
+  } = {},
+) => {
+  try {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new Error("Valid sessionId is required");
+    }
+
+    if (!billId) {
+      throw new Error("Bill ID is required");
+    }
+
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      throw new Error("Razorpay payment verification data is required");
+    }
+
+    const bill = await Bill.findById(billId);
+    if (!bill) {
+      throw new Error("Bill not found");
+    }
+
+    if (String(bill.sessionId) !== String(sessionId)) {
+      throw new Error("Bill does not belong to this session");
+    }
+
+    if (bill.paymentStatus === "paid") {
+      throw new Error("Bill is already paid");
+    }
+
+    const isSignatureValid = verifyRazorpaySignature({
+      orderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      signature: razorpaySignature,
+    });
+
+    if (!isSignatureValid) {
+      throw new Error("Razorpay payment signature verification failed");
+    }
+
+    const razorpayClient = getRazorpayClient();
+    const [razorpayOrder, razorpayPayment] = await Promise.all([
+      razorpayClient.orders.fetch(razorpayOrderId),
+      razorpayClient.payments.fetch(razorpayPaymentId),
+    ]);
+
+    if (String(razorpayPayment.order_id || "") !== String(razorpayOrderId)) {
+      throw new Error("Razorpay payment does not match the created order");
+    }
+
+    const razorpayStatus = String(razorpayPayment.status || "").toLowerCase();
+    if (!["authorized", "captured"].includes(razorpayStatus)) {
+      throw new Error("Razorpay payment is not authorized yet");
+    }
+
+    if (
+      String(razorpayOrder.notes?.billId || "") &&
+      String(razorpayOrder.notes.billId) !== String(billId)
+    ) {
+      throw new Error("Razorpay order does not belong to this bill");
+    }
+
+    if (
+      String(razorpayOrder.notes?.sessionId || "") &&
+      String(razorpayOrder.notes.sessionId) !== String(sessionId)
+    ) {
+      throw new Error("Razorpay order does not belong to this session");
+    }
+
+    const expectedAmount = convertAmountToSubunits(bill.totalAmount);
+    if (Number(razorpayOrder.amount || 0) !== expectedAmount) {
+      throw new Error("Razorpay order amount does not match the bill total");
+    }
+
+    if (Number(razorpayPayment.amount || 0) !== expectedAmount) {
+      throw new Error("Razorpay payment amount does not match the bill total");
+    }
+
+    const resolvedPaymentMethod = toSupportedPaymentMethod(
+      razorpayPayment.method || paymentMethod,
+    );
+
+    return await exports.markBillAsPaid(
+      billId,
+      {
+        method: resolvedPaymentMethod,
+        transactionId: razorpayPaymentId,
+        gateway: "razorpay",
+      },
+      null,
+    );
+  } catch (error) {
+    logger.error("Verify Razorpay payment for session failed:", error);
     throw error;
   }
 };
