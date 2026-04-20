@@ -14,9 +14,8 @@ const generatePassword = require("../utils/passwordGenerator");
 const { logger } = require("../utils/logger.js");
 const notificationManager = require("../utils/notificationManager");
 const {
-  sendStaffCredentials,
+  sendStaffOnboardingEmail,
   sendTenantRejectionEmail,
-  buildTenantAdminLoginUrl,
 } = require("../utils/emailService");
 const {
   convertAmountToSubunits,
@@ -255,18 +254,20 @@ const provisionTenantAdmin = async ({
   };
   await tenant.save();
   await ensureAppSettings(tenant._id, tenant.name, adminEmail, updatedBy);
-  const emailSent = await sendStaffCredentials(
-    adminUser.email,
-    adminUser.name,
-    tempPassword,
-    "admin",
-    {
-      loginUrl: buildTenantAdminLoginUrl(tenant),
-      subject: `Your Admin Account Credentials - ${tenant.name}`,
-      heading: `${tenant.name} admin access is ready`,
-      intro: `Your admin account for ${tenant.name} has been created with the following details:`,
-    },
-  );
+  const onboardingResetToken = adminUser.getResetPasswordToken();
+  await adminUser.save({
+    validateBeforeSave: false,
+  });
+  const emailSent = await sendStaffOnboardingEmail({
+    email: adminUser.email,
+    name: adminUser.name,
+    role: "admin",
+    resetToken: onboardingResetToken,
+    tenant,
+    subject: `Set Up Your Admin Account - ${tenant.name}`,
+    heading: `${tenant.name} admin access is ready`,
+    intro: `Your admin account for ${tenant.name} has been created. Set your password securely using the link below:`,
+  });
   return {
     adminUser,
     tempPassword,
@@ -299,11 +300,9 @@ const toTenantListItem = (tenant = {}) => ({
 });
 const toTenantCredentials = (
   adminUser = {},
-  tempPassword = "",
   emailSent = false,
 ) => ({
   email: adminUser?.email || "",
-  temporaryPassword: tempPassword,
   emailSent: Boolean(emailSent),
 });
 const getInventoryStatus = (item = {}) => {

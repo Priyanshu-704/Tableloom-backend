@@ -5,6 +5,7 @@ const LOG_LEVELS = {
   error: 40,
   silent: 100,
 };
+const { sanitizeLogMeta } = require("../middleware/security");
 const normalizeLevel = (level = "") => {
   const normalized = String(level || "").toLowerCase();
   return Object.prototype.hasOwnProperty.call(LOG_LEVELS, normalized)
@@ -18,16 +19,6 @@ const resolveLevel = () => {
   }
   return process.env.NODE_ENV === "production" ? "info" : "debug";
 };
-const sanitizeMeta = (value) => {
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-  return value;
-};
 const shouldLog = (level) => LOG_LEVELS[level] >= LOG_LEVELS[resolveLevel()];
 const writeLog = (level, message, ...meta) => {
   if (!shouldLog(level)) {
@@ -38,7 +29,7 @@ const writeLog = (level, message, ...meta) => {
   const args = [
     `[${timestamp}] [${level.toUpperCase()}]`,
     message,
-    ...meta.map(sanitizeMeta),
+    ...meta.map((entry) => sanitizeLogMeta(entry)),
   ];
   if (typeof console[method] === "function") {
     console[method](...args);

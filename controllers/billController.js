@@ -15,6 +15,29 @@ require("dotenv").config({
 const BILL_CACHE_PREFIX = "bill:";
 const BILL_LIST_CACHE_TTL_MS = 15 * 1000;
 const BILL_STATS_CACHE_TTL_MS = 20 * 1000;
+const canAccessBill = (req, bill = {}) => {
+  if (req.user?._id) {
+    return true;
+  }
+
+  return (
+    Boolean(req.customerSessionId) &&
+    String(bill?.sessionId || "") === String(req.customerSessionId)
+  );
+};
+
+const ensureBillAccess = (req, res, bill = {}) => {
+  if (canAccessBill(req, bill)) {
+    return true;
+  }
+
+  res.status(req.customerSessionId || req.user?._id ? 403 : 401).json({
+    success: false,
+    message: "You are not authorized to access this bill",
+  });
+  return false;
+};
+
 const toBillPaymentSummary = (bill = {}) => ({
   id: bill?._id || bill?.id || null,
   billNumber: bill?.billNumber || "",
@@ -137,6 +160,9 @@ exports.getBillById = async (req, res) => {
   try {
     const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
+    if (!ensureBillAccess(req, res, bill)) {
+      return null;
+    }
     return sendSuccess(res, 200, null, bill);
   } catch (error) {
     logger.error("Get bill by ID failed:", error);
@@ -197,6 +223,9 @@ exports.downloadBillPDF = async (req, res) => {
         success: false,
         message: "Bill not found",
       });
+    }
+    if (!ensureBillAccess(req, res, bill)) {
+      return null;
     }
     if (!bill.pdfUrl) {
       await billManager.generateAndSavePDF(bill);
@@ -270,7 +299,7 @@ exports.generatePDFOnTheFly = async (req, res) => {
         </div>
         <div class="error">
           <p>PDF generation failed. Showing HTML version.</p>
-          <p>Error: ${error.message}</p>
+          <p>Please try again later.</p>
         </div>
         ${
           bill
@@ -325,6 +354,9 @@ exports.viewBillPDF = async (req, res) => {
         message: "Bill not found",
       });
     }
+    if (!ensureBillAccess(req, res, bill)) {
+      return null;
+    }
     if (!bill.pdfUrl) {
       await billManager.generateAndSavePDF(bill);
       const refreshedBill = await billManager.getBillById(billId);
@@ -346,6 +378,9 @@ exports.getPaymentQR = async (req, res) => {
   try {
     const { billId } = req.params;
     const bill = await billManager.getBillById(billId);
+    if (!ensureBillAccess(req, res, bill)) {
+      return null;
+    }
     const qr = require("qrcode");
     const upiId = process.env.UPI_ID || "restaurant@upi";
     const paymentUrl = `upi://pay?pa=${upiId}&pn=Restaurant&am=${bill.totalAmount}&tn=Bill ${bill.billNumber}&cu=INR`;

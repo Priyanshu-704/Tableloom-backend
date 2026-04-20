@@ -6,7 +6,7 @@ require("dotenv").config({
 const crypto = require("crypto");
 const generatePassword = require("../utils/passwordGenerator");
 const {
-  sendStaffCredentials,
+  sendStaffOnboardingEmail,
   sendPasswordResetEmail,
 } = require("../utils/emailService");
 const { Permissions } = require("../config/permissions");
@@ -17,29 +17,21 @@ const {
 } = require("../utils/permissionSettings");
 const { normalizeTenantId } = require("../utils/tenantContext");
 const { signAccessToken } = require("../utils/authTokens");
-const setTokensInCookies = (res, refreshToken) => {
-  const isProd = process.env.NODE_ENV === "production";
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? "none" : "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: "/",
-  });
+const {
+  clearAuthCookies,
+  setAccessTokenCookie,
+  setRefreshTokenCookie,
+} = require("../utils/cookieOptions");
+const {
+  passwordPolicyMessage,
+  validatePasswordStrength,
+} = require("../utils/passwordPolicy");
+
+const setTokensInCookies = (res, accessToken, refreshToken) => {
+  setAccessTokenCookie(res, accessToken);
+  setRefreshTokenCookie(res, refreshToken);
 };
-const clearTokensFromCookies = (res) => {
-  const cookieOptions = {
-    httpOnly: process.env.COOKIE_HTTPONLY === "true",
-    secure:
-      process.env.NODE_ENV === "production" &&
-      process.env.COOKIE_SECURE === "true",
-    sameSite: process.env.COOKIE_SAMESITE || "none",
-  };
-  if (process.env.NODE_ENV === "production" && process.env.COOKIE_DOMAIN) {
-    cookieOptions.domain = process.env.COOKIE_DOMAIN;
-  }
-  res.clearCookie("refreshToken", cookieOptions);
-};
+const clearTokensFromCookies = (res) => clearAuthCookies(res);
 const canManageRole = (requesterRole, targetRole) => {
   const hierarchy = {
     super_admin: ["admin", "manager", "chef", "waiter"],
@@ -123,7 +115,6 @@ exports.registerStaff = async (req, res) => {
       });
     }
     const tempPassword = generatePassword();
-    logger.info("Generated Temp Password:", tempPassword);
     const userData = {
       name,
       email,
@@ -155,17 +146,22 @@ exports.registerStaff = async (req, res) => {
     const user = await User.create(userData);
     await hydrateUserPermissions(user);
     if (user) {
-      const emailSent = await sendStaffCredentials(
+      const onboardingResetToken = user.getResetPasswordToken();
+      await user.save({
+        validateBeforeSave: false,
+      });
+      const emailSent = await sendStaffOnboardingEmail({
         email,
         name,
-        tempPassword,
         role,
-      );
+        resetToken: onboardingResetToken,
+        tenant: req.tenant || null,
+      });
       res.status(201).json({
         success: true,
         message:
           "Staff member registered successfully" +
-          (emailSent ? " and credentials emailed" : " but email failed"),
+          (emailSent ? " and setup email sent" : " but email failed"),
         data: {
           ...shapeStaffUser(user, {
             permissions: await getEffectivePermissionsForUser(user),
@@ -246,11 +242,10 @@ exports.loginStaff = async (req, res) => {
       await user.save({
         validateBeforeSave: false,
       });
-      setTokensInCookies(res, refreshToken);
+      setTokensInCookies(res, accessToken, refreshToken);
       res.status(200).json({
         success: true,
         message: "Login successful",
-        accessToken,
         data: shapeAuthUser(user),
       });
     } else {
@@ -293,7 +288,6 @@ exports.logout = async (req, res) => {
 };
 exports.refreshToken = async (req, res) => {
   const refreshToken = req.cookies?.refreshToken || req.body.refreshToken;
-  logger.info("Received Refresh Token:", refreshToken);
   if (!refreshToken) {
     return res.status(401).json({
       success: false,
@@ -319,10 +313,14 @@ exports.refreshToken = async (req, res) => {
       });
     }
     const accessToken = signAccessToken(user);
+    const rotatedRefreshToken = user.generateRefreshToken();
+    await user.save({
+      validateBeforeSave: false,
+    });
+    setTokensInCookies(res, accessToken, rotatedRefreshToken);
     res.status(200).json({
       success: true,
       message: "Token refreshed successfully",
-      accessToken,
       data: {
         ...shapeAuthUser(user, {
           permissions: await getEffectivePermissionsForUser(user),
@@ -472,6 +470,14 @@ exports.updateProfile = async (req, res) => {
 exports.updatePassword = async (req, res) => {
   try {
     const user = await User.findById(req.user._id).select("+password");
+    const newPassword = String(req.body?.newPassword || "");
+    const passwordValidation = validatePasswordStrength(newPassword);
+    if (!passwordValidation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: passwordPolicyMessage,
+      });
+    }
     const isFirstTimePasswordUpdate = Boolean(user?.forcePasswordChange);
     const isCurrentPasswordCorrect = await user.matchPassword(
       req.body?.currentPassword,
@@ -482,7 +488,7 @@ exports.updatePassword = async (req, res) => {
         message: "Current password is incorrect",
       });
     }
-    user.password = req.body?.newPassword;
+    user.password = newPassword;
     user.forcePasswordChange = false;
     user.updatedBy = req.user._id;
     await user.save();
@@ -527,13 +533,13 @@ exports.forgotPassword = async (req, res) => {
     }
     user = await User.findOne(forgotPasswordQuery);
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "No user found with that email",
+      return res.status(200).json({
+        success: true,
+        message:
+          "If an account exists for that email, password reset instructions will be sent.",
       });
     }
     const resetToken = user.getResetPasswordToken();
-    logger.info("Generated Reset Token:", resetToken);
     await user.save({
       validateBeforeSave: false,
     });
@@ -541,8 +547,8 @@ exports.forgotPassword = async (req, res) => {
     res.status(200).json({
       success: true,
       message: emailSent
-        ? "Password reset email sent"
-        : "Email could not be sent",
+        ? "If an account exists for that email, password reset instructions will be sent."
+        : "If an account exists for that email, password reset instructions will be sent.",
     });
   } catch (error) {
     logger.error("Forgot password error:", error);
@@ -581,9 +587,6 @@ exports.validateResetToken = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Valid reset token",
-      data: {
-        email: user.email,
-      },
     });
   } catch (error) {
     logger.error("Validate reset token error:", error);
@@ -597,10 +600,11 @@ exports.validateResetToken = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   try {
     const { password } = req.body;
-    if (!password || password.length < 6) {
+    const passwordValidation = validatePasswordStrength(password);
+    if (!passwordValidation.isValid) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 6 characters long",
+        message: passwordPolicyMessage,
       });
     }
     const resetPasswordToken = crypto
@@ -627,6 +631,7 @@ exports.resetPassword = async (req, res) => {
       });
     }
     user.password = password;
+    user.forcePasswordChange = false;
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     user.updatedBy = user._id;

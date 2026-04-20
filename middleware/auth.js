@@ -12,6 +12,11 @@ const {
   signAccessToken,
   verifyAccessToken,
 } = require("../utils/authTokens");
+const {
+  clearAuthCookies,
+  setAccessTokenCookie,
+  setRefreshTokenCookie,
+} = require("../utils/cookieOptions");
 require("dotenv").config({
   quiet: true,
 });
@@ -95,26 +100,19 @@ exports.refreshAccessToken = async (req, res, next) => {
       },
     });
     if (!user) {
-      res.clearCookie("accessToken");
-      res.clearCookie("refreshToken");
+      clearAuthCookies(res);
       return res.status(401).json({
         success: false,
         message: "Invalid or expired refresh token. Please login again.",
       });
     }
     const newAccessToken = signAccessToken(user);
-    const cookieOptions = {
-      httpOnly: process.env.COOKIE_HTTPONLY === "true",
-      secure:
-        process.env.NODE_ENV === "production" &&
-        process.env.COOKIE_SECURE === "true",
-      sameSite: process.env.COOKIE_SAMESITE || "strict",
-      maxAge: 15 * 60 * 1000,
-    };
-    if (process.env.NODE_ENV === "production" && process.env.COOKIE_DOMAIN) {
-      cookieOptions.domain = process.env.COOKIE_DOMAIN;
-    }
-    res.cookie("accessToken", newAccessToken, cookieOptions);
+    const rotatedRefreshToken = user.generateRefreshToken();
+    await user.save({
+      validateBeforeSave: false,
+    });
+    setAccessTokenCookie(res, newAccessToken);
+    setRefreshTokenCookie(res, rotatedRefreshToken);
     req.user = user;
     await hydrateUserPermissions(req.user);
     if (!req.user || req.user.isActive === false) {
@@ -138,6 +136,7 @@ exports.refreshAccessToken = async (req, res, next) => {
     next();
   } catch (error) {
     logger.error("Refresh token error:", error);
+    clearAuthCookies(res);
     return res.status(500).json({
       success: false,
       message: "Failed to refresh token",
@@ -211,6 +210,8 @@ exports.optionalAuth = async (req, res, next) => {
     req.headers.authorization.startsWith("Bearer")
   ) {
     accessToken = req.headers.authorization.split(" ")[1];
+  } else if (req.cookies?.accessToken) {
+    accessToken = req.cookies.accessToken;
   }
   if (!accessToken) return next();
   try {

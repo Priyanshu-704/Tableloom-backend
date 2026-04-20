@@ -19,9 +19,28 @@ const {
   getAvailableStaff,
 } = require("../controllers/waiterCallController");
 const { protect, hasPermission } = require("../middleware/auth");
-router.post("/", createWaiterCall);
-router.put("/:callId/cancel", cancelCall);
-router.get("/session/:sessionId/active", getSessionActiveCalls);
+const { protectCustomerSession } = require("../middleware/customerSessionAuth");
+router.post(
+  "/",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  createWaiterCall,
+);
+router.put(
+  "/:callId/cancel",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  cancelCall,
+);
+router.get(
+  "/session/:sessionId/active",
+  protectCustomerSession(),
+  getSessionActiveCalls,
+);
 router.use(protect);
 router.get("/active", hasPermission("WAITER_CALL_VIEW_ALL"), getActiveCalls);
 router.get("/pending", hasPermission("WAITER_CALL_VIEW_ALL"), getPendingCalls);

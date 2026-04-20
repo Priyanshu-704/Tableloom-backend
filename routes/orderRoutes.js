@@ -11,11 +11,19 @@ const {
   getOrderStatistics,
   getOrdersByTable,
 } = require("../controllers/orderController");
-const { protect, hasPermission } = require("../middleware/auth");
-router.get("/session/:sessionId/history", getOrderHistoryBySession);
-router.get("/session/:sessionId", getOrderBySession);
-router.get("/:id", getOrder);
-router.post("/:id/payment", processPayment);
+const { protect, hasPermission, optionalAuth } = require("../middleware/auth");
+const {
+  optionalCustomerSession,
+  protectCustomerSession,
+} = require("../middleware/customerSessionAuth");
+router.get(
+  "/session/:sessionId/history",
+  protectCustomerSession(),
+  getOrderHistoryBySession,
+);
+router.get("/session/:sessionId", protectCustomerSession(), getOrderBySession);
+router.get("/:id", optionalAuth, optionalCustomerSession(), getOrder);
+router.post("/:id/payment", optionalAuth, optionalCustomerSession(), processPayment);
 router.use(protect);
 router.put(
   "/:id/status",

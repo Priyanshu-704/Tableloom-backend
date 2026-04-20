@@ -3,6 +3,11 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const { Permissions, RolePermissions } = require("../config/permissions");
 const { getDefaultRolePermissions } = require("../utils/permissionSettings");
+const {
+  MIN_PASSWORD_LENGTH,
+  passwordPolicyMessage,
+  validatePasswordStrength,
+} = require("../utils/passwordPolicy");
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -21,25 +26,12 @@ const userSchema = new mongoose.Schema({
   password: {
     type: String,
     required: [true, "Please add a password"],
-    minlength: 8,
+    minlength: MIN_PASSWORD_LENGTH,
     validate: {
       validator: function (value) {
-        const uppercaseCount = (value.match(/[A-Z]/g) || []).length;
-        const lowercaseCount = (value.match(/[a-z]/g) || []).length;
-        const numberCount = (value.match(/\d/g) || []).length;
-        const specialCharCount = (
-          value.match(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g) || []
-        ).length;
-        const checks = [
-          uppercaseCount >= 2,
-          lowercaseCount >= 2,
-          numberCount >= 2,
-          specialCharCount >= 2,
-        ];
-        return checks.every(Boolean);
+        return validatePasswordStrength(value).isValid;
       },
-      message:
-        "Password must be at least 8 characters with minimum 2 uppercase, 2 lowercase, 2 numbers, and 2 special characters",
+      message: passwordPolicyMessage,
     },
     select: false,
   },
@@ -134,24 +126,9 @@ userSchema.pre("save", async function () {
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
   const password = this.password;
-  if (password.length < 8) {
-    throw new Error("Password must be at least 8 characters long");
-  }
-  const uppercaseCount = (password.match(/[A-Z]/g) || []).length;
-  const lowercaseCount = (password.match(/[a-z]/g) || []).length;
-  const numberCount = (password.match(/\d/g) || []).length;
-  const specialCharCount = (
-    password.match(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g) || []
-  ).length;
-  if (
-    uppercaseCount < 2 ||
-    lowercaseCount < 2 ||
-    numberCount < 2 ||
-    specialCharCount < 2
-  ) {
-    throw new Error(
-      "Password must contain at least 2 uppercase, 2 lowercase, 2 numbers, and 2 special characters",
-    );
+  const validation = validatePasswordStrength(password);
+  if (!validation.isValid) {
+    throw new Error(passwordPolicyMessage);
   }
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(password, salt);

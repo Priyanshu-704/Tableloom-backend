@@ -18,16 +18,37 @@ const {
   deleteSessionFeedback,
 } = require("../controllers/feedbackController");
 const { protect, hasPermission } = require("../middleware/auth");
-router.post("/", submitFeedback);
-router.get("/session/:sessionId", getFeedbackBySession);
+const { protectCustomerSession } = require("../middleware/customerSessionAuth");
+router.post(
+  "/",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  submitFeedback,
+);
+router.get("/session/:sessionId", protectCustomerSession(), getFeedbackBySession);
 router.get(
   "/session/:sessionId/customer-details",
+  protectCustomerSession(),
   getCustomerDetailsForFeedback,
 );
-router.get("/session/:sessionId/can-submit", canSubmitFeedback);
-router.get("/session/:sessionId/active", getFeedbackForActiveSession);
-router.put("/session/:sessionId/:id", updateSessionFeedback);
-router.delete("/session/:sessionId/:id", deleteSessionFeedback);
+router.get(
+  "/session/:sessionId/can-submit",
+  protectCustomerSession(),
+  canSubmitFeedback,
+);
+router.get(
+  "/session/:sessionId/active",
+  protectCustomerSession(),
+  getFeedbackForActiveSession,
+);
+router.put("/session/:sessionId/:id", protectCustomerSession(), updateSessionFeedback);
+router.delete(
+  "/session/:sessionId/:id",
+  protectCustomerSession(),
+  deleteSessionFeedback,
+);
 router.use(protect);
 router.get("/", hasPermission("FEEDBACK_VIEW_ALL"), getAllFeedback);
 router.get(

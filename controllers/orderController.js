@@ -138,13 +138,25 @@ const resolveOrderStatisticsDateRange = (query = {}) => {
     $gte: today,
   };
 };
+const canAccessOrder = (req, order = {}) => {
+  if (req.user?._id) {
+    return true;
+  }
+
+  return (
+    Boolean(req.customerSessionId) &&
+    String(order?.customer?.sessionId || "") === String(req.customerSessionId)
+  );
+};
+
 exports.getOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
       .select(
-        "orderNumber status paymentStatus totalAmount currency specialInstructions preparationTime estimatedReadyTime orderPlacedAt createdAt table items",
+        "orderNumber status paymentStatus totalAmount currency specialInstructions preparationTime estimatedReadyTime orderPlacedAt createdAt table items customer",
       )
       .populate("table", "tableNumber tableName")
+      .populate("customer", "sessionId")
       .populate("items.menuItem", "name")
       .populate("items.sizeId", "name")
       .lean();
@@ -152,6 +164,12 @@ exports.getOrder = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Order not found",
+      });
+    }
+    if (!canAccessOrder(req, order)) {
+      return res.status(req.customerSessionId || req.user?._id ? 403 : 401).json({
+        success: false,
+        message: "You are not authorized to access this order",
       });
     }
     res.status(200).json({
@@ -442,6 +460,24 @@ exports.processPayment = async (req, res) => {
         success: false,
         message: "Payment method is required",
       });
+    }
+    if (!req.user?._id) {
+      const orderForAccessCheck = await Order.findById(req.params.id)
+        .select("customer")
+        .populate("customer", "sessionId")
+        .lean();
+      if (!orderForAccessCheck) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found",
+        });
+      }
+      if (!canAccessOrder(req, orderForAccessCheck)) {
+        return res.status(req.customerSessionId ? 403 : 401).json({
+          success: false,
+          message: "You are not authorized to access this order",
+        });
+      }
     }
     const order = await orderManager.processPayment(req.params.id, {
       method,

@@ -1,4 +1,14 @@
 const { logger } = require("./logger.js");
+const {
+  ACCESS_TOKEN_COOKIE_NAME,
+  CUSTOMER_SESSION_COOKIE_NAME,
+} = require("./cookieOptions");
+const {
+  getTokenSessionId,
+  getTokenUserId,
+  verifyAccessToken,
+  verifyCustomerSessionToken,
+} = require("./authTokens");
 let io;
 let cleanupInterval;
 const ROOMS = {
@@ -36,6 +46,67 @@ const buildUserRoom = (userId) => `user-${userId}`;
 const buildRoleRoom = (role) => `role-${role}`;
 const buildSessionRoom = (sessionId) => `customer-${sessionId}`;
 const buildStationRoom = (stationId) => `station-${stationId}`;
+const parseCookieHeader = (cookieHeader = "") =>
+  String(cookieHeader || "")
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .reduce((accumulator, segment) => {
+      const separatorIndex = segment.indexOf("=");
+      if (separatorIndex === -1) {
+        return accumulator;
+      }
+      const key = segment.slice(0, separatorIndex).trim();
+      const value = segment.slice(separatorIndex + 1).trim();
+      if (key) {
+        accumulator[key] = decodeURIComponent(value);
+      }
+      return accumulator;
+    }, {});
+
+const getSocketAuthContext = (socket) => {
+  const cookies = parseCookieHeader(socket.handshake?.headers?.cookie || "");
+  const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+  const customerSessionToken = cookies[CUSTOMER_SESSION_COOKIE_NAME];
+  const authContext = {
+    role: "",
+    userId: "",
+    customerSessionId: "",
+  };
+
+  if (accessToken) {
+    try {
+      const decoded = verifyAccessToken(accessToken);
+      authContext.userId = getTokenUserId(decoded);
+      authContext.role = String(decoded?.role || "").toLowerCase();
+    } catch (_error) {}
+  }
+
+  if (customerSessionToken) {
+    try {
+      const decoded = verifyCustomerSessionToken(customerSessionToken);
+      authContext.customerSessionId = getTokenSessionId(decoded);
+    } catch (_error) {}
+  }
+
+  return authContext;
+};
+
+const hasStaffSocketAccess = (authContext = {}) =>
+  ["super_admin", "admin", "manager", "chef", "waiter"].includes(
+    String(authContext.role || "").toLowerCase(),
+  );
+
+const hasManagementSocketAccess = (authContext = {}) =>
+  ["super_admin", "admin", "manager"].includes(
+    String(authContext.role || "").toLowerCase(),
+  );
+
+const hasKitchenSocketAccess = (authContext = {}) =>
+  ["super_admin", "admin", "manager", "chef"].includes(
+    String(authContext.role || "").toLowerCase(),
+  );
+
 const joinRoom = (socket, room) => {
   if (!room) return;
   socket.join(room);
@@ -46,21 +117,28 @@ const leaveRoom = (socket, room) => {
 };
 const handleNotificationAction = async (socket, data = {}) => {
   try {
-    const { notificationId, userId, action } = data;
-    if (!notificationId || !userId || !action) {
+    const { notificationId, action } = data;
+    const authenticatedUserId = socket.data?.auth?.userId;
+    if (!notificationId || !authenticatedUserId || !action) {
       socket.emit("notification_action_error", {
         success: false,
-        message: "notificationId, userId and action are required",
+        message: "notificationId and action are required",
       });
       return;
     }
     const notificationManager = require("./notificationManager");
     if (action === "mark_read") {
-      await notificationManager.markAsRead(notificationId, userId);
+      await notificationManager.markAsRead(notificationId, authenticatedUserId);
     } else if (action === "acknowledge") {
-      await notificationManager.markAsAcknowledged(notificationId, userId);
+      await notificationManager.markAsAcknowledged(
+        notificationId,
+        authenticatedUserId,
+      );
     } else if (action === "dismiss") {
-      await notificationManager.dismissNotification(notificationId, userId);
+      await notificationManager.dismissNotification(
+        notificationId,
+        authenticatedUserId,
+      );
     } else {
       throw new Error("Unsupported notification action");
     }
@@ -78,43 +156,99 @@ const handleNotificationAction = async (socket, data = {}) => {
   }
 };
 const registerSocketHandlers = (socket) => {
-  socket.on("join-user-room", (userId) =>
-    joinRoom(socket, buildUserRoom(userId)),
-  );
-  socket.on("join-role-room", (role) => joinRoom(socket, buildRoleRoom(role)));
-  socket.on("join-session-room", (sessionId) =>
-    joinRoom(socket, buildSessionRoom(sessionId)),
-  );
-  socket.on("join-station-room", (stationId) =>
-    joinRoom(socket, buildStationRoom(stationId)),
-  );
-  socket.on("join-staff-room", () => joinRoom(socket, ROOMS.STAFF));
-  socket.on("join-kitchen-room", () => joinRoom(socket, ROOMS.KITCHEN));
-  socket.on("join-manager-room", () => joinRoom(socket, ROOMS.MANAGER));
-  socket.on("join-management-room", () => joinRoom(socket, ROOMS.MANAGEMENT));
-  socket.on("join-expediter-room", () => joinRoom(socket, ROOMS.EXPEDITER));
-  socket.on("join-customer-room", (sessionId) =>
-    joinRoom(socket, buildSessionRoom(sessionId)),
-  );
-  socket.on("join-notifications", (userId) =>
-    joinRoom(socket, buildUserRoom(userId)),
-  );
-  socket.on("join-role-notifications", (role) =>
-    joinRoom(socket, buildRoleRoom(role)),
-  );
-  socket.on("join-staff-notifications", () => joinRoom(socket, ROOMS.STAFF));
-  socket.on("subscribe-notifications", (userId) =>
-    joinRoom(socket, buildUserRoom(userId)),
-  );
-  socket.on("unsubscribe-notifications", (userId) =>
-    leaveRoom(socket, buildUserRoom(userId)),
-  );
-  socket.on("subscribe-staff-notifications", () =>
-    joinRoom(socket, ROOMS.STAFF),
-  );
-  socket.on("subscribe-kitchen-notifications", () =>
-    joinRoom(socket, ROOMS.KITCHEN),
-  );
+  socket.on("join-user-room", (userId) => {
+    if (socket.data?.auth?.userId && socket.data.auth.userId === String(userId)) {
+      joinRoom(socket, buildUserRoom(userId));
+    }
+  });
+  socket.on("join-role-room", (role) => {
+    const normalizedRole = String(role || "").toLowerCase();
+    if (socket.data?.auth?.role && socket.data.auth.role === normalizedRole) {
+      joinRoom(socket, buildRoleRoom(normalizedRole));
+    }
+  });
+  socket.on("join-session-room", (sessionId) => {
+    if (
+      socket.data?.auth?.customerSessionId &&
+      socket.data.auth.customerSessionId === String(sessionId)
+    ) {
+      joinRoom(socket, buildSessionRoom(sessionId));
+    }
+  });
+  socket.on("join-station-room", (stationId) => {
+    if (hasKitchenSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, buildStationRoom(stationId));
+    }
+  });
+  socket.on("join-staff-room", () => {
+    if (hasStaffSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.STAFF);
+    }
+  });
+  socket.on("join-kitchen-room", () => {
+    if (hasKitchenSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.KITCHEN);
+    }
+  });
+  socket.on("join-manager-room", () => {
+    if (hasManagementSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.MANAGER);
+    }
+  });
+  socket.on("join-management-room", () => {
+    if (hasManagementSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.MANAGEMENT);
+    }
+  });
+  socket.on("join-expediter-room", () => {
+    if (hasKitchenSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.EXPEDITER);
+    }
+  });
+  socket.on("join-customer-room", (sessionId) => {
+    if (
+      socket.data?.auth?.customerSessionId &&
+      socket.data.auth.customerSessionId === String(sessionId)
+    ) {
+      joinRoom(socket, buildSessionRoom(sessionId));
+    }
+  });
+  socket.on("join-notifications", (userId) => {
+    if (socket.data?.auth?.userId && socket.data.auth.userId === String(userId)) {
+      joinRoom(socket, buildUserRoom(userId));
+    }
+  });
+  socket.on("join-role-notifications", (role) => {
+    const normalizedRole = String(role || "").toLowerCase();
+    if (socket.data?.auth?.role && socket.data.auth.role === normalizedRole) {
+      joinRoom(socket, buildRoleRoom(normalizedRole));
+    }
+  });
+  socket.on("join-staff-notifications", () => {
+    if (hasStaffSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.STAFF);
+    }
+  });
+  socket.on("subscribe-notifications", (userId) => {
+    if (socket.data?.auth?.userId && socket.data.auth.userId === String(userId)) {
+      joinRoom(socket, buildUserRoom(userId));
+    }
+  });
+  socket.on("unsubscribe-notifications", (userId) => {
+    if (socket.data?.auth?.userId && socket.data.auth.userId === String(userId)) {
+      leaveRoom(socket, buildUserRoom(userId));
+    }
+  });
+  socket.on("subscribe-staff-notifications", () => {
+    if (hasStaffSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.STAFF);
+    }
+  });
+  socket.on("subscribe-kitchen-notifications", () => {
+    if (hasKitchenSocketAccess(socket.data?.auth)) {
+      joinRoom(socket, ROOMS.KITCHEN);
+    }
+  });
   socket.on("notification_action", (data) =>
     handleNotificationAction(socket, data),
   );
@@ -150,19 +284,26 @@ const stopCleanupTask = () => {
   clearInterval(cleanupInterval);
   cleanupInterval = null;
 };
-exports.initializeSocket = (server) => {
+exports.initializeSocket = (server, { allowedOrigins = new Set() } = {}) => {
   if (io) {
     return io;
   }
   const socketIo = require("socket.io");
   io = socketIo(server, {
     cors: {
-      origin: "*",
+      origin: (origin, callback) => {
+        if (!origin || allowedOrigins.has(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(new Error("CORS not allowed"));
+      },
       methods: ["GET", "POST"],
       credentials: true,
     },
   });
   io.on("connection", (socket) => {
+    socket.data.auth = getSocketAuthContext(socket);
     registerSocketHandlers(socket);
   });
   startCleanupTask();

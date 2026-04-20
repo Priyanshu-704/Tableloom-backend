@@ -4,10 +4,17 @@ const User = require("./models/User");
 require("dotenv").config({
   quiet: true,
 });
+const {
+  passwordPolicyMessage,
+  validatePasswordStrength,
+} = require("./utils/passwordPolicy");
+
 const DEFAULT_SUPER_ADMIN = {
   name: "Platform Super Admin",
-  email: process.env.SUPER_ADMIN_EMAIL || "superadmin@tableloom.com",
-  password: process.env.SUPER_ADMIN_PASSWORD || "SUperAdmin99!!",
+  email: String(process.env.SUPER_ADMIN_EMAIL || "")
+    .trim()
+    .toLowerCase(),
+  password: String(process.env.SUPER_ADMIN_PASSWORD || ""),
 };
 const connectDB = async () => {
   try {
@@ -21,6 +28,14 @@ const connectDB = async () => {
 };
 const createSuperAdminUser = async () => {
   try {
+    if (!DEFAULT_SUPER_ADMIN.email || !DEFAULT_SUPER_ADMIN.password) {
+      throw new Error(
+        "SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD must be configured to seed the super admin user.",
+      );
+    }
+    if (!validatePasswordStrength(DEFAULT_SUPER_ADMIN.password).isValid) {
+      throw new Error(passwordPolicyMessage);
+    }
     const existingSuperAdmin = await User.findOne({
       $or: [
         {
@@ -60,7 +75,9 @@ const createSuperAdminUser = async () => {
     });
     logger.info("\nSuper Admin Login Credentials:");
     logger.info(`Email: ${DEFAULT_SUPER_ADMIN.email}`);
-    logger.info(`Password: ${DEFAULT_SUPER_ADMIN.password}`);
+    logger.info(
+      "Password was loaded from SUPER_ADMIN_PASSWORD and is not printed to logs.",
+    );
     logger.info("\nLogin URL:");
     logger.info("Frontend: /super-admin/login");
     return superAdmin;

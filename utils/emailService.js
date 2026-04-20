@@ -32,6 +32,26 @@ const buildTenantAdminLoginUrl = (tenant = {}) => {
   }
   return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/login`;
 };
+const buildTenantAdminResetUrl = (tenant = {}, resetToken = "") => {
+  const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const normalizedResetToken = String(resetToken || "").trim();
+  if (!baseUrl || !normalizedResetToken) {
+    return null;
+  }
+
+  const tenantSlug = String(tenant?.slug || "")
+    .trim()
+    .toLowerCase();
+  const tenantKey = String(tenant?.key || "")
+    .trim()
+    .toLowerCase();
+
+  if (!tenantSlug || !tenantKey) {
+    return `${baseUrl}/admin/reset-password/${normalizedResetToken}`;
+  }
+
+  return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/reset-password/${normalizedResetToken}`;
+};
 const sendStaffCredentials = async (
   email,
   name,
@@ -92,6 +112,68 @@ const sendStaffCredentials = async (
     return true;
   } catch (error) {
     logger.error("Email sending failed:", error);
+    return false;
+  }
+};
+const sendStaffOnboardingEmail = async ({
+  email,
+  name,
+  role,
+  resetToken,
+  tenant = null,
+  subject = "Set Up Your Staff Account - QR Order System",
+  heading = "Your account is ready",
+  intro = "Your staff account has been created. Set your password securely using the link below:",
+} = {}) => {
+  const resetUrl = buildTenantAdminResetUrl(tenant, resetToken);
+  const loginUrl =
+    buildTenantAdminLoginUrl(tenant) || normalizeBaseUrl(process.env.FRONTEND_URL);
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to: email,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">${heading}</h2>
+        <p>Hello ${name},</p>
+        <p>${intro}</p>
+
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Role:</strong> ${role}</p>
+          ${loginUrl ? `<p><strong>Admin Panel URL:</strong> <a href="${loginUrl}">${loginUrl}</a></p>` : ""}
+        </div>
+
+        ${
+          resetUrl
+            ? `
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="${resetUrl}"
+             style="background: #007bff; color: white; padding: 12px 24px;
+                    text-decoration: none; border-radius: 5px; display: inline-block;">
+            Set Your Password
+          </a>
+        </div>
+        <p>This secure setup link expires in 10 minutes.</p>
+        `
+            : "<p>Please contact your administrator to complete password setup.</p>"
+        }
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+          <p style="color: #666; font-size: 12px;">
+            If you did not expect this email, please contact your manager immediately.
+          </p>
+        </div>
+      </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    logger.info(`Onboarding email sent to ${email}`);
+    return true;
+  } catch (error) {
+    logger.error("Onboarding email sending failed:", error);
     return false;
   }
 };
@@ -177,7 +259,9 @@ const sendTenantRejectionEmail = async ({
 };
 module.exports = {
   sendStaffCredentials,
+  sendStaffOnboardingEmail,
   sendPasswordResetEmail,
   sendTenantRejectionEmail,
   buildTenantAdminLoginUrl,
+  buildTenantAdminResetUrl,
 };

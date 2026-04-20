@@ -9,11 +9,55 @@ const {
   applyDiscount,
   checkoutCart,
 } = require("../controllers/cartController");
-router.get("/", getCart);
-router.post("/items", addItemToCart);
-router.put("/items/:menuItemId", updateItemQuantity);
-router.delete("/items/:menuItemId", removeItemFromCart);
-router.delete("/", clearCart);
-router.put("/discount", applyDiscount);
-router.post("/checkout", checkoutCart);
+const { protectCustomerSession } = require("../middleware/customerSessionAuth");
+
+router.get("/", protectCustomerSession(), getCart);
+router.post(
+  "/items",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  addItemToCart,
+);
+router.put(
+  "/items/:menuItemId",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  updateItemQuantity,
+);
+router.delete(
+  "/items/:menuItemId",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  removeItemFromCart,
+);
+router.delete(
+  "/",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  clearCart,
+);
+router.put(
+  "/discount",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  applyDiscount,
+);
+router.post(
+  "/checkout",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  checkoutCart,
+);
 module.exports = router;

@@ -25,20 +25,56 @@ const {
   hasPermission,
   hasAnyPermission,
 } = require("../middleware/auth");
-router.post("/session/scan", createSessionByScan);
-router.post("/session/scan/validate", validateSessionScan);
+const { protectCustomerSession } = require("../middleware/customerSessionAuth");
+const { createRateLimit, getClientIp } = require("../middleware/security");
+
+const scanRateLimit = createRateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  message: "Too many session start attempts. Please try again shortly.",
+  keyGenerator: (req) =>
+    `${getClientIp(req)}:${String(req.body?.tableId || "").trim()}`,
+});
+
+router.post("/session/scan", scanRateLimit, createSessionByScan);
+router.post("/session/scan/validate", scanRateLimit, validateSessionScan);
 router.post(
   "/session/:sessionId/generate-bill-before-payment",
+  protectCustomerSession(),
   generateBillBeforePayment,
 );
-router.get("/session/:sessionId", getCustomerSession);
-router.put("/session/:sessionId/complete-online", completeSessionOnline);
-router.put("/session/:sessionId/logout", customerLogout);
-router.get("/session/:sessionId/with-bill", getSessionWithBill);
-router.get("/session/:sessionId/bill-summary", getSessionBillSummary);
-router.post("/session/:sessionId/request-bill", requestBillForSession);
-router.post("/session/:sessionId/razorpay-order", createRazorpayOrder);
-router.post("/session/:sessionId/razorpay-verify", verifyRazorpayPayment);
+router.get("/session/:sessionId", protectCustomerSession(), getCustomerSession);
+router.put(
+  "/session/:sessionId/complete-online",
+  protectCustomerSession(),
+  completeSessionOnline,
+);
+router.put("/session/:sessionId/logout", protectCustomerSession(), customerLogout);
+router.get(
+  "/session/:sessionId/with-bill",
+  protectCustomerSession(),
+  getSessionWithBill,
+);
+router.get(
+  "/session/:sessionId/bill-summary",
+  protectCustomerSession(),
+  getSessionBillSummary,
+);
+router.post(
+  "/session/:sessionId/request-bill",
+  protectCustomerSession(),
+  requestBillForSession,
+);
+router.post(
+  "/session/:sessionId/razorpay-order",
+  protectCustomerSession(),
+  createRazorpayOrder,
+);
+router.post(
+  "/session/:sessionId/razorpay-verify",
+  protectCustomerSession(),
+  verifyRazorpayPayment,
+);
 router.use(protect);
 router.get(
   "/session/table/:tableId",

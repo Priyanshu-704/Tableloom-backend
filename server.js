@@ -13,6 +13,11 @@ const {
   getRequestProfilerSnapshot,
   resetRequestProfilerStats,
 } = require("./middleware/requestProfiler");
+const {
+  getAllowedOrigins,
+  normalizeOrigin,
+  securityHeaders,
+} = require("./middleware/security");
 const { resolveTenant } = require("./middleware/tenant");
 const { assertAuthConfig } = require("./utils/authTokens");
 dotenv.config({
@@ -25,44 +30,21 @@ const API_PREFIX = "/api";
 const legacyApiPrefix = process.env.CONTEXT_PATH
   ? `/${String(process.env.CONTEXT_PATH).replace(/^\/+|\/+$/g, "")}`
   : "";
-app.use(express.json());
+app.disable("x-powered-by");
+app.use(securityHeaders);
+app.use(
+  express.json({
+    limit: process.env.JSON_BODY_LIMIT || "100kb",
+  }),
+);
 app.use(
   express.urlencoded({
     extended: false,
+    limit: process.env.URLENCODED_BODY_LIMIT || "100kb",
   }),
 );
 app.use(cookieParser());
-const normalizeOrigin = (value = "") => {
-  const normalized = String(value || "").trim();
-  if (!normalized) {
-    return "";
-  }
-  try {
-    return new URL(normalized).origin;
-  } catch {
-    return normalized.replace(/\/+$/, "");
-  }
-};
-const configuredOrigins = [
-  process.env.FRONTEND_URL,
-  process.env.CORS_ORIGIN,
-  process.env.CORS_ORIGINS,
-]
-  .filter(Boolean)
-  .flatMap((value) => String(value).split(","))
-  .map(normalizeOrigin)
-  .filter(Boolean);
-const allowedOrigins = new Set(configuredOrigins);
-if (process.env.NODE_ENV !== "production") {
-  [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://127.0.0.1:5000",
-  ].forEach((origin) => allowedOrigins.add(origin));
-}
+const allowedOrigins = getAllowedOrigins();
 const corsOptions = {
   origin: function (origin, callback) {
     const requestOrigin = normalizeOrigin(origin);
@@ -85,12 +67,18 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 app.use(requestProfiler);
-setupSwagger(app, API_PREFIX);
-if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
-  setupSwagger(app, legacyApiPrefix);
+const swaggerEnabled =
+  process.env.SWAGGER_ENABLED === "true" || process.env.NODE_ENV !== "production";
+if (swaggerEnabled) {
+  setupSwagger(app, API_PREFIX);
+  if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
+    setupSwagger(app, legacyApiPrefix);
+  }
 }
 const server = require("http").createServer(app);
-initializeSocket(server);
+initializeSocket(server, {
+  allowedOrigins,
+});
 app.use(API_PREFIX, resolveTenant, require("./routes"));
 if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
   app.use(legacyApiPrefix, resolveTenant, require("./routes"));
@@ -154,7 +142,7 @@ if (legacyApiPrefix && legacyApiPrefix !== API_PREFIX) {
   }
 }
 app.get("/", (req, res) => {
-  res.redirect(`${API_PREFIX}/docs`);
+  res.redirect(swaggerEnabled ? `${API_PREFIX}/docs` : `${API_PREFIX}/healthz`);
 });
 app.use(notFoundHandler);
 app.use(errorHandler);

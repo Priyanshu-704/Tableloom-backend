@@ -14,6 +14,16 @@ const {
 } = require("../utils/qrGenerator");
 const getRequestedVariant = (req) =>
   req.query?.variant === "thumbnail" ? "thumbnail" : "image";
+const canAccessBill = (req, bill = {}) => {
+  if (req.user?._id) {
+    return true;
+  }
+
+  return (
+    Boolean(req.customerSessionId) &&
+    String(bill?.sessionId || "") === String(req.customerSessionId)
+  );
+};
 exports.getMenuItemImage = async (req, res) => {
   try {
     const menuItem = await MenuItem.findById(req.params.id).select(
@@ -109,6 +119,12 @@ exports.downloadBillPDF = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Bill PDF not found",
+      });
+    }
+    if (!canAccessBill(req, bill)) {
+      return res.status(req.customerSessionId || req.user?._id ? 403 : 401).json({
+        success: false,
+        message: "You are not authorized to access this bill",
       });
     }
     return serveStoredAsset(res, bill.pdfUrl, {

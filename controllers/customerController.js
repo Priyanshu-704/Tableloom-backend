@@ -3,6 +3,11 @@ const Customer = require("../models/Customer");
 const sessionManager = require("../utils/sessionManager");
 const { verifyQRToken } = require("../utils/qrGenerator");
 const mongoose = require("mongoose");
+const { signCustomerSessionToken } = require("../utils/authTokens");
+const {
+  clearCustomerSessionCookie,
+  setCustomerSessionCookie,
+} = require("../utils/cookieOptions");
 require("dotenv").config({
   quiet: true,
 });
@@ -111,6 +116,8 @@ exports.createSessionByScan = async (req, res) => {
         customerData,
       );
       const { session, isExisting } = result;
+      const customerSessionToken = signCustomerSessionToken(session);
+      setCustomerSessionCookie(res, customerSessionToken);
       return res.status(isExisting ? 200 : 201).json({
         success: true,
         message: isExisting
@@ -210,6 +217,7 @@ exports.completeSessionOnline = async (req, res) => {
       sessionId,
       paymentData,
     );
+    clearCustomerSessionCookie(res);
     res.status(200).json({
       success: true,
       message: "Session completed successfully with online payment",
@@ -234,6 +242,7 @@ exports.customerLogout = async (req, res) => {
   try {
     const { sessionId } = req.params;
     const loggedOutSession = await sessionManager.customerLogout(sessionId);
+    clearCustomerSessionCookie(res);
     res.status(200).json({
       success: true,
       message: "Logged out successfully",

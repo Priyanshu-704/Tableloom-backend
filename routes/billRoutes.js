@@ -5,7 +5,12 @@ const {
   protect,
   hasPermission,
   hasAnyPermission,
+  optionalAuth,
 } = require("../middleware/auth");
+const {
+  optionalCustomerSession,
+  protectCustomerSession,
+} = require("../middleware/customerSessionAuth");
 router.get(
   "/admin/list",
   protect,
@@ -18,9 +23,25 @@ router.get(
   hasPermission("VIEW_STATISTICS"),
   billController.getBillStatistics,
 );
-router.post("/request", billController.requestBill);
-router.get("/session/:sessionId", billController.getBillBySession);
-router.get("/:billId", billController.getBillById);
+router.post(
+  "/request",
+  protectCustomerSession({
+    field: "sessionId",
+    sources: ["body"],
+  }),
+  billController.requestBill,
+);
+router.get(
+  "/session/:sessionId",
+  protectCustomerSession(),
+  billController.getBillBySession,
+);
+router.get(
+  "/:billId",
+  optionalAuth,
+  optionalCustomerSession(),
+  billController.getBillById,
+);
 router.post(
   "/:billId/send-email",
   protect,
@@ -33,7 +54,22 @@ router.post(
   hasAnyPermission("ORDER_PROCESS_PAYMENT", "SESSION_COMPLETE_OFFLINE"),
   billController.processPayment,
 );
-router.get("/:billId/pdf", billController.downloadBillPDF);
-router.get("/:billId/view", billController.viewBillPDF);
-router.get("/:billId/payment-qr", billController.getPaymentQR);
+router.get(
+  "/:billId/pdf",
+  optionalAuth,
+  optionalCustomerSession(),
+  billController.downloadBillPDF,
+);
+router.get(
+  "/:billId/view",
+  optionalAuth,
+  optionalCustomerSession(),
+  billController.viewBillPDF,
+);
+router.get(
+  "/:billId/payment-qr",
+  optionalAuth,
+  optionalCustomerSession(),
+  billController.getPaymentQR,
+);
 module.exports = router;

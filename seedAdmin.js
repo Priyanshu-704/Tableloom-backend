@@ -5,6 +5,16 @@ const User = require("./models/User");
 require("dotenv").config({
   quiet: true,
 });
+const {
+  passwordPolicyMessage,
+  validatePasswordStrength,
+} = require("./utils/passwordPolicy");
+
+const DEFAULT_ADMIN = {
+  name: process.env.SEED_ADMIN_NAME || "System Administrator",
+  email: String(process.env.SEED_ADMIN_EMAIL || "").trim().toLowerCase(),
+  password: String(process.env.SEED_ADMIN_PASSWORD || ""),
+};
 const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGODB_URI);
@@ -17,10 +27,18 @@ const connectDB = async () => {
 };
 const createAdminUser = async () => {
   try {
+    if (!DEFAULT_ADMIN.email || !DEFAULT_ADMIN.password) {
+      throw new Error(
+        "SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD must be provided to seed an admin user.",
+      );
+    }
+    if (!validatePasswordStrength(DEFAULT_ADMIN.password).isValid) {
+      throw new Error(passwordPolicyMessage);
+    }
     const existingAdmin = await User.findOne({
       $or: [
         {
-          email: "admin@restaurant.com",
+          email: DEFAULT_ADMIN.email,
         },
         {
           role: "admin",
@@ -38,11 +56,12 @@ const createAdminUser = async () => {
       return existingAdmin;
     }
     const adminUser = await User.create({
-      name: "System Administrator",
-      email: "admin2@restaurant.com",
-      password: "AdminTest123@$",
+      name: DEFAULT_ADMIN.name,
+      email: DEFAULT_ADMIN.email,
+      password: DEFAULT_ADMIN.password,
       role: "admin",
       isActive: true,
+      forcePasswordChange: true,
     });
     logger.info("Admin user created successfully.");
     logger.info({
@@ -50,12 +69,13 @@ const createAdminUser = async () => {
       name: adminUser.name,
       email: adminUser.email,
       role: adminUser.role,
-      password: "AdminTest123@$",
     });
     logger.info("\nLogin Credentials:");
-    logger.info("Email: admin2@restaurant.com");
-    logger.info("Password: AdminTest123@$");
-    logger.info("\nPlease change the password after first login.");
+    logger.info(`Email: ${DEFAULT_ADMIN.email}`);
+    logger.info(
+      "Password was loaded from SEED_ADMIN_PASSWORD and is not printed to logs.",
+    );
+    logger.info("\nForce password change is enabled for the seeded admin.");
     return adminUser;
   } catch (error) {
     logger.error("Error creating admin user:", error);
