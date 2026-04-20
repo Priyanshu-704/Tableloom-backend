@@ -15,6 +15,13 @@ require("dotenv").config({
 const BILL_CACHE_PREFIX = "bill:";
 const BILL_LIST_CACHE_TTL_MS = 15 * 1000;
 const BILL_STATS_CACHE_TTL_MS = 20 * 1000;
+const OFFLINE_PAYMENT_METHODS = new Set(["cash", "card", "upi", "wallet"]);
+
+const normalizeOfflinePaymentMethod = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
 const canAccessBill = (req, bill = {}) => {
   if (req.user?._id) {
     return true;
@@ -187,14 +194,18 @@ exports.processPayment = async (req, res) => {
   try {
     const { billId } = req.params;
     const { paymentMethod, transactionId, gateway } = req.body;
-    if (!paymentMethod) {
-      return sendError(res, 400, "Payment method is required");
+    const normalizedPaymentMethod = normalizeOfflinePaymentMethod(paymentMethod);
+    if (!OFFLINE_PAYMENT_METHODS.has(normalizedPaymentMethod)) {
+      return sendError(
+        res,
+        400,
+        "Only offline payment methods can be processed from the admin panel. Online payments must be verified through the payment gateway.",
+      );
     }
     const paymentData = {
-      method: paymentMethod,
+      method: normalizedPaymentMethod,
       transactionId: transactionId || `payment_${Date.now()}`,
-      gateway:
-        gateway || (paymentMethod === "online" ? "payment_gateway" : "offline"),
+      gateway: gateway || "offline",
     };
     const result = await sessionManager.markBillAsPaid(
       billId,

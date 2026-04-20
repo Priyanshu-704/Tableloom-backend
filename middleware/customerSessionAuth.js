@@ -38,16 +38,7 @@ const customerSessionIsAccessible = (customer) => {
   if (customer.isActive && activeStatuses.has(customer.sessionStatus)) {
     return true;
   }
-
-  if (
-    customer.retainSessionData &&
-    customer.retainUntil &&
-    new Date(customer.retainUntil) > new Date()
-  ) {
-    return true;
-  }
-
-  return Boolean(customer.isAccessibleForBilling);
+  return false;
 };
 
 const extractCustomerSessionToken = (req) => {

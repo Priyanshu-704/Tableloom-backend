@@ -122,6 +122,7 @@ const billSchema = new mongoose.Schema({
     enum: ["cash", "card", "online", "upi", "wallet", "pending"],
     default: "pending",
   },
+  gatewayOrderId: String,
   transactionId: String,
   paidAt: Date,
   paymentGateway: String,

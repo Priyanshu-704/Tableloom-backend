@@ -46,6 +46,19 @@ const buildRazorpayReceipt = (bill = {}) => {
 
   return `${baseReceipt}-${suffix}`.slice(0, 40);
 };
+
+const emitSessionCompletion = (sessionId, payload = {}) => {
+  if (!sessionId) {
+    return;
+  }
+
+  try {
+    const socketManager = require("./socketManager");
+    socketManager.emitCustomerSessionCompleted(sessionId, payload);
+  } catch (error) {
+    logger.warn("Failed to emit customer session completion:", error?.message);
+  }
+};
 exports.createCustomerSession = async (tableId, token, customerData = {}) => {
   try {
     const { name, email, phone } = customerData;
@@ -243,6 +256,7 @@ exports.customerLogout = async (sessionId) => {
       throw new Error("Please complete payment before logging out.");
     }
     customer.sessionStatus = "completed";
+    customer.isActive = false;
     customer.sessionEnd = new Date();
     customer.retainSessionData = true;
     customer.retainUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -257,6 +271,11 @@ exports.customerLogout = async (sessionId) => {
       customer.table.currentOrder = null;
       await customer.table.save();
     }
+    emitSessionCompletion(customer.sessionId, {
+      thankYouMessage: selectedCashPayment
+        ? "Cash payment selected. Our staff has been notified."
+        : "Thank you for dining with us.",
+    });
     return {
       sessionId: customer.sessionId,
       sessionStatus: customer.sessionStatus,
@@ -826,6 +845,7 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       bill.transactionId = paymentData.transactionId;
       bill.paidAt = new Date();
       bill.paymentGateway = resolvedGateway;
+      bill.gatewayOrderId = "";
       bill.billStatus = "paid";
       bill.finalizedAt = new Date();
       await bill.save();
@@ -835,6 +855,11 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         logger.warn("Failed to refresh paid bill PDF:", pdfError);
       }
       if (bill.customerEmail) {
+        try {
+          await billManager.sendBillEmail(bill);
+        } catch (emailError) {
+          logger.warn("Bill email delivery failed:", emailError);
+        }
         try {
           await billManager.sendPaymentConfirmationEmail(bill, {
             method: resolvedPaymentMethod,
@@ -847,6 +872,7 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
       }
     }
     customer.sessionStatus = "completed";
+    customer.isActive = false;
     customer.sessionEnd = new Date();
     customer.paymentMethod = resolvedPaymentMethod;
     customer.paymentReference = paymentData.transactionId;
@@ -889,6 +915,11 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         },
       },
     );
+    emitSessionCompletion(customer.sessionId, {
+      billId: String(bill?._id || ""),
+      billNumber: bill?.billNumber || "",
+      thankYouMessage: "Payment completed successfully. Thank you for dining with us.",
+    });
     return {
       success: true,
       message: "Payment successful and session completed",
@@ -1031,15 +1062,27 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
       pendingBill.paymentStatus = "paid";
       pendingBill.paymentMethod = "cash";
       pendingBill.paidAt = new Date();
+      pendingBill.paymentGateway = "offline";
+      pendingBill.gatewayOrderId = "";
       pendingBill.billStatus = "paid";
       pendingBill.finalizedAt = new Date();
       await pendingBill.save();
+      await billManager.generateAndSavePDF(pendingBill).catch((error) => {
+        logger.warn("Failed to refresh offline paid bill PDF:", error);
+      });
       billData = pendingBill;
       if (pendingBill.customerEmail) {
-        await billManager.sendPaymentConfirmationEmail(pendingBill, {
-          method: "offline",
-          processedBy: staff.name,
+        await billManager.sendBillEmail(pendingBill).catch((error) => {
+          logger.warn("Offline bill email delivery failed:", error);
         });
+        await billManager
+          .sendPaymentConfirmationEmail(pendingBill, {
+            method: "offline",
+            processedBy: staff.name,
+          })
+          .catch((error) => {
+            logger.warn("Offline payment confirmation email failed:", error);
+          });
       }
     }
     if (!customer.totalAmount) {
@@ -1049,6 +1092,7 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
       }
     }
     customer.sessionStatus = "completed";
+    customer.isActive = false;
     customer.sessionEnd = new Date();
     customer.paymentMethod = "cash";
     customer.paymentStatus = "paid";
@@ -1093,6 +1137,11 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
         },
       },
     );
+    emitSessionCompletion(customer.sessionId, {
+      billId: String(pendingBill?._id || ""),
+      billNumber: pendingBill?.billNumber || "",
+      thankYouMessage: "Payment completed successfully. Thank you for dining with us.",
+    });
     return {
       success: true,
       statusCode: 200,
@@ -1415,6 +1464,10 @@ exports.createRazorpayOrderForSession = async (
         preferredPaymentMethod: normalizedPaymentMethod,
       },
     });
+    await Bill.findByIdAndUpdate(bill._id, {
+      gatewayOrderId: razorpayOrder.id,
+      paymentGateway: "razorpay",
+    });
 
     return {
       success: true,
@@ -1485,6 +1538,14 @@ exports.verifyRazorpayPaymentForSession = async (
 
     if (bill.paymentStatus === "paid") {
       throw new Error("Bill is already paid");
+    }
+    if (
+      bill.gatewayOrderId &&
+      String(bill.gatewayOrderId) !== String(razorpayOrderId)
+    ) {
+      throw new Error(
+        "Razorpay payment does not match the latest payment order for this bill",
+      );
     }
 
     const isSignatureValid = verifyRazorpaySignature({
@@ -1570,6 +1631,7 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
     if (customer) {
       const paidAt = new Date();
       customer.sessionStatus = "completed";
+      customer.isActive = false;
       customer.sessionEnd = paidAt;
       customer.paymentStatus = "paid";
       customer.paymentMethod = paymentData.method;
@@ -1619,11 +1681,20 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
           },
         },
       );
+      emitSessionCompletion(customer.sessionId, {
+        billId: String(updatedBill?._id || ""),
+        billNumber: updatedBill?.billNumber || "",
+        thankYouMessage:
+          "Payment completed successfully. Thank you for dining with us.",
+      });
     }
     return {
       success: true,
       message: "Bill marked as paid successfully",
       data: {
+        redirectToThankYou: true,
+        thankYouMessage:
+          "Payment completed successfully. Thank you for dining with us.",
         bill: updatedBill,
         customer: customer,
       },

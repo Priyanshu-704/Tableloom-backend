@@ -1055,6 +1055,7 @@ exports.updateBillPayment = async (billId, paymentData) => {
     bill.transactionId = paymentData.transactionId;
     bill.paidAt = new Date();
     bill.paymentGateway = paymentData.gateway;
+    bill.gatewayOrderId = "";
     bill.billStatus = "paid";
     bill.finalizedAt = new Date();
     await bill.save();
@@ -1079,7 +1080,16 @@ exports.updateBillPayment = async (billId, paymentData) => {
       );
     }
     if (bill.customerEmail) {
-      await sendPaymentConfirmationEmail(bill, paymentData);
+      try {
+        await exports.sendBillEmail(bill);
+      } catch (emailError) {
+        logger.warn("Bill email delivery failed:", emailError);
+      }
+      try {
+        await sendPaymentConfirmationEmail(bill, paymentData);
+      } catch (emailError) {
+        logger.warn("Payment confirmation email failed:", emailError);
+      }
     }
     return await enrichBillData(bill);
   } catch (error) {

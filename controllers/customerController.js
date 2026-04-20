@@ -11,6 +11,13 @@ const {
 require("dotenv").config({
   quiet: true,
 });
+const OFFLINE_PAYMENT_METHODS = new Set(["cash", "card", "upi", "wallet"]);
+
+const normalizeOfflinePaymentMethod = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
 const shapeCustomerSessionResponse = (session) => {
   if (!session) {
     return null;
@@ -774,6 +781,7 @@ exports.verifyRazorpayPayment = async (req, res) => {
         razorpaySignature,
       },
     );
+    clearCustomerSessionCookie(res);
     res.status(200).json(result);
   } catch (error) {
     logger.error("Verify Razorpay payment failed:", error);
@@ -786,21 +794,23 @@ exports.verifyRazorpayPayment = async (req, res) => {
 exports.markBillAsPaid = async (req, res) => {
   try {
     const { billId } = req.params;
-    const { paymentMethod, transactionId, staffId } = req.body;
-    if (!paymentMethod) {
+    const { paymentMethod, transactionId } = req.body;
+    const normalizedPaymentMethod = normalizeOfflinePaymentMethod(paymentMethod);
+    if (!OFFLINE_PAYMENT_METHODS.has(normalizedPaymentMethod)) {
       return res.status(400).json({
         success: false,
-        message: "Payment method is required",
+        message:
+          "Only offline payment methods can be recorded manually. Online payments must be verified through the payment gateway.",
       });
     }
     const result = await sessionManager.markBillAsPaid(
       billId,
       {
-        method: paymentMethod,
+        method: normalizedPaymentMethod,
         transactionId: transactionId || `offline_${Date.now()}`,
-        gateway: paymentMethod === "online" ? "payment_gateway" : "offline",
+        gateway: "offline",
       },
-      staffId,
+      req.user?._id || req.user?.id || null,
     );
     res.json(result);
   } catch (error) {

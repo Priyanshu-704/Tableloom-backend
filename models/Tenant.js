@@ -175,6 +175,15 @@ const tenantSchema = new mongoose.Schema(
         trim: true,
         default: "",
       },
+      accessTokenHash: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      accessTokenExpiresAt: {
+        type: Date,
+        default: null,
+      },
       requestedAt: {
         type: Date,
         default: null,

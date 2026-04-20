@@ -1,4 +1,5 @@
 const { logger } = require("./logger.js");
+const Customer = require("../models/Customer");
 const {
   ACCESS_TOKEN_COOKIE_NAME,
   CUSTOMER_SESSION_COOKIE_NAME,
@@ -33,6 +34,7 @@ const EVENTS = {
   ORDER_UPDATED: "order:updated",
   ORDER_STATUS_UPDATED: "order:status-updated",
   ORDER_DELAYED: "order:delayed",
+  SESSION_COMPLETED: "session:completed",
 };
 const safeEmitToRoom = (room, event, payload) => {
   if (!io) return;
@@ -64,7 +66,7 @@ const parseCookieHeader = (cookieHeader = "") =>
       return accumulator;
     }, {});
 
-const getSocketAuthContext = (socket) => {
+const getSocketAuthContext = async (socket) => {
   const cookies = parseCookieHeader(socket.handshake?.headers?.cookie || "");
   const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
   const customerSessionToken = cookies[CUSTOMER_SESSION_COOKIE_NAME];
@@ -85,7 +87,21 @@ const getSocketAuthContext = (socket) => {
   if (customerSessionToken) {
     try {
       const decoded = verifyCustomerSessionToken(customerSessionToken);
-      authContext.customerSessionId = getTokenSessionId(decoded);
+      const tokenSessionId = getTokenSessionId(decoded);
+      if (tokenSessionId) {
+        const customer = await Customer.findOne({
+          sessionId: tokenSessionId,
+          isActive: true,
+          sessionStatus: {
+            $in: ["active", "payment_pending", "payment_processing"],
+          },
+        })
+          .select("_id")
+          .lean();
+        if (customer) {
+          authContext.customerSessionId = tokenSessionId;
+        }
+      }
     } catch (_error) {}
   }
 
@@ -302,8 +318,17 @@ exports.initializeSocket = (server, { allowedOrigins = new Set() } = {}) => {
       credentials: true,
     },
   });
-  io.on("connection", (socket) => {
-    socket.data.auth = getSocketAuthContext(socket);
+  io.on("connection", async (socket) => {
+    try {
+      socket.data.auth = await getSocketAuthContext(socket);
+    } catch (error) {
+      socket.data.auth = {
+        role: "",
+        userId: "",
+        customerSessionId: "",
+      };
+      logger.warn("Failed to resolve socket auth context:", error?.message);
+    }
     registerSocketHandlers(socket);
   });
   startCleanupTask();
@@ -493,6 +518,20 @@ exports.emitOrderStatusToCustomer = (sessionId, orderData) => {
     buildSessionRoom(sessionId),
     EVENTS.ORDER_STATUS_UPDATED,
     ["order-status-updated"],
+    payload,
+  );
+};
+exports.emitCustomerSessionCompleted = (sessionId, sessionData = {}) => {
+  if (!sessionId) return;
+  const payload = {
+    ...sessionData,
+    sessionId,
+    timestamp: new Date(),
+  };
+  emitWithAliases(
+    buildSessionRoom(sessionId),
+    EVENTS.SESSION_COMPLETED,
+    ["customer-session:completed", "session-completed"],
     payload,
   );
 };

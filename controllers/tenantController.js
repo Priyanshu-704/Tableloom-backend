@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const Tenant = require("../models/Tenant");
 const User = require("../models/User");
 const AppSetting = require("../models/AppSetting");
@@ -38,6 +39,85 @@ const {
 } = require("../utils/tenantWorkspace");
 const TENANT_REGISTRATION_AMOUNT = 10000;
 const TENANT_REGISTRATION_CURRENCY = "INR";
+const TENANT_PAYMENT_ACCESS_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+
+const hashTenantPaymentAccessToken = (token = "") =>
+  crypto.createHash("sha256").update(String(token || "")).digest("hex");
+
+const buildTenantPaymentAccessToken = () => crypto.randomBytes(32).toString("hex");
+
+const getTenantPaymentAccessToken = (req = {}) =>
+  String(
+    req.body?.paymentAccessToken || req.header("x-payment-access-token") || "",
+  ).trim();
+
+const isTenantPaymentAccessTokenValid = (tenant = {}, token = "") => {
+  const normalizedToken = String(token || "").trim();
+  const storedHash = String(tenant?.payment?.accessTokenHash || "").trim();
+  const expiresAt = tenant?.payment?.accessTokenExpiresAt
+    ? new Date(tenant.payment.accessTokenExpiresAt)
+    : null;
+
+  if (
+    !normalizedToken ||
+    !storedHash ||
+    !expiresAt ||
+    Number.isNaN(expiresAt.getTime()) ||
+    expiresAt.getTime() <= Date.now()
+  ) {
+    return false;
+  }
+
+  const providedHash = hashTenantPaymentAccessToken(normalizedToken);
+  const storedBuffer = Buffer.from(storedHash, "hex");
+  const providedBuffer = Buffer.from(providedHash, "hex");
+
+  if (storedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(storedBuffer, providedBuffer);
+};
+
+const issueTenantPaymentAccessToken = (tenant = {}) => {
+  const paymentAccessToken = buildTenantPaymentAccessToken();
+  const accessTokenExpiresAt = new Date(
+    Date.now() + TENANT_PAYMENT_ACCESS_TOKEN_TTL_MS,
+  );
+
+  tenant.payment = {
+    ...toTenantPaymentObject(tenant),
+    accessTokenHash: hashTenantPaymentAccessToken(paymentAccessToken),
+    accessTokenExpiresAt,
+  };
+
+  return {
+    paymentAccessToken,
+    accessTokenExpiresAt,
+  };
+};
+
+const clearTenantPaymentAccessToken = (tenant = {}) => {
+  tenant.payment = {
+    ...toTenantPaymentObject(tenant),
+    accessTokenHash: "",
+    accessTokenExpiresAt: null,
+  };
+};
+
+const ensureTenantPaymentAccess = (req, res, tenant = {}) => {
+  if (isTenantPaymentAccessTokenValid(tenant, getTenantPaymentAccessToken(req))) {
+    return true;
+  }
+
+  sendError(
+    res,
+    403,
+    "Payment access has expired or is invalid. Start the registration flow again to continue securely.",
+  );
+  return false;
+};
+
 const normalizeTenantRegistrationPaymentMethod = (value = "") => {
   const normalizedValue = String(value || "")
     .trim()
@@ -918,7 +998,7 @@ exports.registerTenant = async (req, res) => {
       message: "A tenant admin already exists with this email",
     });
   }
-  const tenant = await Tenant.create({
+  const tenant = new Tenant({
     name: restaurantName,
     slug: normalizedSlug,
     key: normalizedKey,
@@ -957,6 +1037,9 @@ exports.registerTenant = async (req, res) => {
           : "",
     },
   });
+  const { paymentAccessToken, accessTokenExpiresAt } =
+    issueTenantPaymentAccessToken(tenant);
+  await tenant.save();
   createSuperAdminTenantRegistrationNotification(tenant).catch((error) => {
     logger.error(
       "Failed to create super admin tenant-registration notification:",
@@ -973,6 +1056,8 @@ exports.registerTenant = async (req, res) => {
       tenantId: tenant._id,
       status: tenant.status,
       verificationStatus: tenant.onboarding?.verificationStatus,
+      paymentAccessToken,
+      paymentAccessTokenExpiresAt: accessTokenExpiresAt,
       payment: getTenantPaymentSummary(tenant),
     },
   );
@@ -982,6 +1067,9 @@ exports.createRegistrationPaymentOrder = async (req, res) => {
     const tenant = await Tenant.findById(req.params.id);
     if (!tenant) {
       return sendError(res, 404, "Tenant registration not found");
+    }
+    if (!ensureTenantPaymentAccess(req, res, tenant)) {
+      return null;
     }
     if (tenant.onboarding?.source !== "self_service") {
       return sendError(
@@ -995,6 +1083,13 @@ exports.createRegistrationPaymentOrder = async (req, res) => {
       tenant.onboarding?.verificationStatus === "verified"
     ) {
       return sendError(res, 400, "Tenant has already been approved");
+    }
+    if (["paid", "approved"].includes(String(tenant?.payment?.status || ""))) {
+      return sendError(
+        res,
+        400,
+        "Registration payment has already been completed for this tenant",
+      );
     }
     const razorpayClient = getRazorpayClient();
     const amount = Number(
@@ -1074,11 +1169,41 @@ exports.verifyRegistrationPayment = async (req, res) => {
     if (!tenant) {
       return sendError(res, 404, "Tenant registration not found");
     }
+    if (!ensureTenantPaymentAccess(req, res, tenant)) {
+      return null;
+    }
     if (tenant.onboarding?.source !== "self_service") {
       return sendError(
         res,
         400,
         "Payment verification is only available for self-service registrations",
+      );
+    }
+    if (
+      ["paid", "approved"].includes(String(tenant?.payment?.status || "")) &&
+      String(tenant?.payment?.razorpayOrderId || "") === String(razorpayOrderId) &&
+      String(tenant?.payment?.transactionId || "") === String(razorpayPaymentId)
+    ) {
+      return sendSuccess(
+        res,
+        200,
+        "Registration payment was already received. Super admin approval is pending.",
+        {
+          tenantId: tenant._id,
+          status: tenant.status,
+          verificationStatus: tenant.onboarding?.verificationStatus,
+          payment: getTenantPaymentSummary(tenant),
+        },
+      );
+    }
+    if (
+      tenant?.payment?.razorpayOrderId &&
+      String(tenant.payment.razorpayOrderId) !== String(razorpayOrderId)
+    ) {
+      return sendError(
+        res,
+        400,
+        "Payment verification must use the latest order created for this registration",
       );
     }
     const isSignatureValid = verifyRazorpaySignature({
@@ -1230,6 +1355,7 @@ exports.verifyTenant = async (req, res) => {
     approvedBy: req.user?._id || null,
     approvalNotes: getTenantApprovalNote(tenant),
   };
+  clearTenantPaymentAccessToken(tenant);
   tenant.onboarding = {
     ...tenant.onboarding,
     verificationStatus: "verified",
@@ -1284,6 +1410,7 @@ exports.rejectTenant = async (req, res) => {
     approvedBy: req.user?._id || null,
     approvalNotes: String(reason || "").trim(),
   };
+  clearTenantPaymentAccessToken(tenant);
   tenant.onboarding = {
     ...tenant.onboarding,
     verificationStatus: "rejected",
