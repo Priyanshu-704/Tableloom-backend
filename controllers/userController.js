@@ -247,6 +247,8 @@ exports.loginStaff = async (req, res) => {
         success: true,
         message: "Login successful",
         data: shapeAuthUser(user),
+        accessToken,
+        refreshToken,
       });
     } else {
       res.status(401).json({
@@ -327,6 +329,8 @@ exports.refreshToken = async (req, res) => {
         }),
         sessionId: user.sessionId,
       },
+      accessToken,
+      refreshToken: rotatedRefreshToken,
     });
   } catch (error) {
     logger.error("Refresh token error:", error);

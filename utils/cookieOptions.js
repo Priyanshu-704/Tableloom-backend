@@ -5,17 +5,24 @@ const CUSTOMER_SESSION_COOKIE_NAME = "customerSessionToken";
 const ACCESS_TOKEN_MAX_AGE_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CUSTOMER_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+const isProduction = () => process.env.NODE_ENV === "production";
 
 const normalizeSameSite = () => {
   const configured = String(process.env.COOKIE_SAMESITE || "")
     .trim()
     .toLowerCase();
 
-  if (["strict", "lax", "none"].includes(configured)) {
+  if (["strict", "lax"].includes(configured)) {
     return configured;
   }
 
-  return process.env.NODE_ENV === "production" ? "none" : "lax";
+  if (configured === "none") {
+    // Browsers reject SameSite=None cookies over plain HTTP, so keep local
+    // development usable even if production cookie env vars are reused.
+    return isProduction() ? "none" : "lax";
+  }
+
+  return isProduction() ? "none" : "lax";
 };
 
 const normalizeCookieDomain = () => {
@@ -50,15 +57,23 @@ const normalizeCookieDomain = () => {
 };
 
 const shouldUseSecureCookies = (sameSite) => {
-  if (String(sameSite || "").toLowerCase() === "none") {
-    return true;
-  }
+  const configuredSecure = String(process.env.COOKIE_SECURE || "")
+    .trim()
+    .toLowerCase();
 
-  if (process.env.NODE_ENV !== "production") {
+  if (!isProduction()) {
     return false;
   }
 
-  return process.env.COOKIE_SECURE !== "false";
+  if (configuredSecure === "false") {
+    return false;
+  }
+
+  if (configuredSecure === "true") {
+    return true;
+  }
+
+  return String(sameSite || "").toLowerCase() === "none";
 };
 
 const buildCookieOptions = ({
@@ -66,7 +81,6 @@ const buildCookieOptions = ({
   httpOnly = true,
   path = "/",
 } = {}) => {
-  const isProduction = process.env.NODE_ENV === "production";
   const sameSite = normalizeSameSite();
   const cookieOptions = {
     httpOnly,
@@ -78,7 +92,7 @@ const buildCookieOptions = ({
 
   const cookieDomain = normalizeCookieDomain();
 
-  if (isProduction && cookieDomain) {
+  if (isProduction() && cookieDomain) {
     cookieOptions.domain = cookieDomain;
   }
 
