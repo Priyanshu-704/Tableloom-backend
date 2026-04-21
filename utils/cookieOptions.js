@@ -18,6 +18,49 @@ const normalizeSameSite = () => {
   return process.env.NODE_ENV === "production" ? "none" : "lax";
 };
 
+const normalizeCookieDomain = () => {
+  const configured = String(process.env.COOKIE_DOMAIN || "").trim();
+
+  if (!configured) {
+    return "";
+  }
+
+  let hostname = configured;
+
+  try {
+    hostname = new URL(configured).hostname;
+  } catch {
+    hostname = configured
+      .replace(/^https?:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .replace(/:\d+$/, "");
+  }
+
+  hostname = hostname.replace(/^\.+/, "").trim().toLowerCase();
+
+  if (
+    !hostname ||
+    hostname === "localhost" ||
+    /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)
+  ) {
+    return "";
+  }
+
+  return hostname;
+};
+
+const shouldUseSecureCookies = (sameSite) => {
+  if (String(sameSite || "").toLowerCase() === "none") {
+    return true;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return false;
+  }
+
+  return process.env.COOKIE_SECURE !== "false";
+};
+
 const buildCookieOptions = ({
   maxAge,
   httpOnly = true,
@@ -27,14 +70,16 @@ const buildCookieOptions = ({
   const sameSite = normalizeSameSite();
   const cookieOptions = {
     httpOnly,
-    secure: isProduction ? process.env.COOKIE_SECURE !== "false" : false,
+    secure: shouldUseSecureCookies(sameSite),
     sameSite,
     maxAge,
     path,
   };
 
-  if (isProduction && process.env.COOKIE_DOMAIN) {
-    cookieOptions.domain = process.env.COOKIE_DOMAIN;
+  const cookieDomain = normalizeCookieDomain();
+
+  if (isProduction && cookieDomain) {
+    cookieOptions.domain = cookieDomain;
   }
 
   return cookieOptions;
