@@ -1,14 +1,18 @@
 const User = require("../models/User");
 const {
   AllPermissions,
+  expandPermissionEntries,
   getDefaultRolePermissions,
   getEffectivePermissionsForUser,
   getPermissionMetadata,
   hydrateUserPermissions,
+  normalizePermission,
+  resetUserCustomPermissions,
+  updateUserCustomPermissions,
 } = require("../utils/permissionSettings");
 exports.getAvailablePermissions = async (req, res) => {
   try {
-    const permissionMetadata = await getPermissionMetadata();
+    const permissionMetadata = await getPermissionMetadata(req.user?.tenantId);
     res.json({
       success: true,
       data: {
@@ -26,7 +30,7 @@ exports.getAvailablePermissions = async (req, res) => {
 exports.getUserPermissions = async (req, res) => {
   try {
     const user = await User.findById(req.params.userId).select(
-      "customPermissions role",
+      "customPermissions role tenantId",
     );
     if (!user) {
       return res.status(404).json({
@@ -38,10 +42,14 @@ exports.getUserPermissions = async (req, res) => {
     res.json({
       success: true,
       data: {
-        permissions: await getEffectivePermissionsForUser(user),
+        permissions: user.resolvedPermissions || (await getEffectivePermissionsForUser(user)),
         customPermissions: user.customPermissions || [],
         role: user.role,
-        defaultPermissions: await getDefaultRolePermissions(user.role),
+        roles: user.roles || [],
+        defaultPermissions: await getDefaultRolePermissions(
+          user.role,
+          user?.tenantId || null,
+        ),
       },
     });
   } catch (error) {
@@ -55,9 +63,11 @@ exports.updateUserPermissions = async (req, res) => {
   try {
     const { permissions = [] } = req.body;
     const userId = req.params.userId;
-    const invalidPermissions = permissions.filter(
-      (perm) => !AllPermissions.includes(perm),
-    );
+    const invalidPermissions = permissions.filter((permission) => {
+      const normalizedPermission = normalizePermission(permission);
+      return !normalizedPermission || !AllPermissions.includes(normalizedPermission);
+    });
+    const normalizedPermissions = expandPermissionEntries(permissions);
     if (invalidPermissions.length > 0) {
       return res.status(400).json({
         success: false,
@@ -77,13 +87,19 @@ exports.updateUserPermissions = async (req, res) => {
         error: "Cannot update permissions for admin role",
       });
     }
-    user.updatePermissions(permissions, req.user.id);
+    const effectivePermissions = await updateUserCustomPermissions(
+      user,
+      normalizedPermissions,
+      req.user.id,
+    );
     await user.save();
+    await hydrateUserPermissions(user);
     res.json({
       success: true,
       data: {
-        permissions: await getEffectivePermissionsForUser(user),
+        permissions: effectivePermissions,
         role: user.role,
+        roles: user.roles || [],
         updatedBy: req.user.id,
         updatedAt: user.permissionsUpdatedAt,
       },
@@ -104,17 +120,19 @@ exports.resetUserPermissions = async (req, res) => {
         error: "User not found",
       });
     }
-    const defaultPermissions = await getDefaultRolePermissions(user.role);
-    user.customPermissions = defaultPermissions;
-    user.permissionsUpdatedBy = req.user.id;
-    user.permissionsUpdatedAt = new Date();
-    user.updatedBy = req.user.id;
+    await resetUserCustomPermissions(user, req.user.id);
     await user.save();
+    await hydrateUserPermissions(user);
+    const defaultPermissions = await getDefaultRolePermissions(
+      user.role,
+      user?.tenantId || null,
+    );
     res.json({
       success: true,
       data: {
         permissions: defaultPermissions,
         role: user.role,
+        roles: user.roles || [],
         message: "Permissions reset to role defaults",
       },
     });
@@ -128,23 +146,26 @@ exports.resetUserPermissions = async (req, res) => {
 exports.getMyPermissions = async (req, res) => {
   try {
     const userId = req.user.id;
-    const user = await User.findById(userId).select("customPermissions role");
+    const user = await User.findById(userId).select(
+      "customPermissions role tenantId",
+    );
     if (!user) {
       return res.status(404).json({
         success: false,
         error: "User not found",
       });
     }
-    const effectivePermissions =
-      user.role === "super_admin"
-        ? AllPermissions
-        : await getEffectivePermissionsForUser(user);
+    await hydrateUserPermissions(user);
     res.json({
       success: true,
       data: {
         role: user.role,
-        permissions: effectivePermissions,
-        defaultPermissions: await getDefaultRolePermissions(user.role),
+        roles: user.roles || [],
+        permissions: user.resolvedPermissions || AllPermissions,
+        defaultPermissions: await getDefaultRolePermissions(
+          user.role,
+          user?.tenantId || null,
+        ),
         source: "database",
       },
     });

@@ -82,12 +82,12 @@ router.get(
 );
 router.get(
   "/available-staff",
-  hasPermission("WAITER_CALL_VIEW_ALL"),
+  hasPermission("WAITER_CALL_ASSIGN"),
   getAvailableStaff,
 );
 router.put(
   "/:callId/assign",
-  hasPermission("WAITER_CALL_VIEW_ALL"),
+  hasPermission("WAITER_CALL_ASSIGN"),
   assignCallToStaff,
 );
 router.get(

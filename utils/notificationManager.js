@@ -4,6 +4,52 @@ const Notification = require("../models/Notification");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
 const { getCurrentTenantId } = require("./tenantContext");
+
+const ALL_NOTIFICATION_TYPES = Object.freeze([
+  "waiter_call",
+  "order_ready",
+  "order_delayed",
+  "payment_request",
+  "payment_received",
+  "table_assigned",
+  "customer_checkin",
+  "customer_checkout",
+  "inventory_low",
+  "reservation_alert",
+  "system_alert",
+  "staff_announcement",
+  "rating_received",
+  "shift_change",
+  "task_assigned",
+]);
+
+const NOTIFICATION_TYPES_BY_ROLE = Object.freeze({
+  waiter: [
+    "waiter_call",
+    "order_ready",
+    "payment_request",
+    "table_assigned",
+    "customer_checkout",
+    "reservation_alert",
+    "staff_announcement",
+    "shift_change",
+    "task_assigned",
+  ],
+  chef: [
+    "system_alert",
+    "order_delayed",
+    "staff_announcement",
+    "shift_change",
+    "task_assigned",
+  ],
+  manager: ALL_NOTIFICATION_TYPES,
+  admin: ALL_NOTIFICATION_TYPES,
+  super_admin: ALL_NOTIFICATION_TYPES,
+});
+
+const getAllowedNotificationTypesForRole = (role) =>
+  NOTIFICATION_TYPES_BY_ROLE[String(role || "").trim().toLowerCase()] || [];
+
 class NotificationManager {
   constructor() {
     this.cleanupTimer = null;
@@ -99,7 +145,7 @@ class NotificationManager {
       .filter(Boolean);
   }
   buildRecipientQuery(userId, role) {
-    return {
+    const query = {
       $or: [
         {
           recipientType: "user",
@@ -117,6 +163,13 @@ class NotificationManager {
         $ne: userId,
       },
     };
+    const allowedTypes = getAllowedNotificationTypesForRole(role);
+    if (allowedTypes.length > 0) {
+      query.type = {
+        $in: allowedTypes,
+      };
+    }
+    return query;
   }
   buildSessionQuery(sessionId) {
     return {

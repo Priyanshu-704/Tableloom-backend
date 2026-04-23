@@ -9,6 +9,10 @@ const {
   passwordPolicyMessage,
   validatePasswordStrength,
 } = require("./utils/passwordPolicy");
+const {
+  assignRolesToUser,
+  ensureDefaultRbacSeedData,
+} = require("./utils/permissionSettings");
 
 const DEFAULT_ADMIN = {
   name: process.env.SEED_ADMIN_NAME || "System Administrator",
@@ -46,6 +50,10 @@ const createAdminUser = async () => {
       ],
     });
     if (existingAdmin) {
+      await ensureDefaultRbacSeedData();
+      await assignRolesToUser(existingAdmin, ["admin"], {
+        assignedBy: existingAdmin._id,
+      });
       logger.info("Admin user already exists:");
       logger.info({
         id: existingAdmin._id,
@@ -62,6 +70,10 @@ const createAdminUser = async () => {
       role: "admin",
       isActive: true,
       forcePasswordChange: true,
+    });
+    await ensureDefaultRbacSeedData();
+    await assignRolesToUser(adminUser, ["admin"], {
+      assignedBy: adminUser._id,
     });
     logger.info("Admin user created successfully.");
     logger.info({

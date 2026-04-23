@@ -31,16 +31,24 @@ router.put(
   hasPermission("TABLE_EDIT"),
   toggleTableActive,
 );
-router.get("/:id/qr-download", hasPermission("TABLE_VIEW_ALL"), downloadQRCode);
-router.put("/:id/regenerate-qr", hasPermission("TABLE_EDIT"), regenerateQRCode);
+router.get(
+  "/:id/qr-download",
+  hasPermission("TABLE_QR_DOWNLOAD"),
+  downloadQRCode,
+);
+router.put(
+  "/:id/regenerate-qr",
+  hasPermission("TABLE_QR_REGENERATE"),
+  regenerateQRCode,
+);
 router.get(
   "/:id/qr-token-status",
-  hasPermission("TABLE_VIEW_ALL"),
+  hasPermission("TABLE_QR_VIEW"),
   getQRTokenStatus,
 );
 router.post(
   "/:id/table-refresh-token",
-  hasPermission("TABLE_EDIT"),
+  hasPermission("TABLE_QR_REFRESH_TOKEN"),
   refreshQRToken,
 );
 router.get(

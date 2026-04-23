@@ -1,9 +1,10 @@
 const { logger } = require("./../utils/logger.js");
 const User = require("../models/User");
-const { Permissions } = require("../config/permissions");
 const {
   hydrateUserPermissions,
   normalizePermission,
+  normalizeRoleKey,
+  userHasPermission,
 } = require("../utils/permissionSettings");
 const crypto = require("crypto");
 const { normalizeTenantId } = require("../utils/tenantContext");
@@ -20,16 +21,17 @@ const {
 require("dotenv").config({
   quiet: true,
 });
-exports.checkPermission = (user, permission) => {
-  if (!user || !user.role) return false;
-  if (["super_admin", "admin"].includes(String(user.role).toLowerCase())) {
-    return true;
-  }
-  const targetPermission = normalizePermission(permission);
-  const effectivePermissions =
-    user.resolvedPermissions || user.getPermissions?.() || [];
-  return effectivePermissions.includes(targetPermission);
+const getUserRoleKeys = (user) => {
+  const explicitRoles = Array.isArray(user?.roles)
+    ? user.roles.map((role) => normalizeRoleKey(role?.key || role))
+    : [];
+  const roleKeys = Array.isArray(user?.roleKeys) ? user.roleKeys : [];
+  return [...new Set([...explicitRoles, ...roleKeys, normalizeRoleKey(user?.role)])]
+    .filter(Boolean);
 };
+
+exports.checkPermission = (user, permission) => userHasPermission(user, permission);
+exports.can = exports.checkPermission;
 exports.protect = async (req, res, next) => {
   let accessToken;
   if (
@@ -151,7 +153,9 @@ exports.requireRole = (...roles) => {
         message: "User not authenticated",
       });
     }
-    if (!roles.includes(req.user.role)) {
+    const allowedRoles = roles.map(normalizeRoleKey);
+    const userRoles = getUserRoleKeys(req.user);
+    if (!allowedRoles.some((role) => userRoles.includes(role))) {
       return res.status(403).json({
         success: false,
         message: `User role ${req.user.role} is not authorized to access this route`,
@@ -187,12 +191,9 @@ exports.hasAnyPermission = (...permissions) => {
       });
     }
     const normalizedPermissions = permissions.map(normalizePermission);
-    const effectivePermissions =
-      req.user.resolvedPermissions || req.user.getPermissions?.() || [];
     if (
-      !["super_admin", "admin"].includes(String(req.user.role).toLowerCase()) &&
       !normalizedPermissions.some((permission) =>
-        effectivePermissions.includes(permission),
+        exports.checkPermission(req.user, permission),
       )
     ) {
       return res.status(403).json({

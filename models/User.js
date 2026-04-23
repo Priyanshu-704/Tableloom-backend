@@ -1,8 +1,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
-const { Permissions, RolePermissions } = require("../config/permissions");
-const { getDefaultRolePermissions } = require("../utils/permissionSettings");
+const { normalizePermissionKey } = require("../config/permissions");
 const {
   MIN_PASSWORD_LENGTH,
   passwordPolicyMessage,
@@ -37,7 +36,15 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ["super_admin", "admin", "manager", "chef", "waiter", "customer"],
+    enum: [
+      "super_admin",
+      "admin",
+      "manager",
+      "chef",
+      "waiter",
+      "customer",
+      "user",
+    ],
     default: "waiter",
   },
   tenantId: {
@@ -49,7 +56,6 @@ const userSchema = new mongoose.Schema({
   customPermissions: [
     {
       type: String,
-      enum: Object.values(Permissions),
     },
   ],
   sessionId: {
@@ -118,10 +124,18 @@ userSchema.index({
 userSchema.pre("save", function () {
   this.updatedAt = Date.now();
 });
-userSchema.pre("save", async function () {
-  if (!this.customPermissions || this.customPermissions.length === 0) {
-    this.customPermissions = await getDefaultRolePermissions(this.role);
+userSchema.pre("save", function () {
+  if (!Array.isArray(this.customPermissions)) {
+    this.customPermissions = [];
+    return;
   }
+  this.customPermissions = [
+    ...new Set(
+      this.customPermissions
+        .map((permission) => normalizePermissionKey(permission))
+        .filter(Boolean),
+    ),
+  ];
 });
 userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
@@ -166,44 +180,48 @@ userSchema.methods.getPermissions = function () {
     return this.resolvedPermissions;
   }
   if (this.customPermissions && this.customPermissions.length > 0) {
-    return this.customPermissions;
+    return this.customPermissions.map((permission) =>
+      normalizePermissionKey(permission),
+    );
   }
-  return RolePermissions[this.role] || [];
+  return [];
 };
 userSchema.methods.hasPermission = function (permission) {
-  if (["super_admin", "admin"].includes(String(this.role).toLowerCase()))
+  const normalizedTarget = normalizePermissionKey(permission);
+  if (!normalizedTarget) {
     return true;
+  }
   const userPermissions = this.getPermissions();
-  return userPermissions.includes(permission);
+  return userPermissions.includes(normalizedTarget);
 };
 userSchema.methods.hasAnyPermission = function (permissionsArray) {
-  if (["super_admin", "admin"].includes(String(this.role).toLowerCase()))
-    return true;
   const userPermissions = this.getPermissions();
   return permissionsArray.some((permission) =>
-    userPermissions.includes(permission),
+    userPermissions.includes(normalizePermissionKey(permission)),
   );
 };
 userSchema.methods.canManageRole = function (targetRole) {
   const hierarchy = {
-    super_admin: ["admin", "manager", "chef", "waiter", "customer"],
-    admin: ["admin", "manager", "chef", "waiter", "customer"],
-    manager: ["chef", "waiter", "customer"],
+    super_admin: ["admin", "manager", "chef", "waiter", "customer", "user"],
+    admin: ["admin", "manager", "chef", "waiter", "customer", "user"],
+    manager: ["chef", "waiter", "customer", "user"],
     chef: [],
     waiter: [],
     customer: [],
+    user: [],
   };
   return hierarchy[this.role]?.includes(targetRole) || false;
 };
 userSchema.methods.updatePermissions = function (permissions, updatedBy) {
-  this.customPermissions = permissions;
+  this.customPermissions = (permissions || []).map((permission) =>
+    normalizePermissionKey(permission),
+  );
   this.permissionsUpdatedBy = updatedBy;
   this.permissionsUpdatedAt = new Date();
   this.updatedBy = updatedBy;
 };
 userSchema.methods.resetToDefaultPermissions = function (updatedBy) {
-  this.customPermissions =
-    this.resolvedRolePermissions || RolePermissions[this.role] || [];
+  this.customPermissions = [];
   this.permissionsUpdatedBy = updatedBy;
   this.permissionsUpdatedAt = new Date();
   this.updatedBy = updatedBy;
@@ -316,6 +334,8 @@ userSchema.set("toJSON", {
     delete ret.passwordResetExpires;
     delete ret.__v;
     ret.permissions = doc.getPermissions();
+    ret.roles = doc.roles || ret.roles || [];
+    ret.primaryRole = doc.role || null;
     return ret;
   },
 });
@@ -330,6 +350,8 @@ userSchema.set("toObject", {
     delete ret.passwordResetExpires;
     delete ret.__v;
     ret.permissions = doc.getPermissions();
+    ret.roles = doc.roles || ret.roles || [];
+    ret.primaryRole = doc.role || null;
     return ret;
   },
 });

@@ -11,9 +11,12 @@ const {
 } = require("../utils/emailService");
 const { Permissions } = require("../config/permissions");
 const {
-  getDefaultRolePermissions,
-  getEffectivePermissionsForUser,
+  assignRolesToUser,
+  expandPermissionEntries,
   hydrateUserPermissions,
+  normalizePermission,
+  resetUserCustomPermissions,
+  updateUserCustomPermissions,
 } = require("../utils/permissionSettings");
 const { normalizeTenantId } = require("../utils/tenantContext");
 const { signAccessToken } = require("../utils/authTokens");
@@ -59,6 +62,16 @@ const shapeAuthUser = (user = {}, { permissions } = {}) => ({
   name: user?.name || "",
   email: user?.email || "",
   role: user?.role || "",
+  roles: Array.isArray(user?.roles)
+    ? user.roles
+    : user?.role
+      ? [
+          {
+            key: user.role,
+            name: user.role,
+          },
+        ]
+      : [],
   tenantId: user?.tenantId || null,
   forcePasswordChange: Boolean(user?.forcePasswordChange),
   isActive: user?.isActive !== false,
@@ -74,6 +87,16 @@ const shapeStaffUser = (user = {}, { permissions } = {}) => ({
   email: user?.email || "",
   phone: user?.phone || "",
   role: user?.role || "",
+  roles: Array.isArray(user?.roles)
+    ? user.roles
+    : user?.role
+      ? [
+          {
+            key: user.role,
+            name: user.role,
+          },
+        ]
+      : [],
   isActive: user?.isActive !== false,
   forcePasswordChange: Boolean(user?.forcePasswordChange),
   createdAt: user?.createdAt || null,
@@ -129,21 +152,30 @@ exports.registerStaff = async (req, res) => {
       permissions.length > 0 &&
       requestingUser.hasPermission(Permissions.USER_MANAGE_PERMISSIONS)
     ) {
-      const allPermissions = Object.values(Permissions);
-      const invalidPermissions = permissions.filter(
-        (p) => !allPermissions.includes(p),
-      );
+      const normalizedPermissions = expandPermissionEntries(permissions);
+      const invalidPermissions = permissions.filter((permission) => {
+        const normalizedPermission = normalizePermission(permission);
+        return !normalizedPermission || !normalizedPermissions.includes(normalizedPermission);
+      });
       if (invalidPermissions.length > 0) {
         return res.status(400).json({
           success: false,
           message: `Invalid permissions: ${invalidPermissions.join(", ")}`,
         });
       }
-      userData.customPermissions = permissions;
-    } else {
-      userData.customPermissions = await getDefaultRolePermissions(role);
     }
     const user = await User.create(userData);
+    await assignRolesToUser(user, [role], {
+      assignedBy: requestingUser._id,
+    });
+    if (
+      permissions.length > 0 &&
+      requestingUser.hasPermission(Permissions.USER_MANAGE_PERMISSIONS)
+    ) {
+      await updateUserCustomPermissions(user, permissions, requestingUser._id);
+    } else {
+      await resetUserCustomPermissions(user, requestingUser._id);
+    }
     await hydrateUserPermissions(user);
     if (user) {
       const onboardingResetToken = user.getResetPasswordToken();
@@ -164,7 +196,7 @@ exports.registerStaff = async (req, res) => {
           (emailSent ? " and setup email sent" : " but email failed"),
         data: {
           ...shapeStaffUser(user, {
-            permissions: await getEffectivePermissionsForUser(user),
+            permissions: user.resolvedPermissions || [],
           }),
           emailSent,
         },
@@ -235,6 +267,7 @@ exports.loginStaff = async (req, res) => {
             "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL.",
         });
       }
+      await hydrateUserPermissions(user);
       const accessToken = signAccessToken(user);
       const refreshToken = user.generateRefreshToken();
       user.lastLogin = Date.now();
@@ -246,7 +279,9 @@ exports.loginStaff = async (req, res) => {
       res.status(200).json({
         success: true,
         message: "Login successful",
-        data: shapeAuthUser(user),
+        data: shapeAuthUser(user, {
+          permissions: user.resolvedPermissions || [],
+        }),
         accessToken,
         refreshToken,
       });
@@ -314,6 +349,7 @@ exports.refreshToken = async (req, res) => {
         message: "Invalid or expired refresh token. Please login again.",
       });
     }
+    await hydrateUserPermissions(user);
     const accessToken = signAccessToken(user);
     const rotatedRefreshToken = user.generateRefreshToken();
     await user.save({
@@ -325,7 +361,7 @@ exports.refreshToken = async (req, res) => {
       message: "Token refreshed successfully",
       data: {
         ...shapeAuthUser(user, {
-          permissions: await getEffectivePermissionsForUser(user),
+          permissions: user.resolvedPermissions || [],
         }),
         sessionId: user.sessionId,
       },
@@ -385,7 +421,7 @@ exports.getAllStaff = async (req, res) => {
     const skip = (pageNum - 1) * limitNum;
     const users = await User.find(query)
       .select(
-        "name email phone role isActive forcePasswordChange createdAt customPermissions",
+        "name email phone role tenantId isActive forcePasswordChange createdAt customPermissions",
       )
       .sort({
         createdAt: -1,
@@ -394,6 +430,14 @@ exports.getAllStaff = async (req, res) => {
       .limit(limitNum)
       .lean();
     const total = await User.countDocuments(query);
+    const hydratedUsers = await Promise.all(
+      users.map(async (user) => {
+        await hydrateUserPermissions(user);
+        return shapeStaffUser(user, {
+          permissions: user.resolvedPermissions || [],
+        });
+      }),
+    );
     res.status(200).json({
       success: true,
       count: users.length,
@@ -402,7 +446,7 @@ exports.getAllStaff = async (req, res) => {
         page: pageNum,
         pages: Math.ceil(total / limitNum),
       },
-      data: users.map((user) => shapeStaffUser(user)),
+      data: hydratedUsers,
     });
   } catch (error) {
     logger.error("Get all staff error:", error);
@@ -418,9 +462,12 @@ exports.getProfile = async (req, res) => {
     const user = await User.findById(req.user._id).select(
       "name email role tenantId forcePasswordChange isActive",
     );
+    await hydrateUserPermissions(user);
     res.status(200).json({
       success: true,
-      data: shapeAuthUser(user),
+      data: shapeAuthUser(user, {
+        permissions: user.resolvedPermissions || [],
+      }),
     });
   } catch (error) {
     logger.error("Get profile error:", error);
@@ -457,10 +504,13 @@ exports.updateProfile = async (req, res) => {
       new: true,
       runValidators: true,
     }).select("name email role tenantId forcePasswordChange isActive");
+    await hydrateUserPermissions(user);
     res.status(200).json({
       success: true,
       message: "Profile updated successfully",
-      data: shapeAuthUser(user),
+      data: shapeAuthUser(user, {
+        permissions: user.resolvedPermissions || [],
+      }),
     });
   } catch (error) {
     logger.error("Update profile error:", error);
@@ -694,6 +744,7 @@ exports.toggleStaffStatus = async (req, res) => {
     targetUser.isActive = isActive;
     targetUser.updatedBy = req.user._id;
     await targetUser.save();
+    await hydrateUserPermissions(targetUser);
     if (!isActive) {
       targetUser.clearRefreshToken();
       await targetUser.save({
@@ -704,7 +755,7 @@ exports.toggleStaffStatus = async (req, res) => {
       success: true,
       message: `User ${isActive ? "activated" : "deactivated"} successfully`,
       data: shapeStaffUser(targetUser, {
-        permissions: await getEffectivePermissionsForUser(targetUser),
+        permissions: targetUser.resolvedPermissions || [],
       }),
     });
   } catch (error) {
@@ -797,11 +848,12 @@ exports.getUserById = async (req, res) => {
         message: "Not authorized to view this user",
       });
     }
+    await hydrateUserPermissions(user);
     res.status(200).json({
       success: true,
       data: {
         ...user.toObject(),
-        permissions: await getEffectivePermissionsForUser(user),
+        permissions: user.resolvedPermissions || [],
       },
     });
   } catch (error) {
@@ -857,18 +909,23 @@ exports.updateUserRole = async (req, res) => {
     const wasActive = targetUser.isActive;
     const currentStatus = targetUser.status || "active";
     targetUser.role = role;
-    targetUser.customPermissions = await getDefaultRolePermissions(role);
+    targetUser.customPermissions = [];
     targetUser.updatedBy = req.user._id;
     targetUser.isActive = wasActive;
     if (targetUser.status) {
       targetUser.status = currentStatus;
     }
     await targetUser.save();
+    await assignRolesToUser(targetUser, [role], {
+      assignedBy: req.user._id,
+    });
+    await resetUserCustomPermissions(targetUser, req.user._id);
+    await hydrateUserPermissions(targetUser);
     res.status(200).json({
       success: true,
       message: `User role updated to ${role} successfully`,
       data: shapeStaffUser(targetUser, {
-        permissions: await getEffectivePermissionsForUser(targetUser),
+        permissions: targetUser.resolvedPermissions || [],
       }),
     });
   } catch (error) {

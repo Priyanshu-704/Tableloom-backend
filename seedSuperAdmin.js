@@ -8,6 +8,10 @@ const {
   passwordPolicyMessage,
   validatePasswordStrength,
 } = require("./utils/passwordPolicy");
+const {
+  assignRolesToUser,
+  ensureDefaultRbacSeedData,
+} = require("./utils/permissionSettings");
 
 const DEFAULT_SUPER_ADMIN = {
   name: "Platform Super Admin",
@@ -48,6 +52,10 @@ const createSuperAdminUser = async () => {
       ],
     });
     if (existingSuperAdmin) {
+      await ensureDefaultRbacSeedData();
+      await assignRolesToUser(existingSuperAdmin, ["super_admin"], {
+        assignedBy: existingSuperAdmin._id,
+      });
       logger.info("super admin already exists:");
       logger.info({
         id: existingSuperAdmin._id,
@@ -65,6 +73,10 @@ const createSuperAdminUser = async () => {
       tenantId: null,
       isActive: true,
       forcePasswordChange: false,
+    });
+    await ensureDefaultRbacSeedData();
+    await assignRolesToUser(superAdmin, ["super_admin"], {
+      assignedBy: superAdmin._id,
     });
     logger.info("Super admin created successfully.");
     logger.info({

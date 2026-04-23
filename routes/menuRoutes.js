@@ -45,24 +45,24 @@ router.get("/items/seasonal", getSeasonalItems);
 router.get("/items/:id", getMenuItem);
 router.get("/items", optionalAuth, getMenuItems);
 router.use(protect);
-router.get("/sizes", hasPermission("MENU_VIEW_ALL"), getSizes);
-router.post("/sizes", hasPermission("MENU_EDIT"), createSize);
-router.put("/sizes/:id", hasPermission("MENU_EDIT"), updateSize);
+router.get("/sizes", hasPermission("MENU_SIZE_VIEW"), getSizes);
+router.post("/sizes", hasPermission("MENU_SIZE_CREATE"), createSize);
+router.put("/sizes/:id", hasPermission("MENU_SIZE_EDIT"), updateSize);
 router.patch(
   "/sizes/:id/toggle-status",
-  hasPermission("MENU_EDIT"),
+  hasPermission("MENU_SIZE_TOGGLE_STATUS"),
   toggleSizeStatus,
 );
-router.post("/coupons", hasPermission("MENU_EDIT"), createCoupon);
-router.put("/coupons/:id", hasPermission("MENU_EDIT"), updateCoupon);
+router.post("/coupons", hasPermission("MENU_DISCOUNT_CREATE"), createCoupon);
+router.put("/coupons/:id", hasPermission("MENU_DISCOUNT_EDIT"), updateCoupon);
 router.patch(
   "/coupons/:id/toggle-status",
-  hasPermission("MENU_EDIT"),
+  hasPermission("MENU_DISCOUNT_TOGGLE_STATUS"),
   toggleCouponStatus,
 );
 router.post(
   "/categories",
-  hasPermission("MENU_CREATE"),
+  hasPermission("MENU_CATEGORY_CREATE"),
   createImageUploadHandler({
     folder: "images/categories",
   }),
@@ -71,7 +71,7 @@ router.post(
 );
 router.put(
   "/categories/:id",
-  hasPermission("MENU_EDIT"),
+  hasPermission("MENU_CATEGORY_EDIT"),
   createImageUploadHandler({
     folder: "images/categories",
   }),
@@ -83,7 +83,11 @@ router.put(
   hasPermission("CATEGORY_TOGGLE_STATUS"),
   toggleCategoryStatus,
 );
-router.delete("/categories/:id", hasPermission("MENU_DELETE"), deleteCategory);
+router.delete(
+  "/categories/:id",
+  hasPermission("MENU_CATEGORY_DELETE"),
+  deleteCategory,
+);
 router.post(
   "/items",
   hasPermission("MENU_CREATE"),
