@@ -5,6 +5,7 @@ const User = require("../models/User");
 const notificationManager = require("./notificationManager");
 const socketManager = require("./socketManager");
 const { getOrSetCache, clearCache } = require("./responseCache");
+const { buildResourceTag, normalizeTenantTag } = require("./cacheTags");
 const { getCurrentTenantId } = require("./tenantContext");
 const ACTIVE_SESSION_STATUSES = ["active", "payment_pending"];
 const ACTIVE_CALL_STATUSES = [
@@ -17,6 +18,12 @@ const WAITER_CALL_CACHE_PREFIX = "waiter-call:";
 const WAITER_CALL_LIST_CACHE_TTL_MS = 8 * 1000;
 const WAITER_CALL_STATS_CACHE_TTL_MS = 10 * 1000;
 const WAITER_CALL_DASHBOARD_CACHE_TTL_MS = 8 * 1000;
+const getWaiterCallCacheTags = (tenantId = null) => [
+  normalizeTenantTag(tenantId || "default"),
+  buildResourceTag("waiter-calls"),
+  buildResourceTag("dashboard"),
+  buildResourceTag("reports"),
+];
 const getDateRange = (options = "today") => {
   const normalizedOptions =
     typeof options === "string"
@@ -482,6 +489,9 @@ exports.getPendingCalls = async (filters = {}) => {
             createdAt: 1,
           })
           .lean(),
+      {
+        tags: getWaiterCallCacheTags(getCurrentTenantId()),
+      },
     );
   } catch (error) {
     logger.error("Get pending calls failed:", error);
@@ -508,6 +518,9 @@ exports.getActiveCalls = async () => {
             createdAt: -1,
           })
           .lean(),
+      {
+        tags: getWaiterCallCacheTags(getCurrentTenantId()),
+      },
     );
   } catch (error) {
     logger.error("Get active calls failed:", error);
@@ -538,6 +551,9 @@ exports.getSessionActiveCalls = async (sessionId) => {
             createdAt: -1,
           })
           .lean(),
+      {
+        tags: getWaiterCallCacheTags(getCurrentTenantId()),
+      },
     );
   } catch (error) {
     logger.error("Get session active calls failed:", error);
@@ -674,6 +690,9 @@ exports.getCallStatistics = async (options = "today") => {
           period: periodLabel,
         };
       },
+      {
+        tags: getWaiterCallCacheTags(getCurrentTenantId()),
+      },
     );
   } catch (error) {
     logger.error("Get call statistics failed:", error);
@@ -777,6 +796,9 @@ exports.getCallDashboard = async () => {
           recentCompleted,
           lastUpdated: new Date(),
         };
+      },
+      {
+        tags: getWaiterCallCacheTags(getCurrentTenantId()),
       },
     );
   } catch (error) {

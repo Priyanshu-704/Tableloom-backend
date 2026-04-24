@@ -11,6 +11,10 @@ const {
   generateExportData,
 } = require("../utils/csvProcessor");
 const { getOrSetCache, clearCache } = require("../utils/responseCache");
+const {
+  buildResourceTag,
+  normalizeTenantTag,
+} = require("../utils/cacheTags");
 require("dotenv").config({
   quiet: true,
 });
@@ -25,6 +29,10 @@ const MENU_FILTERS_CACHE_TTL_MS = 30 * 1000;
 const MENU_CATEGORIES_CACHE_TTL_MS = 20 * 1000;
 const MENU_SIZES_CACHE_TTL_MS = 30 * 1000;
 const invalidateMenuReadCaches = () => clearCache(MENU_CACHE_PREFIX);
+const getMenuCacheTags = (tenantId) => [
+  normalizeTenantTag(tenantId),
+  buildResourceTag("menu"),
+];
 const isAdminMenuRequest = (req) =>
   Boolean(
     req.user &&
@@ -337,6 +345,9 @@ exports.getSizes = async (req, res) => {
             name: 1,
           })
           .lean(),
+      {
+        tags: getMenuCacheTags(req.tenantId || "public"),
+      },
     );
     res.status(200).json({
       success: true,
@@ -559,6 +570,9 @@ exports.getCategories = async (req, res) => {
         return categoryRows.map((category) =>
           shapeCategoryForResponse(req, category, includeStation),
         );
+      },
+      {
+        tags: getMenuCacheTags(req.tenantId || "public"),
       },
     );
     res.status(200).json({
@@ -1241,6 +1255,9 @@ exports.getMenuItems = async (req, res) => {
           ),
         };
       },
+      {
+        tags: getMenuCacheTags(req.tenantId || "public"),
+      },
     );
     return res.status(200).json(payload);
   } catch (error) {
@@ -1416,6 +1433,9 @@ exports.getMenuFilterOptions = async (req, res) => {
             glutenFree: 0,
           },
         };
+      },
+      {
+        tags: getMenuCacheTags(req.tenantId || "public"),
       },
     );
     return res.status(200).json({

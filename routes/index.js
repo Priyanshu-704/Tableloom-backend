@@ -4,6 +4,14 @@ const {
   requireTenantScope,
   enforceSuperAdminTenantReadOnly,
 } = require("../middleware/tenant");
+const {
+  mutationCacheInvalidationMiddleware,
+  responseCacheMiddleware,
+} = require("../middleware/responseCache");
+
+router.use(mutationCacheInvalidationMiddleware);
+router.use(responseCacheMiddleware);
+
 router.use("/tenants", require("./tenantRoutes"));
 router.use("/users", require("./userRoutes"));
 router.use("/permissions", require("./permissionRoutes"));

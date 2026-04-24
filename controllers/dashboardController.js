@@ -5,8 +5,16 @@ const Customer = require("../models/Customer");
 const WaiterCall = require("../models/WaiterCall");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const { getOrSetCache } = require("../utils/responseCache");
+const {
+  buildResourceTag,
+  normalizeTenantTag,
+} = require("../utils/cacheTags");
 const feedbackManager = require("../utils/feedbackManager");
 const DASHBOARD_OVERVIEW_CACHE_TTL_MS = 15 * 1000;
+const getDashboardCacheTags = (tenantId) => [
+  normalizeTenantTag(tenantId),
+  buildResourceTag("dashboard"),
+];
 const buildCustomerAnalytics = async (rangeStart, rangeEnd) => {
   const analytics = await Customer.aggregate([
     {
@@ -402,6 +410,9 @@ exports.getAdminDashboard = async (req, res) => {
             lastUpdated: new Date(),
           },
         };
+      },
+      {
+        tags: getDashboardCacheTags(req.tenantId || "default"),
       },
     );
     return sendSuccess(res, 200, null, data);

@@ -10,6 +10,9 @@ const MAX_CACHE_ENTRIES = Math.max(
 );
 let sweepTimer = null;
 
+const normalizeTags = (tags = []) =>
+  [...new Set((Array.isArray(tags) ? tags : [tags]).filter(Boolean))];
+
 const cleanupExpiredEntries = (now = Date.now()) => {
   for (const [key, entry] of cacheStore.entries()) {
     if (!entry || entry.expiresAt <= now) {
@@ -53,45 +56,86 @@ const getCacheEntry = (key) => {
   cacheStore.set(key, entry);
   return entry.value;
 };
-const setCacheEntry = (key, value, ttlMs = DEFAULT_CACHE_TTL_MS) => {
+const setCacheEntry = (
+  key,
+  value,
+  ttlMs = DEFAULT_CACHE_TTL_MS,
+  options = {},
+) => {
   ensureSweepTimer();
   cleanupExpiredEntries();
+  const tags = normalizeTags(options.tags);
   if (cacheStore.has(key)) {
     cacheStore.delete(key);
   }
   cacheStore.set(key, {
     value,
     expiresAt: Date.now() + ttlMs,
+    tags,
   });
   evictOverflowEntries();
   return value;
 };
-const getOrSetCache = async (key, ttlMs, factory) => {
+const getOrSetCache = async (key, ttlMs, factory, options = {}) => {
   const cached = getCacheEntry(key);
   if (cached !== null) {
     return cached;
   }
   const value = await factory();
-  return setCacheEntry(key, value, ttlMs);
+  return setCacheEntry(key, value, ttlMs, options);
 };
 const clearCache = (matcher = null) => {
   if (!matcher) {
     cacheStore.clear();
     return;
   }
+
+  const normalizedTags =
+    matcher &&
+    typeof matcher === "object" &&
+    !Array.isArray(matcher) &&
+    !(matcher instanceof RegExp)
+      ? normalizeTags(matcher.tags)
+      : [];
+
+  const normalizedMatcher =
+    matcher &&
+    typeof matcher === "object" &&
+    !Array.isArray(matcher) &&
+    !(matcher instanceof RegExp)
+      ? matcher.matcher || null
+      : matcher;
+
   for (const key of cacheStore.keys()) {
+    const entry = cacheStore.get(key);
+    const matchesTags =
+      normalizedTags.length > 0 &&
+      normalizedTags.some((tag) => entry?.tags?.includes(tag));
     const matches =
-      typeof matcher === "function"
-        ? matcher(key)
-        : String(key).includes(String(matcher));
+      matchesTags ||
+      (typeof normalizedMatcher === "function"
+        ? normalizedMatcher(key, entry)
+        : normalizedMatcher instanceof RegExp
+          ? normalizedMatcher.test(String(key))
+          : String(key).includes(String(normalizedMatcher)));
     if (matches) {
       cacheStore.delete(key);
     }
   }
+};
+const clearCacheByTags = (tags = []) => {
+  const normalizedTags = normalizeTags(tags);
+  if (normalizedTags.length === 0) {
+    return;
+  }
+  clearCache({
+    tags: normalizedTags,
+  });
 };
 module.exports = {
   getCacheEntry,
   setCacheEntry,
   getOrSetCache,
   clearCache,
+  clearCacheByTags,
 };

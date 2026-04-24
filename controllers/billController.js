@@ -9,6 +9,10 @@ const {
   sendSuccess,
 } = require("../utils/httpResponse");
 const { getOrSetCache } = require("../utils/responseCache");
+const {
+  buildResourceTag,
+  normalizeTenantTag,
+} = require("../utils/cacheTags");
 require("dotenv").config({
   quiet: true,
 });
@@ -16,6 +20,12 @@ const BILL_CACHE_PREFIX = "bill:";
 const BILL_LIST_CACHE_TTL_MS = 15 * 1000;
 const BILL_STATS_CACHE_TTL_MS = 20 * 1000;
 const OFFLINE_PAYMENT_METHODS = new Set(["cash", "card", "upi", "wallet"]);
+const getBillCacheTags = (tenantId) => [
+  normalizeTenantTag(tenantId),
+  buildResourceTag("bills"),
+  buildResourceTag("dashboard"),
+  buildResourceTag("reports"),
+];
 
 const normalizeOfflinePaymentMethod = (value = "") =>
   String(value || "")
@@ -513,6 +523,9 @@ exports.getBillsAdmin = async (req, res) => {
           },
         };
       },
+      {
+        tags: getBillCacheTags(req.tenantId || "default"),
+      },
     );
     return sendPaginated(res, 200, cached.data, cached.pagination);
   } catch (error) {
@@ -599,6 +612,9 @@ exports.getBillStatistics = async (req, res) => {
           todayRevenue: todayRevenue[0]?.total || 0,
           monthlyRevenue: monthlyRevenue[0]?.total || 0,
         };
+      },
+      {
+        tags: getBillCacheTags(req.tenantId || "default"),
       },
     );
     return sendSuccess(res, 200, null, data);

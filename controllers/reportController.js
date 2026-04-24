@@ -5,6 +5,10 @@ const {
 } = require("../utils/reportGenerator");
 const { logger } = require("../utils/logger");
 const { getOrSetCache } = require("../utils/responseCache");
+const {
+  buildResourceTag,
+  normalizeTenantTag,
+} = require("../utils/cacheTags");
 const Order = require("../models/Order");
 const Customer = require("../models/Customer");
 const Feedback = require("../models/Feedback");
@@ -14,6 +18,10 @@ const WaiterCall = require("../models/WaiterCall");
 const KitchenOrder = require("../models/KitchenOrder");
 const feedbackManager = require("../utils/feedbackManager");
 const REPORT_DATASET_CACHE_TTL_MS = 15 * 1000;
+const getReportCacheTags = (tenantId) => [
+  normalizeTenantTag(tenantId),
+  buildResourceTag("reports"),
+];
 const normalizeReportType = (value = "analytics") => {
   const normalized = String(value || "analytics")
     .trim()
@@ -888,30 +896,37 @@ const buildReportDataset = async (
   tenantId,
 ) => {
   const cacheKey = `reports:${tenantId || "default"}:${reportType}:${rangeStart.toISOString()}:${rangeEnd.toISOString()}`;
-  return getOrSetCache(cacheKey, REPORT_DATASET_CACHE_TTL_MS, async () => {
-    if (reportType === "finance") {
-      return buildFinanceDataset(rangeStart, rangeEnd);
-    }
-    const [orders, sessions, kitchen, feedback, menu, tables, waiterCalls] =
-      await Promise.all([
-        buildOrderStatisticsDataset(rangeStart, rangeEnd),
-        buildSessionAnalyticsDataset(rangeStart, rangeEnd),
-        buildKitchenAnalyticsDataset(rangeStart, rangeEnd),
-        buildFeedbackDataset(rangeStart, rangeEnd),
-        buildMenuDataset(),
-        buildTableDataset(),
-        buildWaiterDataset(rangeStart, rangeEnd),
-      ]);
-    return {
-      orders,
-      sessions,
-      kitchen,
-      feedback,
-      menu,
-      tables,
-      waiterCalls,
-    };
-  });
+  return getOrSetCache(
+    cacheKey,
+    REPORT_DATASET_CACHE_TTL_MS,
+    async () => {
+      if (reportType === "finance") {
+        return buildFinanceDataset(rangeStart, rangeEnd);
+      }
+      const [orders, sessions, kitchen, feedback, menu, tables, waiterCalls] =
+        await Promise.all([
+          buildOrderStatisticsDataset(rangeStart, rangeEnd),
+          buildSessionAnalyticsDataset(rangeStart, rangeEnd),
+          buildKitchenAnalyticsDataset(rangeStart, rangeEnd),
+          buildFeedbackDataset(rangeStart, rangeEnd),
+          buildMenuDataset(),
+          buildTableDataset(),
+          buildWaiterDataset(rangeStart, rangeEnd),
+        ]);
+      return {
+        orders,
+        sessions,
+        kitchen,
+        feedback,
+        menu,
+        tables,
+        waiterCalls,
+      };
+    },
+    {
+      tags: getReportCacheTags(tenantId || "default"),
+    },
+  );
 };
 exports.generateAnalyticsReportFile = async (req, res) => {
   try {

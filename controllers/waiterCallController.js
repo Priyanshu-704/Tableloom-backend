@@ -3,6 +3,10 @@ const waiterCallManager = require("../utils/waiterCallManager");
 const WaiterCall = require("../models/WaiterCall");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const { getOrSetCache } = require("../utils/responseCache");
+const {
+  buildResourceTag,
+  normalizeTenantTag,
+} = require("../utils/cacheTags");
 const parsePagination = (page, limit) => {
   const pageNum = Math.max(parseInt(page || 1, 10), 1);
   const limitNum = Math.min(Math.max(parseInt(limit || 20, 10), 1), 100);
@@ -32,6 +36,12 @@ const handleCallError = (res, error, fallbackMessage) => {
     process.env.NODE_ENV === "development" ? error.message : undefined,
   );
 };
+const getWaiterCallCacheTags = (tenantId) => [
+  normalizeTenantTag(tenantId),
+  buildResourceTag("waiter-calls"),
+  buildResourceTag("dashboard"),
+  buildResourceTag("reports"),
+];
 const shapeCallStaff = (staff = null) =>
   staff
     ? {
@@ -260,60 +270,67 @@ exports.getAllCalls = async (req, res) => {
       if (endDate) query.createdAt.$lte = new Date(endDate);
     }
     const cacheKey = `waiter-call:list:${req.tenantId || "default"}:${req.originalUrl}`;
-    const payload = await getOrSetCache(cacheKey, 8000, async () => {
-      let callsQuery = WaiterCall.find(query)
-        .populate("table", "tableNumber tableName location coordinates")
-        .populate("customer", "name phone")
-        .populate("acknowledgedBy", "name role profileImage")
-        .populate("assignedTo", "name role")
-        .populate("startedBy", "name role")
-        .populate("completedBy", "name role")
-        .populate("assignedBy", "name role")
-        .sort({
-          createdAt: -1,
-        })
-        .lean();
-      if (!search) {
-        callsQuery = callsQuery.skip(skip).limit(limitNum);
-      }
-      let calls = await callsQuery;
-      if (search) {
-        const keyword = search.trim().toLowerCase();
-        calls = calls.filter(
-          (call) =>
-            String(call.callId || "")
-              .toLowerCase()
-              .includes(keyword) ||
-            String(call.table?.tableNumber || call.tableNumber || "")
-              .toLowerCase()
-              .includes(keyword) ||
-            String(call.customer?.name || call.customerName || "")
-              .toLowerCase()
-              .includes(keyword) ||
-            String(call.message || "")
-              .toLowerCase()
-              .includes(keyword) ||
-            String(call.location || call.table?.location || "")
-              .toLowerCase()
-              .includes(keyword),
-        );
-      }
-      const total = search
-        ? calls.length
-        : await WaiterCall.countDocuments(query);
-      const paginatedCalls = search
-        ? calls.slice(skip, skip + limitNum)
-        : calls;
-      return {
-        data: paginatedCalls.map((call) => shapeWaiterCall(call)),
-        count: paginatedCalls.length,
-        total,
-        pagination: {
-          page: pageNum,
-          pages: Math.ceil(total / limitNum),
-        },
-      };
-    });
+    const payload = await getOrSetCache(
+      cacheKey,
+      8000,
+      async () => {
+        let callsQuery = WaiterCall.find(query)
+          .populate("table", "tableNumber tableName location coordinates")
+          .populate("customer", "name phone")
+          .populate("acknowledgedBy", "name role profileImage")
+          .populate("assignedTo", "name role")
+          .populate("startedBy", "name role")
+          .populate("completedBy", "name role")
+          .populate("assignedBy", "name role")
+          .sort({
+            createdAt: -1,
+          })
+          .lean();
+        if (!search) {
+          callsQuery = callsQuery.skip(skip).limit(limitNum);
+        }
+        let calls = await callsQuery;
+        if (search) {
+          const keyword = search.trim().toLowerCase();
+          calls = calls.filter(
+            (call) =>
+              String(call.callId || "")
+                .toLowerCase()
+                .includes(keyword) ||
+              String(call.table?.tableNumber || call.tableNumber || "")
+                .toLowerCase()
+                .includes(keyword) ||
+              String(call.customer?.name || call.customerName || "")
+                .toLowerCase()
+                .includes(keyword) ||
+              String(call.message || "")
+                .toLowerCase()
+                .includes(keyword) ||
+              String(call.location || call.table?.location || "")
+                .toLowerCase()
+                .includes(keyword),
+          );
+        }
+        const total = search
+          ? calls.length
+          : await WaiterCall.countDocuments(query);
+        const paginatedCalls = search
+          ? calls.slice(skip, skip + limitNum)
+          : calls;
+        return {
+          data: paginatedCalls.map((call) => shapeWaiterCall(call)),
+          count: paginatedCalls.length,
+          total,
+          pagination: {
+            page: pageNum,
+            pages: Math.ceil(total / limitNum),
+          },
+        };
+      },
+      {
+        tags: getWaiterCallCacheTags(req.tenantId || "default"),
+      },
+    );
     return sendSuccess(res, 200, null, payload.data, {
       count: payload.count,
       total: payload.total,

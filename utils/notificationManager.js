@@ -1,54 +1,100 @@
 const { logger } = require("./logger.js");
-const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
 const { getCurrentTenantId } = require("./tenantContext");
+const {
+  hydrateUserPermissions,
+  normalizeRoleKey,
+  userHasAnyPermission,
+  userHasPermission,
+} = require("./permissionSettings");
 
-const ALL_NOTIFICATION_TYPES = Object.freeze([
-  "waiter_call",
-  "order_ready",
-  "order_delayed",
-  "payment_request",
-  "payment_received",
-  "table_assigned",
-  "customer_checkin",
-  "customer_checkout",
-  "inventory_low",
-  "reservation_alert",
-  "system_alert",
-  "staff_announcement",
-  "rating_received",
-  "shift_change",
-  "task_assigned",
-]);
-
-const NOTIFICATION_TYPES_BY_ROLE = Object.freeze({
-  waiter: [
-    "waiter_call",
-    "order_ready",
-    "payment_request",
-    "table_assigned",
-    "customer_checkout",
-    "reservation_alert",
-    "staff_announcement",
-    "shift_change",
-    "task_assigned",
-  ],
-  chef: [
-    "system_alert",
-    "order_delayed",
-    "staff_announcement",
-    "shift_change",
-    "task_assigned",
-  ],
-  manager: ALL_NOTIFICATION_TYPES,
-  admin: ALL_NOTIFICATION_TYPES,
-  super_admin: ALL_NOTIFICATION_TYPES,
+const PERMISSION_GROUPS = Object.freeze({
+  waiterCall: Object.freeze([
+    "waiter_call.view_all",
+    "waiter_call.acknowledge",
+    "waiter_call.complete",
+    "waiter_call.assign",
+    "waiter_call.statistics",
+  ]),
+  order: Object.freeze([
+    "order.view_all",
+    "order.update",
+    "order.update_status",
+    "order.update_item_status",
+  ]),
+  kitchen: Object.freeze([
+    "kitchen.view_dashboard",
+    "kitchen.accept_order",
+    "kitchen.start_preparing",
+    "kitchen.mark_ready",
+    "kitchen.mark_served",
+    "order.update_item_status",
+  ]),
+  payment: Object.freeze(["order.process_payment", "order.view_all"]),
+  tableService: Object.freeze([
+    "table.view_all",
+    "table.update_status",
+    "session.view_all",
+    "session.update",
+    "session.complete_offline",
+    "session.cancel",
+  ]),
+  inventory: Object.freeze([
+    "inventory.view_all",
+    "inventory.adjust",
+    "inventory.edit",
+    "inventory.statistics",
+  ]),
+  menu: Object.freeze([
+    "menu.view_all",
+    "menu.edit",
+    "menu.toggle_availability",
+  ]),
+  notifications: Object.freeze(["notification.view"]),
 });
 
-const getAllowedNotificationTypesForRole = (role) =>
-  NOTIFICATION_TYPES_BY_ROLE[String(role || "").trim().toLowerCase()] || [];
+const ROLE_AUDIENCE_PERMISSIONS = Object.freeze({
+  waiter: Object.freeze([
+    ...PERMISSION_GROUPS.waiterCall,
+    ...PERMISSION_GROUPS.order,
+    ...PERMISSION_GROUPS.payment,
+    ...PERMISSION_GROUPS.tableService,
+  ]),
+  chef: Object.freeze([
+    ...PERMISSION_GROUPS.kitchen,
+    ...PERMISSION_GROUPS.menu,
+    ...PERMISSION_GROUPS.inventory,
+  ]),
+  cashier: Object.freeze([...PERMISSION_GROUPS.payment]),
+  expediter: Object.freeze([
+    ...PERMISSION_GROUPS.order,
+    ...PERMISSION_GROUPS.kitchen,
+  ]),
+});
+
+const normalizeRoles = (roles = []) =>
+  [...new Set((roles || []).map((role) => normalizeRoleKey(role)).filter(Boolean))];
+
+const getUserRoleKeys = (user = {}) => {
+  const explicitRoles = Array.isArray(user?.roles)
+    ? user.roles.map((role) => normalizeRoleKey(role?.key || role))
+    : [];
+  const roleKeys = Array.isArray(user?.roleKeys) ? user.roleKeys : [];
+  return [
+    ...new Set(
+      [...explicitRoles, ...roleKeys, normalizeRoleKey(user?.role)].filter(
+        Boolean,
+      ),
+    ),
+  ];
+};
+
+const hasAnyPathFragment = (actions = [], fragments = []) =>
+  fragments.some((fragment) =>
+    actions.some((action) => String(action || "").includes(fragment)),
+  );
 
 class NotificationManager {
   constructor() {
@@ -110,6 +156,221 @@ class NotificationManager {
     }
     return data.metadata?.tenantId || getCurrentTenantId() || null;
   }
+  getAudiencePermissions(notification = {}) {
+    const permissions = new Set();
+    const normalizedRoles = normalizeRoles(notification.roles);
+    normalizedRoles.forEach((role) => {
+      (ROLE_AUDIENCE_PERMISSIONS[role] || []).forEach((permission) =>
+        permissions.add(permission),
+      );
+    });
+
+    const type = String(notification.type || "").trim().toLowerCase();
+    const relatedModel = String(notification.relatedModel || "").trim();
+    const actions = Array.isArray(notification.actions)
+      ? notification.actions.map((action) => String(action?.action || "").trim())
+      : [];
+
+    if (type === "waiter_call") {
+      PERMISSION_GROUPS.waiterCall.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (type === "order_ready") {
+      [...PERMISSION_GROUPS.order, ...PERMISSION_GROUPS.kitchen].forEach(
+        (permission) => permissions.add(permission),
+      );
+    }
+    if (type === "order_delayed") {
+      [...PERMISSION_GROUPS.order, ...PERMISSION_GROUPS.kitchen].forEach(
+        (permission) => permissions.add(permission),
+      );
+    }
+    if (type === "payment_request" || type === "payment_received") {
+      PERMISSION_GROUPS.payment.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (
+      ["table_assigned", "customer_checkin", "customer_checkout", "reservation_alert"].includes(
+        type,
+      )
+    ) {
+      PERMISSION_GROUPS.tableService.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (type === "inventory_low") {
+      PERMISSION_GROUPS.inventory.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (
+      ["staff_announcement", "shift_change", "task_assigned", "rating_received"].includes(
+        type,
+      )
+    ) {
+      PERMISSION_GROUPS.notifications.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+
+    if (relatedModel === "KitchenOrder" || hasAnyPathFragment(actions, ["/kitchen"])) {
+      PERMISSION_GROUPS.kitchen.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (relatedModel === "Order" || hasAnyPathFragment(actions, ["/orders"])) {
+      PERMISSION_GROUPS.order.forEach((permission) => permissions.add(permission));
+    }
+    if (relatedModel === "Bill" || hasAnyPathFragment(actions, ["/bills"])) {
+      PERMISSION_GROUPS.payment.forEach((permission) =>
+        permissions.add(permission),
+      );
+    }
+    if (
+      relatedModel === "Table" ||
+      hasAnyPathFragment(actions, ["/tables", "/reservations", "/waiter-calls"])
+    ) {
+      [...PERMISSION_GROUPS.tableService, ...PERMISSION_GROUPS.waiterCall].forEach(
+        (permission) => permissions.add(permission),
+      );
+    }
+    if (
+      relatedModel === "Inventory" ||
+      hasAnyPathFragment(actions, ["/inventory", "/menu"])
+    ) {
+      [...PERMISSION_GROUPS.inventory, ...PERMISSION_GROUPS.menu].forEach(
+        (permission) => permissions.add(permission),
+      );
+    }
+
+    return [...permissions];
+  }
+  async hydrateNotificationUser(userId) {
+    const user = await User.findById(userId).select(
+      "_id role tenantId customPermissions isActive",
+    );
+    if (!user) {
+      throw new Error("User not found");
+    }
+    await hydrateUserPermissions(user);
+    return user;
+  }
+  canUserAccessNotification(user, notification = {}) {
+    if (!user || notification.customerSessionId) {
+      return false;
+    }
+
+    const normalizedUserId = String(user?._id || user?.id || "");
+    const hiddenForUsers = Array.isArray(notification.hiddenFor)
+      ? notification.hiddenFor.map((entry) => String(entry?.user || ""))
+      : [];
+    if (hiddenForUsers.includes(normalizedUserId)) {
+      return false;
+    }
+    const explicitRecipients = Array.isArray(notification.recipients)
+      ? notification.recipients.map((recipient) => String(recipient))
+      : [];
+    if (explicitRecipients.includes(normalizedUserId)) {
+      return true;
+    }
+
+    const recipientType = String(notification.recipientType || "").trim();
+    if (recipientType === "user") {
+      return false;
+    }
+    if (recipientType === "all") {
+      return userHasPermission(user, "notification.view");
+    }
+    if (recipientType !== "role") {
+      return false;
+    }
+
+    const notificationRoles = normalizeRoles(notification.roles);
+    const userRoles = getUserRoleKeys(user);
+    if (notificationRoles.some((role) => userRoles.includes(role))) {
+      return true;
+    }
+    if (notificationRoles.includes("super_admin")) {
+      return false;
+    }
+
+    const audiencePermissions = this.getAudiencePermissions(notification);
+    return (
+      audiencePermissions.length > 0 && userHasAnyPermission(user, audiencePermissions)
+    );
+  }
+  async resolveNotificationRecipients(data = {}) {
+    if (data.customerSessionId) {
+      return [];
+    }
+
+    const recipientType = String(data.recipientType || "all").trim();
+    const explicitRecipients = [
+      ...new Set(
+        (data.recipients || [])
+          .map((recipient) => String(recipient || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+
+    if (recipientType === "user") {
+      return explicitRecipients;
+    }
+
+    if (!["role", "all"].includes(recipientType)) {
+      return explicitRecipients;
+    }
+
+    const tenantId = this.resolveTenantId(data);
+    const userQuery = {
+      isActive: true,
+      role: {
+        $nin: ["customer", "user"],
+      },
+    };
+    if (tenantId) {
+      userQuery.tenantId = tenantId;
+    }
+
+    const candidateUsers = await User.find(userQuery).select(
+      "_id role tenantId customPermissions isActive",
+    );
+    const hydratedUsers = await Promise.all(
+      candidateUsers.map(async (user) => {
+        await hydrateUserPermissions(user);
+        return user;
+      }),
+    );
+
+    return hydratedUsers
+      .filter((user) => this.canUserAccessNotification(user, data))
+      .map((user) => user._id);
+  }
+  buildNotificationCandidateQuery(userId) {
+    return {
+      $or: [
+        {
+          recipients: userId,
+        },
+        {
+          recipientType: "role",
+        },
+        {
+          recipientType: "all",
+        },
+      ],
+      "hiddenFor.user": {
+        $ne: userId,
+      },
+    };
+  }
+  filterNotificationsForUser(user, notifications = []) {
+    return notifications.filter((notification) =>
+      this.canUserAccessNotification(user, notification),
+    );
+  }
   normalizeActions(actions = []) {
     if (!Array.isArray(actions)) {
       return [];
@@ -144,32 +405,8 @@ class NotificationManager {
       })
       .filter(Boolean);
   }
-  buildRecipientQuery(userId, role) {
-    const query = {
-      $or: [
-        {
-          recipientType: "user",
-          recipients: userId,
-        },
-        {
-          recipientType: "role",
-          roles: role,
-        },
-        {
-          recipientType: "all",
-        },
-      ],
-      "hiddenFor.user": {
-        $ne: userId,
-      },
-    };
-    const allowedTypes = getAllowedNotificationTypesForRole(role);
-    if (allowedTypes.length > 0) {
-      query.type = {
-        $in: allowedTypes,
-      };
-    }
-    return query;
+  buildRecipientQuery(userId) {
+    return this.buildNotificationCandidateQuery(userId);
   }
   buildSessionQuery(sessionId) {
     return {
@@ -179,10 +416,10 @@ class NotificationManager {
       },
     };
   }
-  buildUserNotificationActionQuery(notificationId, userId, role) {
+  buildUserNotificationActionQuery(notificationId, userId) {
     return {
       _id: notificationId,
-      ...this.buildRecipientQuery(userId, role),
+      ...this.buildRecipientQuery(userId),
     };
   }
   decorateNotificationForUser(notification, userId) {
@@ -229,6 +466,17 @@ class NotificationManager {
       if (invalidRoles.length > 0) {
         logger.warn("Ignoring unsupported notification roles:", invalidRoles);
       }
+      const normalizedActions = this.normalizeActions(data.actions);
+      const audiencePermissions = this.getAudiencePermissions({
+        ...data,
+        actions: normalizedActions,
+        roles,
+      });
+      const resolvedRecipients = await this.resolveNotificationRecipients({
+        ...data,
+        actions: normalizedActions,
+        roles,
+      });
       const notification = await Notification.create({
         tenantId: this.resolveTenantId(data),
         title: data.title,
@@ -236,7 +484,7 @@ class NotificationManager {
         type: data.type || "system_alert",
         priority: data.priority || "medium",
         recipientType: data.recipientType || "all",
-        recipients: data.recipients || [],
+        recipients: resolvedRecipients,
         roles,
         customerSessionId: data.customerSessionId || null,
         sender: data.sender || null,
@@ -244,8 +492,11 @@ class NotificationManager {
         relatedTo: data.relatedTo || null,
         relatedModel: data.relatedModel || null,
         actionRequired: data.actionRequired || false,
-        actions: this.normalizeActions(data.actions),
-        metadata: data.metadata || {},
+        actions: normalizedActions,
+        metadata: {
+          ...(data.metadata || {}),
+          audiencePermissions,
+        },
         expiresAt: data.expiresAt || null,
       });
       await notification.populate("sender", "name role");
@@ -607,7 +858,7 @@ class NotificationManager {
   }
   async getUserNotifications(userId, options = {}) {
     try {
-      const user = await User.findById(userId);
+      const user = await this.hydrateNotificationUser(userId);
       if (!user) throw new Error("User not found");
       const {
         status,
@@ -619,26 +870,28 @@ class NotificationManager {
         unreadOnly = false,
         actionRequired = false,
       } = options;
-      const query = this.buildRecipientQuery(userId, user.role);
+      const query = this.buildRecipientQuery(userId);
       if (type) query.type = type;
       if (priority) query.priority = priority;
-      if (unreadOnly)
-        query["readBy.user"] = {
-          $ne: userId,
-        };
       if (actionRequired) query.actionRequired = true;
       const notifications = await Notification.find(query)
         .select(
-          "title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy createdAt expiresAt",
+          "title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy recipients recipientType roles metadata createdAt expiresAt",
         )
         .populate("sender", "name role")
         .sort({
           createdAt: -1,
           priority: -1,
         });
-      let decoratedNotifications = notifications.map((notification) =>
-        this.decorateNotificationForUser(notification, userId),
-      );
+      let decoratedNotifications = this.filterNotificationsForUser(
+        user,
+        notifications,
+      ).map((notification) => this.decorateNotificationForUser(notification, userId));
+      if (unreadOnly) {
+        decoratedNotifications = decoratedNotifications.filter(
+          (notification) => !notification.isRead,
+        );
+      }
       if (search) {
         const keyword = search.trim().toLowerCase();
         decoratedNotifications = decoratedNotifications.filter(
@@ -666,12 +919,9 @@ class NotificationManager {
         skip,
         skip + limit,
       );
-      const unreadCount = await Notification.countDocuments({
-        ...query,
-        "readBy.user": {
-          $ne: userId,
-        },
-      });
+      const unreadCount = decoratedNotifications.filter(
+        (notification) => !notification.isRead,
+      ).length;
       return {
         notifications: paginatedNotifications,
         unreadCount,
@@ -731,16 +981,16 @@ class NotificationManager {
   }
   async markAsRead(notificationId, userId) {
     try {
-      const user = await User.findById(userId).select("role");
-      if (!user) {
-        throw new Error("User not found");
+      const user = await this.hydrateNotificationUser(userId);
+      const existingNotification = await Notification.findById(notificationId);
+      if (
+        !existingNotification ||
+        !this.canUserAccessNotification(user, existingNotification)
+      ) {
+        throw new Error("Notification not found");
       }
-      const notification = await Notification.findOneAndUpdate(
-        this.buildUserNotificationActionQuery(
-          notificationId,
-          userId,
-          user.role,
-        ),
+      const notification = await Notification.findByIdAndUpdate(
+        notificationId,
         {
           $addToSet: {
             readBy: {
@@ -756,19 +1006,8 @@ class NotificationManager {
           new: true,
         },
       );
-      if (!notification) {
-        throw new Error("Notification not found");
-      }
       socketManager.emitNotificationUpdate(notification._id, userId, "read");
-      const unreadCount = await Notification.countDocuments({
-        "hiddenFor.user": {
-          $ne: userId,
-        },
-        "readBy.user": {
-          $ne: userId,
-        },
-        $or: this.buildRecipientQuery(userId, user.role).$or,
-      });
+      const unreadCount = await this.getUnreadCount(userId);
       socketManager.emitNotificationCountUpdate(userId, {
         unreadCount,
       });
@@ -780,16 +1019,16 @@ class NotificationManager {
   }
   async markAsAcknowledged(notificationId, userId) {
     try {
-      const user = await User.findById(userId).select("role");
-      if (!user) {
-        throw new Error("User not found");
+      const user = await this.hydrateNotificationUser(userId);
+      const existingNotification = await Notification.findById(notificationId);
+      if (
+        !existingNotification ||
+        !this.canUserAccessNotification(user, existingNotification)
+      ) {
+        throw new Error("Notification not found");
       }
-      const notification = await Notification.findOneAndUpdate(
-        this.buildUserNotificationActionQuery(
-          notificationId,
-          userId,
-          user.role,
-        ),
+      const notification = await Notification.findByIdAndUpdate(
+        notificationId,
         {
           $addToSet: {
             acknowledgedBy: {
@@ -805,9 +1044,6 @@ class NotificationManager {
           new: true,
         },
       );
-      if (!notification) {
-        throw new Error("Notification not found");
-      }
       socketManager.emitNotificationUpdate(
         notification._id,
         userId,
@@ -821,15 +1057,17 @@ class NotificationManager {
   }
   async markAllAsRead(userId) {
     try {
-      const user = await User.findById(userId);
+      const user = await this.hydrateNotificationUser(userId);
       if (!user) throw new Error("User not found");
-      const query = {
-        ...this.buildRecipientQuery(userId, user.role),
-        "readBy.user": {
-          $ne: userId,
-        },
-      };
-      const notifications = await Notification.find(query);
+      const notifications = this.filterNotificationsForUser(
+        user,
+        await Notification.find({
+          ...this.buildRecipientQuery(userId),
+          "readBy.user": {
+            $ne: userId,
+          },
+        }),
+      );
       const updatePromises = notifications.map((notification) =>
         Notification.markAsRead(notification._id, userId),
       );
@@ -849,16 +1087,16 @@ class NotificationManager {
   }
   async dismissNotification(notificationId, userId) {
     try {
-      const user = await User.findById(userId).select("role");
-      if (!user) {
-        throw new Error("User not found");
+      const user = await this.hydrateNotificationUser(userId);
+      const existingNotification = await Notification.findById(notificationId);
+      if (
+        !existingNotification ||
+        !this.canUserAccessNotification(user, existingNotification)
+      ) {
+        throw new Error("Notification not found");
       }
-      const notification = await Notification.findOneAndUpdate(
-        this.buildUserNotificationActionQuery(
-          notificationId,
-          userId,
-          user.role,
-        ),
+      const notification = await Notification.findByIdAndUpdate(
+        notificationId,
         {
           $push: {
             hiddenFor: {
@@ -871,9 +1109,6 @@ class NotificationManager {
           new: true,
         },
       );
-      if (!notification) {
-        throw new Error("Notification not found");
-      }
       socketManager.emitNotificationUpdate(
         notification._id,
         userId,
@@ -890,19 +1125,33 @@ class NotificationManager {
   }
   async clearAllNotifications(userId) {
     try {
-      const user = await User.findById(userId).select("role");
+      const user = await this.hydrateNotificationUser(userId);
       if (!user) throw new Error("User not found");
-      const result = await Notification.updateMany(
-        this.buildRecipientQuery(userId, user.role),
-        {
-          $push: {
-            hiddenFor: {
-              user: userId,
-              hiddenAt: new Date(),
-            },
-          },
-        },
+      const notifications = this.filterNotificationsForUser(
+        user,
+        await Notification.find(this.buildRecipientQuery(userId)).select("_id"),
       );
+      const notificationIds = notifications.map((notification) => notification._id);
+      const result =
+        notificationIds.length > 0
+          ? await Notification.updateMany(
+              {
+                _id: {
+                  $in: notificationIds,
+                },
+              },
+              {
+                $push: {
+                  hiddenFor: {
+                    user: userId,
+                    hiddenAt: new Date(),
+                  },
+                },
+              },
+            )
+          : {
+              modifiedCount: 0,
+            };
       socketManager.emitNotificationUpdate("all", userId, "cleared");
       socketManager.emitNotificationCountUpdate(userId, {
         unreadCount: 0,
@@ -1005,43 +1254,23 @@ class NotificationManager {
   }
   async getNotificationStats(userId, period = "today") {
     try {
-      const user = await User.findById(userId);
+      const user = await this.hydrateNotificationUser(userId);
       if (!user) throw new Error("User not found");
-      const notificationUserId = new mongoose.Types.ObjectId(String(userId));
       const dateFilter = this.getDateFilter(period);
-      const baseQuery = {
-        ...this.buildRecipientQuery(notificationUserId, user.role),
-        createdAt: dateFilter,
-      };
-      const stats = await Notification.aggregate([
-        {
-          $match: baseQuery,
-        },
-        {
-          $facet: {
-            total: [
-              {
-                $count: "count",
-              },
-            ],
-            unreadCount: [
-              {
-                $match: {
-                  "readBy.user": {
-                    $ne: notificationUserId,
-                  },
-                },
-              },
-              {
-                $count: "count",
-              },
-            ],
-          },
-        },
-      ]);
+      const accessibleNotifications = this.filterNotificationsForUser(
+        user,
+        await Notification.find({
+          ...this.buildRecipientQuery(userId),
+          createdAt: dateFilter,
+        }).select("_id readBy recipients recipientType roles type relatedModel actions metadata"),
+      );
+      const unreadCount = accessibleNotifications.filter((notification) => {
+        const readBy = Array.isArray(notification.readBy) ? notification.readBy : [];
+        return !readBy.some((entry) => String(entry.user) === String(userId));
+      }).length;
       return {
-        total: stats[0]?.total[0]?.count || 0,
-        unreadCount: stats[0]?.unreadCount[0]?.count || 0,
+        total: accessibleNotifications.length,
+        unreadCount,
         period,
       };
     } catch (error) {
@@ -1104,53 +1333,38 @@ class NotificationManager {
     } catch (_error) {
       return;
     }
-    if (
-      notification.recipientType === "user" &&
-      notification.recipients.length > 0
-    ) {
-      notification.recipients.forEach((recipientId) => {
-        io.to(`user-${recipientId}`).emit("new_notification", {
-          ...this.shapeNotification(notification, {
-            isRead: false,
-            effectiveStatus: "unread",
-          }),
-          isUnread: true,
-        });
+    const shapedNotification = {
+      ...this.shapeNotification(notification, {
+        isRead: false,
+        effectiveStatus: "unread",
+      }),
+      isUnread: true,
+    };
+    const explicitRecipients = [
+      ...new Set(
+        (notification.recipients || [])
+          .map((recipientId) => String(recipientId || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (explicitRecipients.length > 0) {
+      explicitRecipients.forEach((recipientId) => {
+        io.to(`user-${recipientId}`).emit("new_notification", shapedNotification);
       });
-    }
-    if (
+    } else if (
       notification.recipientType === "role" &&
       notification.roles.length > 0
     ) {
       notification.roles.forEach((role) => {
-        io.to(`role-${role}`).emit("new_notification", {
-          ...this.shapeNotification(notification, {
-            isRead: false,
-            effectiveStatus: "unread",
-          }),
-          isUnread: true,
-        });
+        io.to(`role-${role}`).emit("new_notification", shapedNotification);
       });
-    }
-    if (notification.recipientType === "all") {
-      io.to("staff-room").emit("new_notification", {
-        ...this.shapeNotification(notification, {
-          isRead: false,
-          effectiveStatus: "unread",
-        }),
-        isUnread: true,
-      });
+    } else if (notification.recipientType === "all") {
+      io.to("staff-room").emit("new_notification", shapedNotification);
     }
     if (notification.customerSessionId) {
       io.to(`customer-${notification.customerSessionId}`).emit(
         "new_notification",
-        {
-          ...this.shapeNotification(notification, {
-            isRead: false,
-            effectiveStatus: "unread",
-          }),
-          isUnread: true,
-        },
+        shapedNotification,
       );
     }
     if (
@@ -1164,16 +1378,17 @@ class NotificationManager {
     }
   }
   async getUnreadCount(userId) {
-    const user = await User.findById(userId).select("role");
-    if (!user) {
-      throw new Error("User not found");
-    }
-    return Notification.countDocuments({
-      ...this.buildRecipientQuery(userId, user.role),
-      "readBy.user": {
-        $ne: userId,
-      },
-    });
+    const user = await this.hydrateNotificationUser(userId);
+    const accessibleNotifications = this.filterNotificationsForUser(
+      user,
+      await Notification.find({
+        ...this.buildRecipientQuery(userId),
+        "readBy.user": {
+          $ne: userId,
+        },
+      }).select("_id readBy recipients recipientType roles type relatedModel actions metadata"),
+    );
+    return accessibleNotifications.length;
   }
   getDateFilter(period) {
     const now = new Date();

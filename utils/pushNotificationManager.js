@@ -286,6 +286,11 @@ class PushNotificationManager {
         tenantId,
         notification.customerSessionId,
       );
+    } else if ((notification.recipients || []).length > 0) {
+      tokenRecords = await this.getUserTokens(
+        tenantId,
+        notification.recipients || [],
+      );
     } else if (notification.recipientType === "user") {
       tokenRecords = await this.getUserTokens(
         tenantId,
