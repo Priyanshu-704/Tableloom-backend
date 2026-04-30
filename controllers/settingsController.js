@@ -151,16 +151,22 @@ const toAdminSettings = (req, settings) => ({
 });
 const shapeDelayMonitorStatus = (status = {}) => ({
   isRunning: Boolean(status?.isRunning),
+  enabled: Boolean(status?.enabled),
+  intervalMinutes: Number(status?.intervalMinutes || 0),
+  notifyOnDelay: Boolean(status?.notifyOnDelay),
+  criticalThresholdMinutes: Number(status?.criticalThresholdMinutes || 0),
   lastCheck: status?.lastCheck || null,
-  lastRunSummary: status?.lastRunSummary
-    ? {
-        delayedOrdersFound: Number(
-          status.lastRunSummary.delayedOrdersFound || 0,
-        ),
-      }
-    : {
-        delayedOrdersFound: 0,
-      },
+  lastError: status?.lastError || null,
+  lastRunSummary: {
+    delayedOrdersFound: Number(
+      status?.lastRunSummary?.delayedOrdersFound || 0,
+    ),
+    criticalDelayedOrders: Number(
+      status?.lastRunSummary?.criticalDelayedOrders || 0,
+    ),
+    trigger: status?.lastRunSummary?.trigger || null,
+    checkedAt: status?.lastRunSummary?.checkedAt || null,
+  },
 });
 exports.getPublicSettings = async (req, res) => {
   try {
@@ -179,6 +185,7 @@ exports.getPublicSettings = async (req, res) => {
 exports.getAdminSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
+    await delayMonitor.syncWithSettings(req.tenant?._id);
     return sendSuccess(
       res,
       200,
@@ -186,7 +193,9 @@ exports.getAdminSettings = async (req, res) => {
       toAdminSettings(req, settings.toObject()),
       {
         meta: {
-          delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
+          delayMonitorStatus: shapeDelayMonitorStatus(
+            delayMonitor.getStatus(req.tenant?._id),
+          ),
         },
       },
     );
@@ -243,7 +252,7 @@ exports.updateSettings = async (req, res) => {
     settings.updatedBy = req.user?._id || null;
     await settings.save();
     invalidateTenantTaxSettings(req.tenant?._id);
-    await delayMonitor.syncWithSettings();
+    await delayMonitor.syncWithSettings(req.tenant?._id);
     return sendSuccess(
       res,
       200,
@@ -252,7 +261,9 @@ exports.updateSettings = async (req, res) => {
       {
         publicSettings: toPublicSettings(req, settings.toObject()),
         meta: {
-          delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
+          delayMonitorStatus: shapeDelayMonitorStatus(
+            delayMonitor.getStatus(req.tenant?._id),
+          ),
         },
       },
     );

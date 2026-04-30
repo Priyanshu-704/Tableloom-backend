@@ -1,5 +1,6 @@
 const { logger } = require("./logger.js");
 const Notification = require("../models/Notification");
+const AppSetting = require("../models/AppSetting");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
 const { getCurrentTenantId } = require("./tenantContext");
@@ -96,6 +97,25 @@ const hasAnyPathFragment = (actions = [], fragments = []) =>
     actions.some((action) => String(action || "").includes(fragment)),
   );
 
+const OPERATIONAL_NOTIFICATION_GROUPS = Object.freeze({
+  newOrders: "newOrders",
+  orderUpdates: "orderUpdates",
+  lowStock: "lowStock",
+  tableCalls: "tableCalls",
+  reservationReminders: "reservationReminders",
+});
+
+const DEFAULT_NOTIFICATION_SETTINGS = Object.freeze({
+  newOrders: true,
+  orderUpdates: true,
+  lowStock: true,
+  tableCalls: true,
+  reservationReminders: true,
+  emailNotifications: true,
+  pushNotifications: true,
+  smsNotifications: false,
+});
+
 class NotificationManager {
   constructor() {
     this.cleanupTimer = null;
@@ -155,6 +175,77 @@ class NotificationManager {
       return data.tenantId ?? null;
     }
     return data.metadata?.tenantId || getCurrentTenantId() || null;
+  }
+  async getTenantNotificationSettings(tenantId = null) {
+    const normalizedTenantId = String(tenantId || "").trim();
+    if (!normalizedTenantId) {
+      return DEFAULT_NOTIFICATION_SETTINGS;
+    }
+    const settings = await AppSetting.findOne({
+      key: "app-settings",
+      tenantId: normalizedTenantId,
+    })
+      .select("notifications")
+      .lean();
+    return {
+      ...DEFAULT_NOTIFICATION_SETTINGS,
+      ...(settings?.notifications || {}),
+    };
+  }
+  resolveNotificationGroup(data = {}) {
+    if (data?.notificationGroup) {
+      return data.notificationGroup;
+    }
+    const type = String(data?.type || "").trim().toLowerCase();
+    const title = String(data?.title || "").trim().toLowerCase();
+    const relatedModel = String(data?.relatedModel || "").trim().toLowerCase();
+    if (type === "waiter_call") {
+      return OPERATIONAL_NOTIFICATION_GROUPS.tableCalls;
+    }
+    if (type === "reservation_alert") {
+      return OPERATIONAL_NOTIFICATION_GROUPS.reservationReminders;
+    }
+    if (type === "inventory_low") {
+      return OPERATIONAL_NOTIFICATION_GROUPS.lowStock;
+    }
+    if (type === "order_ready" || type === "order_delayed") {
+      return OPERATIONAL_NOTIFICATION_GROUPS.orderUpdates;
+    }
+    if (
+      title.startsWith("new order") &&
+      ["order", "kitchenorder"].includes(relatedModel)
+    ) {
+      return OPERATIONAL_NOTIFICATION_GROUPS.newOrders;
+    }
+    return null;
+  }
+  async shouldCreateNotification(data = {}, tenantId = null, tenantSettings = null) {
+    if (data?.customerSessionId || data?.skipPreferenceCheck) {
+      return true;
+    }
+    const notificationGroup = this.resolveNotificationGroup(data);
+    if (!notificationGroup) {
+      return true;
+    }
+    const resolvedTenantSettings =
+      tenantSettings || (await this.getTenantNotificationSettings(tenantId));
+    return resolvedTenantSettings?.[notificationGroup] !== false;
+  }
+  async resolveDeliveryChannels(data = {}, tenantId = null, tenantSettings = null) {
+    if (data?.customerSessionId) {
+      return {
+        push: true,
+        email: false,
+        sms: false,
+      };
+    }
+    const resolvedTenantSettings =
+      tenantSettings || (await this.getTenantNotificationSettings(tenantId));
+    return {
+      push: resolvedTenantSettings?.pushNotifications !== false,
+      email: resolvedTenantSettings?.emailNotifications !== false,
+      sms: resolvedTenantSettings?.smsNotifications === true,
+    };
   }
   getAudiencePermissions(notification = {}) {
     const permissions = new Set();
@@ -448,6 +539,11 @@ class NotificationManager {
   }
   async createNotification(data) {
     try {
+      const tenantId = this.resolveTenantId(data);
+      const tenantSettings = await this.getTenantNotificationSettings(tenantId);
+      if (!(await this.shouldCreateNotification(data, tenantId, tenantSettings))) {
+        return null;
+      }
       const allowedRoles =
         Notification.schema.path("roles").caster?.enumValues || [];
       const normalizedRoles = [
@@ -467,6 +563,11 @@ class NotificationManager {
         logger.warn("Ignoring unsupported notification roles:", invalidRoles);
       }
       const normalizedActions = this.normalizeActions(data.actions);
+      const deliveryChannels = await this.resolveDeliveryChannels(
+        data,
+        tenantId,
+        tenantSettings,
+      );
       const audiencePermissions = this.getAudiencePermissions({
         ...data,
         actions: normalizedActions,
@@ -478,7 +579,7 @@ class NotificationManager {
         roles,
       });
       const notification = await Notification.create({
-        tenantId: this.resolveTenantId(data),
+        tenantId,
         title: data.title,
         message: data.message,
         type: data.type || "system_alert",
@@ -496,17 +597,21 @@ class NotificationManager {
         metadata: {
           ...(data.metadata || {}),
           audiencePermissions,
+          deliveryChannels,
+          notificationGroup: this.resolveNotificationGroup(data),
         },
         expiresAt: data.expiresAt || null,
       });
       await notification.populate("sender", "name role");
       await this.emitNotification(notification);
-      const pushNotificationManager = require("./pushNotificationManager");
-      pushNotificationManager
-        .sendNotificationPush(notification)
-        .catch((pushError) => {
-          logger.error("Push notification dispatch failed:", pushError);
-        });
+      if (deliveryChannels.push) {
+        const pushNotificationManager = require("./pushNotificationManager");
+        pushNotificationManager
+          .sendNotificationPush(notification)
+          .catch((pushError) => {
+            logger.error("Push notification dispatch failed:", pushError);
+          });
+      }
       return this.shapeNotification(notification, {
         isRead: false,
         effectiveStatus: notification.status || "unread",
@@ -547,6 +652,7 @@ class NotificationManager {
       title: `Waiter Call - Table ${callData.tableNumber}`,
       message: callData.message || `${callData.customerName} needs assistance`,
       type: "waiter_call",
+      notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.tableCalls,
       priority: priorityMap[callData.priority] || "medium",
       recipientType: "role",
       roles: ["waiter", "manager", "admin"],
@@ -584,6 +690,7 @@ class NotificationManager {
       title: `Order Ready - #${orderData.orderNumber}`,
       message: `${itemData.quantity}x ${itemData.menuItemName} is ready for Table ${orderData.tableNumber}`,
       type: "order_ready",
+      notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.orderUpdates,
       priority: "high",
       recipientType: "role",
       roles: ["waiter", "expediter"],
@@ -620,6 +727,7 @@ class NotificationManager {
         title: `Your Order is Ready - Table ${orderData.tableNumber}`,
         message: `${itemData.menuItemName} is ready to serve`,
         type: "order_ready",
+        notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.orderUpdates,
         priority: "medium",
         recipientType: "user",
         recipients: [orderData.assignedWaiter],
@@ -635,13 +743,23 @@ class NotificationManager {
     }
     return notification;
   }
-  async createDelayedOrderNotification(orderData, delayMinutes, delayedItems) {
-    const priority = delayMinutes > 15 ? "urgent" : "high";
+  async createDelayedOrderNotification(
+    orderData,
+    delayMinutes,
+    delayedItems,
+    options = {},
+  ) {
+    const criticalThresholdMinutes = Math.max(
+      1,
+      Number(options?.criticalThresholdMinutes || 15),
+    );
+    const priority = delayMinutes >= criticalThresholdMinutes ? "urgent" : "high";
     return this.createNotification({
       tenantId: orderData.tenantId || null,
       title: `Order Delay - #${orderData.orderNumber}`,
       message: `Order #${orderData.orderNumber} is delayed by ${delayMinutes} minutes`,
       type: "order_delayed",
+      notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.orderUpdates,
       priority: priority,
       recipientType: "role",
       roles: ["chef", "manager", "admin"],
@@ -670,6 +788,7 @@ class NotificationManager {
         delayMinutes: delayMinutes,
         delayedItems: delayedItems,
         priority: orderData.priority,
+        criticalThresholdMinutes,
         createdAt: orderData.createdAt,
       },
     });
@@ -757,6 +876,7 @@ class NotificationManager {
       title: `Table Assigned - ${tableData.tableName}`,
       message: `You have been assigned to ${tableData.tableName} (Table ${tableData.tableNumber})`,
       type: "table_assigned",
+      notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.tableCalls,
       priority: "medium",
       recipientType: "user",
       recipients: [waiterId],
@@ -782,6 +902,7 @@ class NotificationManager {
       title: `Upcoming Reservation - Table ${reservationData.tableNumber}`,
       message: `Reservation for ${reservationData.customerName} in ${minutesUntil} minutes`,
       type: "reservation_alert",
+      notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.reservationReminders,
       priority: minutesUntil <= 15 ? "urgent" : "high",
       recipientType: "role",
       roles: ["waiter", "manager"],
@@ -1287,6 +1408,7 @@ class NotificationManager {
           title: `New Order - ${assignment.stationName}`,
           message: `Order #${orderData.orderNumber} has ${assignment.items.length} items for ${assignment.stationName}`,
           type: "system_alert",
+          notificationGroup: OPERATIONAL_NOTIFICATION_GROUPS.newOrders,
           priority: "high",
           recipientType: "role",
           roles: ["chef"],

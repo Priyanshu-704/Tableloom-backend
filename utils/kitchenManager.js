@@ -503,7 +503,7 @@ exports.emitExpediterNotification = (kitchenOrder, item) => {
     readyTime: item.readyTime,
   });
 };
-exports.calculateItemDelayStatus = (item) => {
+exports.calculateItemDelayStatus = (item, options = {}) => {
   const preparationTime = Number(item?.preparationTime || 0);
   const resolvedEstimatedCompletion = item?.estimatedCompletion
     ? new Date(item.estimatedCompletion)
@@ -524,9 +524,15 @@ exports.calculateItemDelayStatus = (item) => {
   const now = new Date();
   const delayMinutes = Math.floor((now - resolvedEstimatedCompletion) / 60000);
   const { delayThresholds } = require("../utils/statusColors");
+  const criticalThresholdMinutes = Math.max(
+    1,
+    Number(
+      options?.criticalThresholdMinutes || delayThresholds.critical_delay || 15,
+    ),
+  );
   const timeRemaining = Math.floor((resolvedEstimatedCompletion - now) / 60000);
   if (timeRemaining <= 0) {
-    if (delayMinutes >= delayThresholds.critical_delay) {
+    if (delayMinutes >= criticalThresholdMinutes) {
       return {
         status: "critical_delay",
         color: "#D32F2F",
@@ -561,8 +567,13 @@ exports.calculateItemDelayStatus = (item) => {
     };
   }
 };
-exports.checkDelayedOrders = async () => {
+exports.checkDelayedOrders = async (options = {}) => {
   try {
+    const criticalThresholdMinutes = Math.max(
+      1,
+      Number(options?.criticalThresholdMinutes || 15),
+    );
+    const notifyOnDelay = options?.notifyOnDelay !== false;
     const delayedOrders = [];
     const kitchenOrders = await KitchenOrder.find({
       overallStatus: {
@@ -584,7 +595,9 @@ exports.checkDelayedOrders = async () => {
         if (["ready", "served", "cancelled"].includes(item.status)) {
           continue;
         }
-        const delayStatus = this.calculateItemDelayStatus(item);
+        const delayStatus = this.calculateItemDelayStatus(item, {
+          criticalThresholdMinutes,
+        });
         if (delayStatus.isDelayed) {
           orderHasDelayedItems = true;
           maxDelayMinutes = Math.max(maxDelayMinutes, delayStatus.delayMinutes);
@@ -614,25 +627,30 @@ exports.checkDelayedOrders = async () => {
           priority: order.priority,
           timers: order.timers,
         });
-        try {
-          await notificationManager.createDelayedOrderNotification(
-            {
-              _id: order._id,
-              tenantId: order.tenantId,
-              orderNumber: order.orderNumber,
-              tableNumber: order.tableNumber,
-              customerName: order.customerName,
-              priority: order.priority,
-              createdAt: order.createdAt,
-            },
-            maxDelayMinutes,
-            delayedItems,
-          );
-        } catch (notifError) {
-          logger.error(
-            "Failed to create delayed order notification:",
-            notifError,
-          );
+        if (notifyOnDelay) {
+          try {
+            await notificationManager.createDelayedOrderNotification(
+              {
+                _id: order._id,
+                tenantId: order.tenantId,
+                orderNumber: order.orderNumber,
+                tableNumber: order.tableNumber,
+                customerName: order.customerName,
+                priority: order.priority,
+                createdAt: order.createdAt,
+              },
+              maxDelayMinutes,
+              delayedItems,
+              {
+                criticalThresholdMinutes,
+              },
+            );
+          } catch (notifError) {
+            logger.error(
+              "Failed to create delayed order notification:",
+              notifError,
+            );
+          }
         }
         emitDelayedOrderAlert(order, maxDelayMinutes, delayedItems);
       }
@@ -643,16 +661,25 @@ exports.checkDelayedOrders = async () => {
     throw error;
   }
 };
-exports.getDelayedOrdersSummary = async () => {
+exports.getDelayedOrdersSummary = async (options = {}) => {
   try {
-    const delayedOrders = await this.checkDelayedOrders();
+    const criticalThresholdMinutes = Math.max(
+      1,
+      Number(options?.criticalThresholdMinutes || 15),
+    );
+    const delayedOrders = await this.checkDelayedOrders({
+      notifyOnDelay: false,
+      criticalThresholdMinutes,
+    });
     const summary = {
       totalDelayed: delayedOrders.length,
       criticalDelays: delayedOrders.filter(
-        (order) => order.maxDelayMinutes > 15,
+        (order) => order.maxDelayMinutes >= criticalThresholdMinutes,
       ).length,
       warningDelays: delayedOrders.filter(
-        (order) => order.maxDelayMinutes > 0 && order.maxDelayMinutes <= 15,
+        (order) =>
+          order.maxDelayMinutes > 0 &&
+          order.maxDelayMinutes < criticalThresholdMinutes,
       ).length,
       orders: delayedOrders.map((order) => ({
         orderNumber: order.orderNumber,
@@ -660,9 +687,13 @@ exports.getDelayedOrdersSummary = async () => {
         maxDelayMinutes: order.maxDelayMinutes,
         itemCount: order.delayedItems.length,
         priority: order.priority,
-        alertLevel: order.maxDelayMinutes > 15 ? "critical" : "warning",
+        alertLevel:
+          order.maxDelayMinutes >= criticalThresholdMinutes
+            ? "critical"
+            : "warning",
       })),
       updatedAt: new Date(),
+      criticalThresholdMinutes,
     };
     return summary;
   } catch (error) {

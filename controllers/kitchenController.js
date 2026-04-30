@@ -6,16 +6,22 @@ const mongoose = require("mongoose");
 const delayMonitor = require("../utils/delayMonitor");
 const shapeDelayMonitorStatus = (status = {}) => ({
   isRunning: Boolean(status?.isRunning),
+  enabled: Boolean(status?.enabled),
+  intervalMinutes: Number(status?.intervalMinutes || 0),
+  notifyOnDelay: Boolean(status?.notifyOnDelay),
+  criticalThresholdMinutes: Number(status?.criticalThresholdMinutes || 0),
   lastCheck: status?.lastCheck || null,
-  lastRunSummary: status?.lastRunSummary
-    ? {
-        delayedOrdersFound: Number(
-          status.lastRunSummary.delayedOrdersFound || 0,
-        ),
-      }
-    : {
-        delayedOrdersFound: 0,
-      },
+  lastError: status?.lastError || null,
+  lastRunSummary: {
+    delayedOrdersFound: Number(
+      status?.lastRunSummary?.delayedOrdersFound || 0,
+    ),
+    criticalDelayedOrders: Number(
+      status?.lastRunSummary?.criticalDelayedOrders || 0,
+    ),
+    trigger: status?.lastRunSummary?.trigger || null,
+    checkedAt: status?.lastRunSummary?.checkedAt || null,
+  },
 });
 const shapeKitchenOrderItem = (item = {}) => ({
   _id: item?._id,
@@ -470,7 +476,10 @@ exports.getKitchenInsights = async (req, res) => {
 };
 exports.getDelayedOrders = async (req, res) => {
   try {
-    const delayedOrders = await kitchenManager.getDelayedOrdersSummary();
+    const monitorStatus = delayMonitor.getStatus(req.tenant?._id);
+    const delayedOrders = await kitchenManager.getDelayedOrdersSummary({
+      criticalThresholdMinutes: monitorStatus?.criticalThresholdMinutes,
+    });
     res.status(200).json({
       success: true,
       data: {
@@ -492,7 +501,7 @@ exports.getDelayedOrders = async (req, res) => {
 };
 exports.checkDelayedOrders = async (req, res) => {
   try {
-    const delayedOrders = await delayMonitor.runCheck("manual");
+    const delayedOrders = await delayMonitor.runCheck("manual", req.tenant?._id);
     res.status(200).json({
       success: true,
       message: `Found ${delayedOrders.length} delayed orders`,
@@ -501,7 +510,9 @@ exports.checkDelayedOrders = async (req, res) => {
       },
       timestamp: new Date(),
       meta: {
-        delayMonitorStatus: shapeDelayMonitorStatus(delayMonitor.getStatus()),
+        delayMonitorStatus: shapeDelayMonitorStatus(
+          delayMonitor.getStatus(req.tenant?._id),
+        ),
       },
     });
   } catch (error) {
@@ -517,7 +528,7 @@ exports.getDelayMonitorStatus = async (_req, res) => {
   try {
     res.status(200).json({
       success: true,
-      data: shapeDelayMonitorStatus(delayMonitor.getStatus()),
+      data: shapeDelayMonitorStatus(delayMonitor.getStatus(_req.tenant?._id)),
     });
   } catch (error) {
     logger.error(error);

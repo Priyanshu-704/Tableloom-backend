@@ -19,6 +19,7 @@ const getAllowedOrigins = () => {
     process.env.FRONTEND_URL,
     process.env.CORS_ORIGIN,
     process.env.CORS_ORIGINS,
+    "http://192.168.1.156:5173"
   ]
     .filter(Boolean)
     .flatMap((value) => String(value).split(","))

@@ -115,8 +115,6 @@ router.use(
 );
 router.use(
   "/backups",
-  requireTenantScope,
-  enforceSuperAdminTenantReadOnly,
   require("./backupRoutes"),
 );
 module.exports = router;
