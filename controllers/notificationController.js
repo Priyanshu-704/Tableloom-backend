@@ -48,6 +48,7 @@ exports.getNotifications = async (req, res) => {
       skip,
       unreadOnly: unreadOnly === "true",
       actionRequired: actionRequired === "true",
+      tenantId: req.tenantId || null,
     });
     return sendSuccess(res, 200, null, result.notifications, {
       pagination: {
@@ -95,6 +96,9 @@ exports.getNotificationStats = async (req, res) => {
     const stats = await notificationManager.getNotificationStats(
       req.user.id,
       period,
+      {
+        tenantId: req.tenantId || null,
+      },
     );
     return sendSuccess(res, 200, null, stats);
   } catch (error) {

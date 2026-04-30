@@ -3,7 +3,7 @@ const Notification = require("../models/Notification");
 const AppSetting = require("../models/AppSetting");
 const User = require("../models/User");
 const socketManager = require("./socketManager");
-const { getCurrentTenantId } = require("./tenantContext");
+const { getCurrentTenantId, normalizeTenantId } = require("./tenantContext");
 const {
   hydrateUserPermissions,
   normalizeRoleKey,
@@ -91,6 +91,16 @@ const getUserRoleKeys = (user = {}) => {
     ),
   ];
 };
+
+const isSuperAdminUser = (user = {}) =>
+  getUserRoleKeys(user).includes("super_admin");
+
+const resolveNotificationTenantId = (notification = {}) =>
+  normalizeTenantId(
+    notification?.tenantId ||
+      notification?.metadata?.tenantId ||
+      null,
+  );
 
 const hasAnyPathFragment = (actions = [], fragments = []) =>
   fragments.some((fragment) =>
@@ -348,10 +358,14 @@ class NotificationManager {
     await hydrateUserPermissions(user);
     return user;
   }
-  canUserAccessNotification(user, notification = {}) {
+  canUserAccessNotification(user, notification = {}, options = {}) {
     if (!user || notification.customerSessionId) {
       return false;
     }
+
+    const isSuperAdmin = isSuperAdminUser(user);
+    const requestTenantId = normalizeTenantId(options?.tenantId);
+    const notificationTenantId = resolveNotificationTenantId(notification);
 
     const normalizedUserId = String(user?._id || user?.id || "");
     const hiddenForUsers = Array.isArray(notification.hiddenFor)
@@ -365,6 +379,13 @@ class NotificationManager {
       : [];
     if (explicitRecipients.includes(normalizedUserId)) {
       return true;
+    }
+
+    if (isSuperAdmin && notificationTenantId) {
+      if (!requestTenantId) {
+        return false;
+      }
+      return notificationTenantId === requestTenantId;
     }
 
     const recipientType = String(notification.recipientType || "").trim();
@@ -457,9 +478,9 @@ class NotificationManager {
       },
     };
   }
-  filterNotificationsForUser(user, notifications = []) {
+  filterNotificationsForUser(user, notifications = [], options = {}) {
     return notifications.filter((notification) =>
-      this.canUserAccessNotification(user, notification),
+      this.canUserAccessNotification(user, notification, options),
     );
   }
   normalizeActions(actions = []) {
@@ -997,7 +1018,7 @@ class NotificationManager {
       if (actionRequired) query.actionRequired = true;
       const notifications = await Notification.find(query)
         .select(
-          "title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy recipients recipientType roles metadata createdAt expiresAt",
+          "title message type priority sender relatedModel actionRequired actions status readBy acknowledgedBy recipients recipientType roles metadata tenantId createdAt expiresAt",
         )
         .populate("sender", "name role")
         .sort({
@@ -1007,6 +1028,9 @@ class NotificationManager {
       let decoratedNotifications = this.filterNotificationsForUser(
         user,
         notifications,
+        {
+          tenantId: options.tenantId || null,
+        },
       ).map((notification) => this.decorateNotificationForUser(notification, userId));
       if (unreadOnly) {
         decoratedNotifications = decoratedNotifications.filter(
@@ -1373,7 +1397,7 @@ class NotificationManager {
       throw error;
     }
   }
-  async getNotificationStats(userId, period = "today") {
+  async getNotificationStats(userId, period = "today", options = {}) {
     try {
       const user = await this.hydrateNotificationUser(userId);
       if (!user) throw new Error("User not found");
@@ -1383,7 +1407,12 @@ class NotificationManager {
         await Notification.find({
           ...this.buildRecipientQuery(userId),
           createdAt: dateFilter,
-        }).select("_id readBy recipients recipientType roles type relatedModel actions metadata"),
+        }).select(
+          "_id readBy recipients recipientType roles type relatedModel actions metadata tenantId",
+        ),
+        {
+          tenantId: options.tenantId || null,
+        },
       );
       const unreadCount = accessibleNotifications.filter((notification) => {
         const readBy = Array.isArray(notification.readBy) ? notification.readBy : [];

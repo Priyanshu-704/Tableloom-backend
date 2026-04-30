@@ -16,7 +16,10 @@ const {
   cleanupNotifications,
 } = require("../controllers/notificationController");
 const { protect, hasPermission } = require("../middleware/auth");
-const { requireTenantScope } = require("../middleware/tenant");
+const {
+  enforceSuperAdminTenantReadOnly,
+  requireTenantScope,
+} = require("../middleware/tenant");
 const { protectCustomerSession } = require("../middleware/customerSessionAuth");
 const ensureNotificationScope = (req, res, next) => {
   if (String(req.user?.role || "").toLowerCase() === "super_admin") {
@@ -52,6 +55,7 @@ router.use(protect);
 router.use(ensureNotificationScope);
 router.get("/", hasPermission("NOTIFICATION_VIEW"), getNotifications);
 router.get("/stats", hasPermission("NOTIFICATION_VIEW"), getNotificationStats);
+router.use(enforceSuperAdminTenantReadOnly);
 router.put("/mark-all-read", hasPermission("NOTIFICATION_VIEW"), markAllAsRead);
 router.put(
   "/clear-all",
