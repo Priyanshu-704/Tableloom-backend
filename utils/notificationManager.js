@@ -991,6 +991,7 @@ class NotificationManager {
       sender: senderId,
       senderType: "user",
       actionRequired: false,
+      expiresAt: announcementData.expiresAt || null,
       metadata: {
         announcementType: announcementData.type,
         expiresAt: announcementData.expiresAt,
@@ -1274,7 +1275,9 @@ class NotificationManager {
       if (!user) throw new Error("User not found");
       const notifications = this.filterNotificationsForUser(
         user,
-        await Notification.find(this.buildRecipientQuery(userId)).select("_id"),
+        await Notification.find(this.buildRecipientQuery(userId)).select(
+          "_id title type recipientType recipients roles customerSessionId relatedModel actions metadata hiddenFor tenantId",
+        ),
       );
       const notificationIds = notifications.map((notification) => notification._id);
       const result =
@@ -1298,8 +1301,9 @@ class NotificationManager {
               modifiedCount: 0,
             };
       socketManager.emitNotificationUpdate("all", userId, "cleared");
+      const unreadCount = await this.getUnreadCount(userId);
       socketManager.emitNotificationCountUpdate(userId, {
-        unreadCount: 0,
+        unreadCount,
       });
       return {
         success: true,
@@ -1385,10 +1389,20 @@ class NotificationManager {
   }
   async cleanupExpiredNotifications() {
     try {
+      const now = new Date();
       const result = await Notification.deleteMany({
-        expiresAt: {
-          $lt: new Date(),
-        },
+        $or: [
+          {
+            expiresAt: {
+              $lt: now,
+            },
+          },
+          {
+            "metadata.expiresAt": {
+              $lt: now,
+            },
+          },
+        ],
       });
       logger.info(`Cleaned up ${result.deletedCount} expired notifications`);
       return result;

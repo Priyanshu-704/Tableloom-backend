@@ -162,6 +162,18 @@ const getTableSummary = async (cart) => {
     name: table.tableName,
   };
 };
+const toPlainId = (value) => {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value?._id) {
+    return String(value._id);
+  }
+  return String(value);
+};
 const recalculateCartPricing = async (cart, options = {}) => {
   if (!cart) {
     return cart;
@@ -672,8 +684,8 @@ const transformCartData = async (cart, options = {}) => {
     table: tableSummary,
     summary,
     items: cart.items.map((item) => ({
-      menuItemId: item.menuItem?._id || item.menuItem,
-      sizeId: item.sizeId,
+      menuItemId: toPlainId(item.menuItem?._id || item.menuItem),
+      sizeId: toPlainId(item.sizeId),
       name:
         menuItemMap.get(String(item.menuItem?._id || item.menuItem))?.name ||
         item.menuItem?.name ||
@@ -698,13 +710,14 @@ const transformCartData = async (cart, options = {}) => {
             )
           : null,
       _id: item._id,
-      size: item.sizeName,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      originalUnitPrice: item.originalUnitPrice || item.unitPrice,
-      unitDiscountAmount: item.unitDiscountAmount || 0,
-      itemDiscountAmount: item.itemDiscountAmount || 0,
-      totalPrice: item.totalPrice,
+      size: item.sizeName || "",
+      sizeName: item.sizeName || "",
+      quantity: Number(item.quantity || 0),
+      unitPrice: Number(item.unitPrice || 0),
+      originalUnitPrice: Number(item.originalUnitPrice || item.unitPrice || 0),
+      unitDiscountAmount: Number(item.unitDiscountAmount || 0),
+      itemDiscountAmount: Number(item.itemDiscountAmount || 0),
+      totalPrice: Number(item.totalPrice || 0),
       instructions: item.specialInstructions || "",
     })),
   };

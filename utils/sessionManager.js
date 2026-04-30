@@ -59,6 +59,29 @@ const emitSessionCompletion = (sessionId, payload = {}) => {
     logger.warn("Failed to emit customer session completion:", error?.message);
   }
 };
+const emitSessionOrderUpdates = async (customerId, sessionId) => {
+  if (!customerId || !sessionId) {
+    return;
+  }
+
+  try {
+    const socketManager = require("./socketManager");
+    const orders = await Order.find({
+      customer: customerId,
+    })
+      .select(
+        "_id orderNumber sessionId status paymentStatus totalAmount updatedAt",
+      )
+      .lean();
+
+    orders.forEach((order) => {
+      socketManager.emitOrderStatusUpdate(order);
+      socketManager.emitOrderStatusToCustomer(sessionId, order);
+    });
+  } catch (error) {
+    logger.warn("Failed to emit session order updates:", error?.message);
+  }
+};
 exports.createCustomerSession = async (tableId, token, customerData = {}) => {
   try {
     const { name, email, phone } = customerData;
@@ -915,6 +938,7 @@ exports.completeSessionOnline = async (sessionId, paymentData = {}) => {
         },
       },
     );
+    await emitSessionOrderUpdates(customer._id, customer.sessionId);
     emitSessionCompletion(customer.sessionId, {
       billId: String(bill?._id || ""),
       billNumber: bill?.billNumber || "",
@@ -1137,6 +1161,7 @@ exports.completeSessionOffline = async (sessionId, staffId, notes = "") => {
         },
       },
     );
+    await emitSessionOrderUpdates(customer._id, customer.sessionId);
     emitSessionCompletion(customer.sessionId, {
       billId: String(pendingBill?._id || ""),
       billNumber: pendingBill?.billNumber || "",
@@ -1681,6 +1706,7 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
           },
         },
       );
+      await emitSessionOrderUpdates(customer._id, customer.sessionId);
       emitSessionCompletion(customer.sessionId, {
         billId: String(updatedBill?._id || ""),
         billNumber: updatedBill?.billNumber || "",

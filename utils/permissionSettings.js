@@ -28,6 +28,7 @@ const ROLE_PRIORITY = [
   "customer",
   "user",
 ];
+const FULL_ACCESS_ROLE_KEYS = new Set(["super_admin", "admin"]);
 
 const getNow = () => Date.now();
 let defaultRbacSeedPromise = null;
@@ -358,6 +359,9 @@ const getDefaultRolePermissions = async (role, tenantId = null) => {
   if (!normalizedRoleKey) {
     return [];
   }
+  if (FULL_ACCESS_ROLE_KEYS.has(normalizedRoleKey)) {
+    return [...AllPermissions];
+  }
 
   const matchedRoles = await findRolesByKeys([normalizedRoleKey], tenantId);
   const matchedRole = matchedRoles[0];
@@ -557,10 +561,15 @@ const getResolvedUserAccess = async (user) => {
   const roles = await getUserRoleAssignments(user);
   const roleIds = roles.map((role) => role._id);
   const rolePermissionMap = await getRolePermissionsMapByRoleId(roleIds);
-  const permissions = uniqueStrings(
-    roles.flatMap((role) => rolePermissionMap[String(role._id)] || []),
-  );
   const roleKeys = roles.map((role) => normalizeRoleKey(role.key));
+  const hasFullAccessRole =
+    roleKeys.some((roleKey) => FULL_ACCESS_ROLE_KEYS.has(roleKey)) ||
+    FULL_ACCESS_ROLE_KEYS.has(normalizeRoleKey(user?.role));
+  const permissions = hasFullAccessRole
+    ? [...AllPermissions]
+    : uniqueStrings(
+        roles.flatMap((role) => rolePermissionMap[String(role._id)] || []),
+      );
   const primaryRole = getPrimaryRoleKey(user.role, roleKeys);
 
   const resolvedAccess = {
@@ -648,9 +657,14 @@ const getPermissionMetadata = async (tenantId = null) => {
       };
     }),
     rolePermissions: roles.reduce((accumulator, role) => {
-      accumulator[normalizeRoleKey(role.key)] = uniqueStrings(
-        expandPermissionEntries(rolePermissionMap[String(role._id)] || []),
-      );
+      const normalizedRoleKey = normalizeRoleKey(role.key);
+      accumulator[normalizedRoleKey] = FULL_ACCESS_ROLE_KEYS.has(
+        normalizedRoleKey,
+      )
+        ? [...AllPermissions]
+        : uniqueStrings(
+            expandPermissionEntries(rolePermissionMap[String(role._id)] || []),
+          );
       return accumulator;
     }, {}),
     roles: roles.map((role) => ({
