@@ -423,6 +423,22 @@ exports.updateOrderStatus = async (req, res) => {
         message: "Status is required",
       });
     }
+    const canFullyUpdateOrderStatus = Boolean(
+      req.user?.hasPermission?.("ORDER_UPDATE_STATUS"),
+    );
+    const canMarkServedOnly = Boolean(
+      req.user?.hasPermission?.("KITCHEN_MARK_SERVED"),
+    );
+    if (
+      !canFullyUpdateOrderStatus &&
+      (!canMarkServedOnly || String(status).trim().toLowerCase() !== "served")
+    ) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "You only have permission to mark ready orders as served.",
+      });
+    }
     const order = await orderManager.updateOrderStatus(
       req.params.id,
       status,
@@ -441,6 +457,18 @@ exports.updateOrderStatus = async (req, res) => {
       error.message.includes("Invalid status transition")
     ) {
       return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message.includes("Only chefs can cancel orders")) {
+      return res.status(403).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message.includes("only have permission to mark")) {
+      return res.status(403).json({
         success: false,
         message: error.message,
       });

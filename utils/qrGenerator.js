@@ -113,7 +113,7 @@ const verifyQRToken = async (tableId, token) => {
         message: "Table is inactive",
       };
     }
-    if (table.status !== "available") {
+    if (!["available", "cleaning"].includes(table.status)) {
       return {
         isValid: false,
         message: `Table is currently ${table.status}`,

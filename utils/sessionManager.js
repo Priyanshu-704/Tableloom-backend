@@ -84,22 +84,19 @@ const emitSessionOrderUpdates = async (customerId, sessionId) => {
 };
 exports.createCustomerSession = async (tableId, token, customerData = {}) => {
   try {
-    const { name, email, phone } = customerData;
-    if (!name) {
-      throw new Error("Name is required to start a session");
-    }
-    if (!email) {
-      throw new Error("Email is required to start a session");
-    }
-    if (!phone) {
-      throw new Error("Phone is required to start a session");
-    }
+    const normalizedName = String(customerData?.name || "").trim();
+    const normalizedEmail = String(customerData?.email || "")
+      .trim()
+      .toLowerCase();
+    const normalizedPhone = String(
+      customerData?.phone || customerData?.mobile || "",
+    ).trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (normalizedEmail && !emailRegex.test(normalizedEmail)) {
       throw new Error("Invalid email format");
     }
     const phoneRegex = /^[6-9]\d{9}$/;
-    if (!phoneRegex.test(phone)) {
+    if (normalizedPhone && !phoneRegex.test(normalizedPhone)) {
       throw new Error("Invalid phone number");
     }
     const table = await Table.findById(tableId);
@@ -126,6 +123,7 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
         await existingSession.save();
         table.status = "cleaning";
         table.currentCustomer = null;
+        table.currentOrder = null;
         await table.save();
       } else {
         return {
@@ -134,19 +132,16 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
         };
       }
     }
-    if (table.status === "occupied") {
-      throw new Error("Table is currently occupied");
-    }
-    if (table.status === "maintenance") {
-      throw new Error("Table is under maintenance");
+    if (!["available", "cleaning"].includes(table.status)) {
+      throw new Error(`Table is currently ${table.status}`);
     }
     const sessionId = generateSessionId();
     const customer = await Customer.create({
       sessionId,
       table: tableId,
-      name: customerData.name,
-      phone: customerData.phone,
-      email: customerData.email,
+      name: normalizedName || undefined,
+      phone: normalizedPhone || undefined,
+      email: normalizedEmail || undefined,
       sessionStart: new Date(),
       lastActivity: new Date(),
       sessionStatus: "active",
@@ -169,16 +164,29 @@ exports.getCustomerSession = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
       sessionId,
-      isActive: true,
-      sessionStatus: {
-        $in: ["active", "payment_pending"],
-      },
+      $or: [
+        {
+          isActive: true,
+          sessionStatus: {
+            $in: ["active", "payment_pending", "payment_processing"],
+          },
+        },
+        {
+          isActive: false,
+          sessionStatus: "completed",
+          retainSessionData: true,
+          isAccessibleForBilling: true,
+        },
+      ],
     })
       .populate("table", "tableNumber tableName capacity location status")
       .populate("currentOrder", "orderNumber status totalAmount items");
     if (!customer) {
       logger.info("Session not found or expired:", sessionId);
       return null;
+    }
+    if (!customer.isActive) {
+      return customer;
     }
     const timeoutMinutes = SESSION_TIMEOUT_MINUTES;
     const timeoutTime = new Date(Date.now() - timeoutMinutes * 60 * 1000);
@@ -239,13 +247,41 @@ exports.customerLogout = async (sessionId) => {
     }
     const customer = await Customer.findOne({
       sessionId,
-      isActive: true,
-      sessionStatus: {
-        $in: ["active", "payment_pending"],
-      },
+      $or: [
+        {
+          isActive: true,
+          sessionStatus: {
+            $in: ["active", "payment_pending"],
+          },
+        },
+        {
+          isActive: false,
+          sessionStatus: "completed",
+          retainSessionData: true,
+          isAccessibleForBilling: true,
+        },
+      ],
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
+    }
+    if (!customer.isActive && customer.sessionStatus === "completed") {
+      const completedPaymentMethod = String(customer.paymentMethod || "")
+        .trim()
+        .toLowerCase();
+      const shouldRedirectToThankYou =
+        customer.paymentStatus === "paid" || completedPaymentMethod === "cash";
+      return {
+        sessionId: customer.sessionId,
+        sessionStatus: customer.sessionStatus,
+        sessionEnd: customer.sessionEnd,
+        paymentMethod: customer.paymentMethod || "",
+        paymentStatus: customer.paymentStatus || "pending",
+        redirectToThankYou: shouldRedirectToThankYou,
+        thankYouMessage: shouldRedirectToThankYou
+          ? "Payment completed successfully. Thank you for dining with us."
+          : "",
+      };
     }
     if (customer.currentOrder) {
       const order = await Order.findById(customer.currentOrder);
@@ -432,6 +468,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
         errorType: "session_not_found",
       };
     }
+    const originalSessionStatus = customer.sessionStatus;
     customer.sessionStatus = "cancelled";
     customer.sessionEnd = new Date();
     customer.isActive = false;
@@ -449,7 +486,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       sessionStart: customer.sessionStart,
       hadTable: !!customer.table,
       hadOrders: customer.totalAmount > 0,
-      originalStatus: customer.sessionStatus,
+      originalStatus: originalSessionStatus,
       timestamp: new Date(),
     };
     await customer.save();
@@ -466,7 +503,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
       await customer.table.save();
     }
     const activeOrders = await Order.find({
-      customerId: customer._id,
+      customer: customer._id,
       status: {
         $in: ["pending", "preparing", "ready"],
       },
@@ -474,7 +511,7 @@ exports.cancelSession = async (sessionId, reason = "", cancelledBy = null) => {
     if (activeOrders.length > 0) {
       await Order.updateMany(
         {
-          customerId: customer._id,
+          customer: customer._id,
           status: {
             $in: ["pending", "preparing", "ready"],
           },
@@ -1360,6 +1397,13 @@ exports.requestBillForSession = async (
       String(email || customer.email || "")
         .trim()
         .toLowerCase() || null;
+    if (!resolvedEmail) {
+      throw new Error("Email is required to request the bill");
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(resolvedEmail)) {
+      throw new Error("Please enter a valid email address");
+    }
     const bill = await billManager.generateBill(
       sessionId,
       resolvedEmail,

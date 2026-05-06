@@ -43,21 +43,37 @@ router.post(
   protectCustomerSession(),
   generateBillBeforePayment,
 );
-router.get("/session/:sessionId", protectCustomerSession(), getCustomerSession);
+router.get(
+  "/session/:sessionId",
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
+  getCustomerSession,
+);
 router.put(
   "/session/:sessionId/complete-online",
   protectCustomerSession(),
   completeSessionOnline,
 );
-router.put("/session/:sessionId/logout", protectCustomerSession(), customerLogout);
+router.put(
+  "/session/:sessionId/logout",
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
+  customerLogout,
+);
 router.get(
   "/session/:sessionId/with-bill",
-  protectCustomerSession(),
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
   getSessionWithBill,
 );
 router.get(
   "/session/:sessionId/bill-summary",
-  protectCustomerSession(),
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
   getSessionBillSummary,
 );
 router.post(

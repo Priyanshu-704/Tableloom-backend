@@ -317,7 +317,7 @@ exports.updateTableStatus = async (req, res) => {
       occupied: ["available", "cleaning"],
       reserved: ["available", "occupied"],
       maintenance: ["available"],
-      cleaning: ["available"],
+      cleaning: ["available", "occupied"],
     };
     if (!validTransitions[table.status]?.includes(status)) {
       return res.status(400).json({

@@ -11,7 +11,12 @@ const {
   getOrderStatistics,
   getOrdersByTable,
 } = require("../controllers/orderController");
-const { protect, hasPermission, optionalAuth } = require("../middleware/auth");
+const {
+  protect,
+  hasPermission,
+  hasAnyPermission,
+  optionalAuth,
+} = require("../middleware/auth");
 const {
   optionalCustomerSession,
   protectCustomerSession,
@@ -27,7 +32,7 @@ router.post("/:id/payment", optionalAuth, optionalCustomerSession(), processPaym
 router.use(protect);
 router.put(
   "/:id/status",
-  hasPermission("ORDER_UPDATE_STATUS"),
+  hasAnyPermission("ORDER_UPDATE_STATUS", "KITCHEN_MARK_SERVED"),
   updateOrderStatus,
 );
 router.get(

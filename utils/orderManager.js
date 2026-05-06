@@ -531,7 +531,10 @@ exports.updateOrderStatus = async (
       if (!user) {
         throw new Error("User not found");
       }
-      userRole = user.role;
+      userRole = String(user.role || "").toLowerCase();
+    }
+    if (newStatus === "cancelled" && userRole && userRole !== "chef") {
+      throw new Error("Only chefs can cancel orders");
     }
     const rolePermissions = {
       chef: [
@@ -608,7 +611,8 @@ exports.updateOrderStatus = async (
       case "cancelled":
         order.cancelledAt = new Date();
         order.cancelledBy = userId;
-        order.cancellationReason = notes;
+        order.cancellationReason =
+          String(notes || "").trim() || "Cancelled by chef";
         break;
     }
     if (
@@ -661,6 +665,35 @@ exports.updateOrderStatus = async (
         orderObj,
       );
     }
+    if (newStatus === "cancelled") {
+      logger.info(
+        `Order ${order.orderNumber || order._id} cancelled by ${userRole || "system"}`,
+      );
+      try {
+        await notificationManager.createNotification({
+          title: `Order Cancelled - Table ${orderObj.table?.tableNumber || ""}`,
+          message: `Order #${orderObj.orderNumber || ""} was cancelled by kitchen staff.`,
+          type: "system_alert",
+          priority: "medium",
+          recipientType: "role",
+          roles: ["admin", "manager"],
+          relatedTo: orderObj._id,
+          relatedModel: "Order",
+          metadata: {
+            orderId: orderObj._id,
+            orderNumber: orderObj.orderNumber,
+            tableNumber: orderObj.table?.tableNumber || "",
+            cancelledBy: userId || null,
+            cancellationReason: order.cancellationReason || "",
+          },
+        });
+      } catch (notificationError) {
+        logger.error(
+          "Failed to create order cancellation notification:",
+          notificationError,
+        );
+      }
+    }
     return orderObj;
   } catch (error) {
     logger.error("Update order status failed:", error);
@@ -696,12 +729,42 @@ exports.processPayment = async (orderId, paymentData) => {
         },
         $set: {
           paymentStatus: "paid",
-          sessionStatus: "payment_completed",
+          paymentMethod: paymentData.method,
+          paymentReference: paymentData.transactionId || "",
         },
       });
     }
     await order.save();
-    return order;
+    await order.populate("customer", "sessionId name phone email");
+    await order.populate("table", "tableNumber tableName capacity location");
+    await order.populate(
+      "items.menuItem",
+      "name description image thumbnail category tags nutritionalInfo",
+    );
+
+    const orderObj = order.toObject();
+    if (Array.isArray(orderObj.items)) {
+      orderObj.items = orderObj.items.map((item) => {
+        if (item.menuItem) {
+          item.menuItem = transformMenuItemData(item.menuItem);
+        }
+        return item;
+      });
+    }
+
+    socketManager.emitOrderStatusUpdate(orderObj);
+    socketManager.emitOrderUpdateToKitchen(orderObj);
+    if (order.sessionId) {
+      socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
+      await notifyCustomerSession(
+        order.sessionId,
+        `Order #${orderObj.orderNumber || ""} paid`,
+        "Your payment was received successfully.",
+        orderObj,
+      );
+    }
+    await syncPendingSessionBillIfNeeded(order.sessionId);
+    return orderObj;
   } catch (error) {
     logger.error("Process payment failed:", error);
     throw error;

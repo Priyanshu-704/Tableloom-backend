@@ -24,7 +24,10 @@ const resolveSessionIdFromRequest = (
   return "";
 };
 
-const customerSessionIsAccessible = (customer) => {
+const customerSessionIsAccessible = (
+  customer,
+  { allowCompleted = false } = {},
+) => {
   if (!customer) {
     return false;
   }
@@ -38,6 +41,16 @@ const customerSessionIsAccessible = (customer) => {
   if (customer.isActive && activeStatuses.has(customer.sessionStatus)) {
     return true;
   }
+
+  if (
+    allowCompleted &&
+    customer.sessionStatus === "completed" &&
+    customer.retainSessionData &&
+    customer.isAccessibleForBilling !== false
+  ) {
+    return true;
+  }
+
   return false;
 };
 
@@ -56,7 +69,11 @@ const extractCustomerSessionToken = (req) => {
   return "";
 };
 
-const hydrateCustomerSession = async (req, token) => {
+const hydrateCustomerSession = async (
+  req,
+  token,
+  { allowCompleted = false } = {},
+) => {
   const decoded = verifyCustomerSessionToken(token);
   const tokenSessionId = getTokenSessionId(decoded);
   if (!tokenSessionId) {
@@ -67,7 +84,7 @@ const hydrateCustomerSession = async (req, token) => {
     sessionId: tokenSessionId,
   }).populate("table", "tableNumber tableName capacity location status");
 
-  if (!customer || !customerSessionIsAccessible(customer)) {
+  if (!customer || !customerSessionIsAccessible(customer, { allowCompleted })) {
     throw new AppError("Customer session not found or expired.", 401);
   }
 
@@ -89,6 +106,7 @@ const protectCustomerSession = ({
   field = "sessionId",
   sources = ["params", "body", "query"],
   optional = false,
+  allowCompleted = false,
 } = {}) => {
   return async (req, _res, next) => {
     try {
@@ -106,7 +124,9 @@ const protectCustomerSession = ({
         );
       }
 
-      await hydrateCustomerSession(req, token);
+      await hydrateCustomerSession(req, token, {
+        allowCompleted,
+      });
 
       const requestedSessionId = resolveSessionIdFromRequest(req, field, sources);
       if (requestedSessionId && requestedSessionId !== req.customerSessionId) {
