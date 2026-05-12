@@ -652,6 +652,7 @@ exports.updateOrderStatus = async (
         return itemObj;
       });
     }
+    await kitchenManager.syncKitchenOrderFromParentStatus(order._id, newStatus);
     socketManager.emitOrderStatusUpdate(orderObj);
     if (["confirmed", "preparing", "ready", "cancelled"].includes(newStatus)) {
       socketManager.emitOrderUpdateToKitchen(orderObj);

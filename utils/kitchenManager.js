@@ -35,6 +35,99 @@ const deriveOrderStatusFromKitchenItems = (items = []) => {
   }
   return null;
 };
+exports.syncKitchenOrderFromParentStatus = async (orderId, nextStatus) => {
+  if (!orderId || !nextStatus) {
+    return null;
+  }
+
+  const kitchenOrder = await KitchenOrder.findOne({
+    order: orderId,
+  });
+  if (!kitchenOrder) {
+    return null;
+  }
+
+  const stationLoadDeltas = new Map();
+  const decrementStationLoadIfNeeded = (item, targetStatus) => {
+    if (
+      !item?.station ||
+      !["ready", "served", "cancelled"].includes(targetStatus) ||
+      ["ready", "served", "cancelled"].includes(item.status)
+    ) {
+      return;
+    }
+    const stationId = String(item.station || "").trim();
+    if (!stationId) {
+      return;
+    }
+    stationLoadDeltas.set(
+      stationId,
+      (stationLoadDeltas.get(stationId) || 0) - Number(item.quantity || 0),
+    );
+  };
+
+  if (nextStatus === "preparing") {
+    kitchenOrder.items.forEach((item) => {
+      if (["pending", "accepted"].includes(item.status)) {
+        item.status = "preparing";
+        item.colorCode = kitchenItemStatusColors.preparing;
+      }
+    });
+    kitchenOrder.timers.startedCooking =
+      kitchenOrder.timers.startedCooking || new Date();
+  } else if (nextStatus === "ready") {
+    kitchenOrder.items.forEach((item) => {
+      if (!["served", "cancelled"].includes(item.status)) {
+        decrementStationLoadIfNeeded(item, "ready");
+        item.status = "ready";
+        item.colorCode = kitchenItemStatusColors.ready;
+        item.readyTime = item.readyTime || new Date();
+      }
+    });
+    kitchenOrder.timers.completedCooking =
+      kitchenOrder.timers.completedCooking || new Date();
+  } else if (nextStatus === "served" || nextStatus === "completed") {
+    kitchenOrder.items.forEach((item) => {
+      if (item.status !== "cancelled") {
+        decrementStationLoadIfNeeded(item, "served");
+        item.status = "served";
+        item.colorCode = kitchenItemStatusColors.served;
+        item.readyTime = item.readyTime || new Date();
+      }
+    });
+    kitchenOrder.timers.completedCooking =
+      kitchenOrder.timers.completedCooking || new Date();
+    kitchenOrder.timers.served = kitchenOrder.timers.served || new Date();
+  } else if (nextStatus === "cancelled") {
+    kitchenOrder.items.forEach((item) => {
+      if (!["served", "cancelled"].includes(item.status)) {
+        decrementStationLoadIfNeeded(item, "cancelled");
+        item.status = "cancelled";
+        item.colorCode = kitchenItemStatusColors.cancelled;
+      }
+    });
+    kitchenOrder.overallStatus = "cancelled";
+    kitchenOrder.isActive = false;
+  }
+
+  await kitchenOrder.save();
+
+  if (stationLoadDeltas.size > 0) {
+    await Promise.all(
+      Array.from(stationLoadDeltas.entries()).map(([stationId, delta]) =>
+        delta === 0
+          ? Promise.resolve(null)
+          : KitchenStation.findByIdAndUpdate(stationId, {
+              $inc: {
+                currentLoad: delta,
+              },
+            }),
+      ),
+    );
+  }
+
+  return kitchenOrder;
+};
 const syncParentOrderStatusFromKitchenOrder = async (kitchenOrder) => {
   const targetStatus = deriveOrderStatusFromKitchenItems(
     kitchenOrder?.items || [],

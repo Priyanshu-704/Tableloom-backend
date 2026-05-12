@@ -66,9 +66,22 @@ const parseCookieHeader = (cookieHeader = "") =>
       return accumulator;
     }, {});
 
+const extractBearerToken = (value = "") => {
+  const normalizedValue = String(value || "").trim();
+  if (!normalizedValue) {
+    return "";
+  }
+  return normalizedValue.startsWith("Bearer ")
+    ? normalizedValue.slice("Bearer ".length).trim()
+    : normalizedValue;
+};
+
 const getSocketAuthContext = async (socket) => {
   const cookies = parseCookieHeader(socket.handshake?.headers?.cookie || "");
-  const accessToken = cookies[ACCESS_TOKEN_COOKIE_NAME];
+  const accessToken =
+    cookies[ACCESS_TOKEN_COOKIE_NAME] ||
+    extractBearerToken(socket.handshake?.auth?.accessToken) ||
+    extractBearerToken(socket.handshake?.headers?.authorization);
   const customerSessionToken = cookies[CUSTOMER_SESSION_COOKIE_NAME];
   const authContext = {
     role: "",
@@ -504,7 +517,13 @@ exports.emitOrderStatusUpdate = (orderData) => {
   emitWithAliases(
     ROOMS.STAFF,
     EVENTS.ORDER_STATUS_UPDATED,
-    ["order-status-updated"],
+    ["order-status-updated", "order_status_updated"],
+    payload,
+  );
+  emitWithAliases(
+    ROOMS.MANAGEMENT,
+    EVENTS.ORDER_STATUS_UPDATED,
+    ["order-status-updated", "order_status_updated"],
     payload,
   );
 };
@@ -540,7 +559,24 @@ exports.emitNewOrderToKitchen = (orderData) => {
     ...orderData,
     timestamp: new Date(),
   };
-  emitWithAliases(ROOMS.KITCHEN, EVENTS.ORDER_NEW, ["new-order"], payload);
+  emitWithAliases(
+    ROOMS.KITCHEN,
+    EVENTS.ORDER_NEW,
+    ["new-order", "new_order"],
+    payload,
+  );
+  emitWithAliases(
+    ROOMS.STAFF,
+    EVENTS.ORDER_NEW,
+    ["new-order", "new_order"],
+    payload,
+  );
+  emitWithAliases(
+    ROOMS.MANAGEMENT,
+    EVENTS.ORDER_NEW,
+    ["new-order", "new_order"],
+    payload,
+  );
 };
 exports.emitOrderUpdateToKitchen = (orderData) => {
   const payload = {
@@ -550,7 +586,19 @@ exports.emitOrderUpdateToKitchen = (orderData) => {
   emitWithAliases(
     ROOMS.KITCHEN,
     EVENTS.ORDER_UPDATED,
-    ["order-updated"],
+    ["order-updated", "order_updated"],
+    payload,
+  );
+  emitWithAliases(
+    ROOMS.STAFF,
+    EVENTS.ORDER_UPDATED,
+    ["order-updated", "order_updated"],
+    payload,
+  );
+  emitWithAliases(
+    ROOMS.MANAGEMENT,
+    EVENTS.ORDER_UPDATED,
+    ["order-updated", "order_updated"],
     payload,
   );
   if (Array.isArray(orderData.stationUpdates)) {
