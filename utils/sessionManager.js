@@ -1290,6 +1290,48 @@ async function calculateSessionTotal(customerId) {
     return 0;
   }
 }
+
+const PAYMENT_READY_ORDER_STATUSES = new Set(["served", "completed"]);
+
+const buildPaymentEligibility = (orders = []) => {
+  const unpaidOrders = Array.isArray(orders) ? orders : [];
+  const blockedOrders = unpaidOrders.filter((order) => {
+    const normalizedStatus = String(order?.status || "")
+      .trim()
+      .toLowerCase();
+    return !PAYMENT_READY_ORDER_STATUSES.has(normalizedStatus);
+  });
+  const blockedStatuses = [
+    ...new Set(
+      blockedOrders
+        .map((order) =>
+          String(order?.status || "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const hasBillableOrders = unpaidOrders.length > 0;
+  const allOrdersServed = hasBillableOrders && blockedOrders.length === 0;
+  const statusLabel =
+    blockedStatuses.length > 0
+      ? blockedStatuses.join(", ").replace(/_/g, " ")
+      : "not served yet";
+
+  return {
+    hasBillableOrders,
+    allOrdersServed,
+    blockedOrderCount: blockedOrders.length,
+    blockedStatuses,
+    message: !hasBillableOrders
+      ? "No billable orders were found for this session yet."
+      : blockedOrders.length > 0
+        ? `Payment is available only after all orders are served. ${blockedOrders.length} unpaid order${blockedOrders.length === 1 ? " is" : "s are"} still ${statusLabel}.`
+        : "",
+  };
+};
+
 exports.getSessionWithBill = async (sessionId) => {
   try {
     const customer = await Customer.findOne({
@@ -1348,6 +1390,10 @@ exports.getSessionWithBill = async (sessionId) => {
       totalAmount += order.totalAmount || 0;
       itemsCount += order.items.length || 0;
     });
+    const paymentEligibility = buildPaymentEligibility(orders);
+    const canManageBill =
+      customer.sessionStatus === "active" ||
+      customer.sessionStatus === "payment_pending";
     return {
       session: customer,
       bill: bill,
@@ -1366,10 +1412,16 @@ exports.getSessionWithBill = async (sessionId) => {
         totalAmount: totalAmount || bill?.totalAmount || 0,
       },
       hasActiveBill: !!bill,
-      canRequestBill:
-        customer.sessionStatus === "active" ||
-        customer.sessionStatus === "payment_pending",
-      canCompleteSession: orders.length > 0 || Boolean(bill),
+      hasBillableOrders: paymentEligibility.hasBillableOrders,
+      allOrdersServed: paymentEligibility.allOrdersServed,
+      blockedOrderCount: paymentEligibility.blockedOrderCount,
+      blockedStatuses: paymentEligibility.blockedStatuses,
+      paymentBlockedMessage: canManageBill ? paymentEligibility.message : "",
+      canRequestBill: canManageBill && paymentEligibility.allOrdersServed,
+      canCompleteSession:
+        customer.sessionStatus === "completed"
+          ? orders.length > 0 || Boolean(bill)
+          : canManageBill && paymentEligibility.allOrdersServed,
     };
   } catch (error) {
     logger.error("Get session with bill failed:", error);
@@ -1392,6 +1444,19 @@ exports.requestBillForSession = async (
     }).populate("table");
     if (!customer) {
       throw new Error("Active customer session not found");
+    }
+    const unpaidOrders = await Order.find({
+      customer: customer._id,
+      paymentStatus: {
+        $ne: "paid",
+      },
+    }).select("status orderNumber totalAmount");
+    const paymentEligibility = buildPaymentEligibility(unpaidOrders);
+    if (!paymentEligibility.hasBillableOrders) {
+      throw new Error("No billable orders were found for this session yet.");
+    }
+    if (!paymentEligibility.allOrdersServed) {
+      throw new Error(paymentEligibility.message);
     }
     const resolvedEmail =
       String(email || customer.email || "")
