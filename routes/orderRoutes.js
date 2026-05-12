@@ -23,10 +23,18 @@ const {
 } = require("../middleware/customerSessionAuth");
 router.get(
   "/session/:sessionId/history",
-  protectCustomerSession(),
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
   getOrderHistoryBySession,
 );
-router.get("/session/:sessionId", protectCustomerSession(), getOrderBySession);
+router.get(
+  "/session/:sessionId",
+  protectCustomerSession({
+    allowCompleted: true,
+  }),
+  getOrderBySession,
+);
 router.get("/:id", optionalAuth, optionalCustomerSession(), getOrder);
 router.post("/:id/payment", optionalAuth, optionalCustomerSession(), processPayment);
 router.use(protect);
