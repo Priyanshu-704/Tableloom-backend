@@ -19,7 +19,9 @@ const {
   getAllPriceChanges,
   exportMenuItems,
   downloadImportTemplate,
+  downloadCategoryImportTemplate,
   bulkImportMenuItems,
+  bulkImportCategories,
   bulkUpdateMenuItems,
   getSizes,
   createSize,
@@ -68,6 +70,13 @@ router.post(
   }),
   handleUploadErrors,
   createCategory,
+);
+router.post(
+  "/categories/bulk/import",
+  hasPermission("MENU_IMPORT_EXPORT"),
+  handleCSVUpload,
+  handleUploadErrors,
+  bulkImportCategories,
 );
 router.put(
   "/categories/:id",
@@ -136,5 +145,10 @@ router.get(
   "/import/template",
   hasPermission("MENU_IMPORT_EXPORT"),
   downloadImportTemplate,
+);
+router.get(
+  "/categories/import/template",
+  hasPermission("MENU_IMPORT_EXPORT"),
+  downloadCategoryImportTemplate,
 );
 module.exports = router;

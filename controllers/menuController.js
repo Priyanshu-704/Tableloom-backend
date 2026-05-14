@@ -1,6 +1,7 @@
 const { logger } = require("./../utils/logger.js");
 const Category = require("../models/Category");
 const Coupon = require("../models/Coupon");
+const KitchenStation = require("../models/KitchenStation");
 const MenuItem = require("../models/MenuItem");
 const Size = require("../models/Size");
 const PriceHistory = require("../models/PriceHistory");
@@ -192,6 +193,226 @@ const getCategoryWithStation = async (categoryId) => {
     return null;
   }
   return Category.findById(categoryId).select("_id kitchenStation").lean();
+};
+const escapeRegExp = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const normalizeDisplayName = (value = "") =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ");
+const buildSizeCode = (value = "") => {
+  const normalized = normalizeDisplayName(value);
+  if (!normalized) {
+    return "SIZE";
+  }
+  const parts = normalized
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const acronym =
+    parts.length > 1
+      ? parts
+          .map((part) => part[0])
+          .join("")
+          .slice(0, 6)
+      : normalized.replace(/[^a-zA-Z0-9]/g, "").slice(0, 6);
+  return String(acronym || "SIZE").toUpperCase();
+};
+const ensureUniqueSizeCode = async (baseCode = "SIZE") => {
+  const normalizedBase = String(baseCode || "SIZE")
+    .trim()
+    .toUpperCase()
+    .slice(0, 10);
+  let candidate = normalizedBase || "SIZE";
+  let suffix = 1;
+  while (await Size.exists({
+    code: candidate,
+  })) {
+    suffix += 1;
+    const suffixLabel = String(suffix);
+    candidate = `${normalizedBase.slice(0, Math.max(1, 10 - suffixLabel.length))}${suffixLabel}`;
+  }
+  return candidate;
+};
+const resolveKitchenStation = async (stationValue = "") => {
+  const normalizedValue = normalizeDisplayName(stationValue);
+  if (!normalizedValue) {
+    return null;
+  }
+  if (/^[a-f\d]{24}$/i.test(normalizedValue)) {
+    const byId = await KitchenStation.findById(normalizedValue)
+      .select("_id name stationType")
+      .lean();
+    if (byId) {
+      return byId;
+    }
+  }
+  return KitchenStation.findOne({
+    $or: [
+      {
+        name: new RegExp(`^${escapeRegExp(normalizedValue)}$`, "i"),
+      },
+      {
+        stationType: String(normalizedValue).toLowerCase(),
+      },
+    ],
+  })
+    .select("_id name stationType")
+    .lean();
+};
+const getDefaultKitchenStation = async () =>
+  KitchenStation.findOne({
+    isActive: true,
+    status: "active",
+  })
+    .select("_id name stationType")
+    .sort({
+      displayOrder: 1,
+      name: 1,
+    })
+    .lean();
+const findOrCreateSizeByValue = async ({
+  sizeValue,
+  sizeCache,
+} = {}) => {
+  const normalizedValue = normalizeDisplayName(sizeValue);
+  const cacheKey = normalizedValue.toLowerCase();
+  if (!normalizedValue) {
+    return {
+      sizeDoc: null,
+      created: false,
+    };
+  }
+  if (sizeCache?.has(cacheKey)) {
+    return {
+      sizeDoc: sizeCache.get(cacheKey),
+      created: false,
+    };
+  }
+  let sizeDoc;
+  if (/^[a-f\d]{24}$/i.test(normalizedValue)) {
+    sizeDoc = await Size.findById(normalizedValue).select("_id name code").lean();
+  }
+  if (!sizeDoc) {
+    sizeDoc = await Size.findOne({
+      $or: [
+        {
+          code: normalizedValue.toUpperCase(),
+        },
+        {
+          name: new RegExp(`^${escapeRegExp(normalizedValue)}$`, "i"),
+        },
+      ],
+    })
+      .select("_id name code")
+      .lean();
+  }
+  let created = false;
+  if (!sizeDoc) {
+    const code = await ensureUniqueSizeCode(buildSizeCode(normalizedValue));
+    const createdSize = await Size.create({
+      name: normalizedValue,
+      code,
+      isActive: true,
+    });
+    sizeDoc = {
+      _id: createdSize._id,
+      name: createdSize.name,
+      code: createdSize.code,
+    };
+    created = true;
+  }
+  sizeCache?.set(cacheKey, sizeDoc || null);
+  sizeCache?.set(String(sizeDoc?.code || "").trim().toLowerCase(), sizeDoc || null);
+  return {
+    sizeDoc: sizeDoc || null,
+    created,
+  };
+};
+const findOrCreateCategoryByValue = async ({
+  categoryValue,
+  stationValue = "",
+  description = "",
+  userId,
+  categoryCache,
+} = {}) => {
+  const normalizedValue = normalizeDisplayName(categoryValue);
+  const cacheKey = normalizedValue.toLowerCase();
+  if (!normalizedValue) {
+    return {
+      categoryDoc: null,
+      created: false,
+      stationAssigned: false,
+    };
+  }
+  if (categoryCache?.has(cacheKey)) {
+    return {
+      categoryDoc: categoryCache.get(cacheKey),
+      created: false,
+      stationAssigned: false,
+    };
+  }
+  let categoryDoc;
+  if (/^[a-f\d]{24}$/i.test(normalizedValue)) {
+    categoryDoc = await Category.findById(normalizedValue)
+      .select("_id name kitchenStation")
+      .lean();
+  }
+  if (!categoryDoc) {
+    categoryDoc = await Category.findOne({
+      name: new RegExp(`^${escapeRegExp(normalizedValue)}$`, "i"),
+    })
+      .select("_id name kitchenStation")
+      .lean();
+  }
+  let created = false;
+  let stationAssigned = false;
+  let stationDoc =
+    (await resolveKitchenStation(stationValue)) ||
+    (await getDefaultKitchenStation());
+  if (categoryDoc && !categoryDoc.kitchenStation && stationDoc?._id) {
+    const updatedCategory = await Category.findByIdAndUpdate(
+      categoryDoc._id,
+      {
+        kitchenStation: stationDoc._id,
+      },
+      {
+        new: true,
+      },
+    )
+      .select("_id name kitchenStation")
+      .lean();
+    categoryDoc = updatedCategory || categoryDoc;
+    stationAssigned = true;
+  }
+  if (!categoryDoc) {
+    if (!stationDoc?._id) {
+      throw new Error(
+        `No active kitchen station is available to create category '${normalizedValue}'`,
+      );
+    }
+    const createdCategory = await Category.create({
+      name: normalizedValue,
+      description: normalizeDisplayName(description),
+      displayOrder: 0,
+      kitchenStation: stationDoc._id,
+      isActive: true,
+      createdBy: userId,
+    });
+    categoryDoc = {
+      _id: createdCategory._id,
+      name: createdCategory.name,
+      kitchenStation: createdCategory.kitchenStation,
+    };
+    created = true;
+    stationAssigned = true;
+  }
+  categoryCache?.set(cacheKey, categoryDoc || null);
+  return {
+    categoryDoc: categoryDoc || null,
+    created,
+    stationAssigned,
+  };
 };
 const normalizeSeasonalData = (value) => {
   if (value === undefined || value === null || value === "") {
@@ -2148,6 +2369,9 @@ exports.bulkUpdateMenuItems = async (req, res) => {
           isAvailable,
           isActive,
           categoryId,
+          categoryName,
+          categoryDescription,
+          kitchenStationId,
           reason,
         } = update;
         const menuItem = await MenuItem.findById(menuItemId);
@@ -2387,7 +2611,41 @@ exports.bulkUpdateMenuItems = async (req, res) => {
             });
             break;
           case "updateCategories":
-            menuItem.category = categoryId;
+            let resolvedCategory = null;
+            if (categoryId) {
+              resolvedCategory = await Category.findById(categoryId)
+                .select("_id name kitchenStation")
+                .lean();
+            } else if (categoryName) {
+              resolvedCategory = (
+                await findOrCreateCategoryByValue({
+                  categoryValue: categoryName,
+                  stationValue: kitchenStationId,
+                  description: categoryDescription,
+                  userId: req.user._id,
+                  categoryCache: new Map(),
+                })
+              ).categoryDoc;
+            }
+            if (!resolvedCategory?._id || !resolvedCategory?.kitchenStation) {
+              results.failed++;
+              {
+                const reason =
+                  "A valid target category with a kitchen station is required";
+                results.errors.push(reason);
+                addRowResult({
+                  menuItemId,
+                  itemName: menuItem.name,
+                  status: "failed",
+                  actionLabel: "failed",
+                  size: "All sizes",
+                  reason,
+                });
+              }
+              continue;
+            }
+            menuItem.category = resolvedCategory._id;
+            menuItem.station = resolvedCategory.kitchenStation;
             menuItem.updatedBy = req.user.id;
             await menuItem.save();
             results.successful++;
@@ -2397,7 +2655,7 @@ exports.bulkUpdateMenuItems = async (req, res) => {
               status: "success",
               actionLabel: "updated",
               size: "All sizes",
-              reason: `Category updated successfully`,
+              reason: `Category updated to ${resolvedCategory.name} successfully`,
             });
             break;
           default:
@@ -2436,6 +2694,7 @@ exports.bulkUpdateMenuItems = async (req, res) => {
       message: `Bulk ${action} completed`,
       data: results,
     });
+    invalidateMenuReadCaches();
   } catch (error) {
     logger.error(error);
     res.status(500).json({
@@ -2737,6 +2996,189 @@ exports.downloadImportTemplate = async (req, res) => {
     });
   }
 };
+exports.downloadCategoryImportTemplate = async (req, res) => {
+  try {
+    const headers = [
+      "name",
+      "description",
+      "kitchenStation",
+      "displayOrder",
+      "isActive",
+    ];
+    const rows = [
+      [
+        "Pizzas",
+        "Classic oven-baked pizzas",
+        "Main Course",
+        "1",
+        "true",
+      ],
+      [
+        "Beverages",
+        "Hot and cold drinks",
+        "Beverage",
+        "2",
+        "true",
+      ],
+    ];
+    const csvTemplate = `${headers.join(",")}\n${rows.map((row) => row.map((value) => `"${String(value || "").replace(/"/g, '""')}"`).join(",")).join("\n")}\n`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=category-import-template.csv",
+    );
+    res.status(200).send(csvTemplate);
+  } catch (error) {
+    logger.error(error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to generate category import template",
+      error: error.message,
+    });
+  }
+};
+exports.bulkImportCategories = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "CSV file is required for category import",
+      });
+    }
+    const rows = await parseCSV(req.file.buffer);
+    req.file.buffer = undefined;
+    const results = {
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+      rows: [],
+    };
+    const getRowValue = (row, aliases = []) => {
+      for (const alias of aliases) {
+        if (!Object.prototype.hasOwnProperty.call(row, alias)) {
+          continue;
+        }
+        const value = row[alias];
+        if (value === undefined || value === null) {
+          continue;
+        }
+        const normalized = String(value).trim();
+        if (normalized) {
+          return normalized;
+        }
+      }
+      return "";
+    };
+    const parseBoolean = (value, fallback = true) => {
+      if (value === undefined || value === null || value === "") {
+        return fallback;
+      }
+      return ["true", "1", "yes", "y"].includes(
+        String(value).trim().toLowerCase(),
+      );
+    };
+    for (const [index, row] of rows.entries()) {
+      const rowNumber = index + 2;
+      try {
+        const name = normalizeDisplayName(
+          getRowValue(row, ["name", "category", "Category"]),
+        );
+        const description = normalizeDisplayName(
+          getRowValue(row, ["description", "Description"]),
+        );
+        const stationValue = getRowValue(row, [
+          "kitchenStation",
+          "station",
+          "stationName",
+          "Kitchen Station",
+        ]);
+        if (!name) {
+          const reason = "Category name is required";
+          results.failed += 1;
+          results.errors.push(`Row ${rowNumber}: ${reason}`);
+          results.rows.push({
+            rowNumber,
+            categoryName: "",
+            station: stationValue,
+            status: "failed",
+            action: "failed",
+            reason,
+          });
+          continue;
+        }
+        const stationDoc =
+          (await resolveKitchenStation(stationValue)) ||
+          (await getDefaultKitchenStation());
+        if (!stationDoc?._id) {
+          throw new Error(
+            `No active kitchen station is available for category '${name}'`,
+          );
+        }
+        let category = await Category.findOne({
+          name: new RegExp(`^${escapeRegExp(name)}$`, "i"),
+        });
+        let action = "updated";
+        if (!category) {
+          category = await Category.create({
+            name,
+            description,
+            kitchenStation: stationDoc._id,
+            displayOrder: Number(row.displayOrder) || 0,
+            isActive: parseBoolean(row.isActive, true),
+            createdBy: req.user._id,
+          });
+          results.created += 1;
+          action = "created";
+        } else {
+          category.description = description || category.description || "";
+          category.kitchenStation = stationDoc._id;
+          category.displayOrder = Number(row.displayOrder) || 0;
+          category.isActive = parseBoolean(row.isActive, category.isActive);
+          await category.save();
+          results.updated += 1;
+        }
+        results.rows.push({
+          rowNumber,
+          categoryName: category.name,
+          station: stationDoc.name,
+          status: "success",
+          action,
+          reason:
+            action === "created"
+              ? "Category created successfully"
+              : "Category updated successfully",
+        });
+      } catch (error) {
+        results.failed += 1;
+        results.errors.push(`Row ${rowNumber}: ${error.message}`);
+        results.rows.push({
+          rowNumber,
+          categoryName:
+            row.name || row.category || row.Category || row.categoryName || "",
+          station:
+            row.kitchenStation || row.station || row.stationName || "",
+          status: "failed",
+          action: "failed",
+          reason: error.message,
+        });
+      }
+    }
+    invalidateMenuReadCaches();
+    return res.status(200).json({
+      success: true,
+      message: "Category import completed",
+      data: results,
+    });
+  } catch (error) {
+    logger.error(error);
+    return res.status(500).json({
+      success: false,
+      message: "Category import failed",
+      error: error.message,
+    });
+  }
+};
 exports.bulkImportMenuItems = async (req, res) => {
   try {
     if (!req.file) {
@@ -2757,8 +3199,6 @@ exports.bulkImportMenuItems = async (req, res) => {
     req.file.buffer = undefined;
     const categoryCache = new Map();
     const sizeCache = new Map();
-    const escapeRegExp = (value = "") =>
-      String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const getRowValue = (row, aliases = []) => {
       for (const alias of aliases) {
         if (!Object.prototype.hasOwnProperty.call(row, alias)) {
@@ -2835,63 +3275,6 @@ exports.bulkImportMenuItems = async (req, res) => {
         .map((item) => item.trim())
         .filter(Boolean);
     };
-    const resolveSize = async (sizeValue) => {
-      const cacheKey = String(sizeValue || "")
-        .trim()
-        .toLowerCase();
-      if (!cacheKey) {
-        return null;
-      }
-      if (sizeCache.has(cacheKey)) {
-        return sizeCache.get(cacheKey);
-      }
-      let sizeDoc;
-      if (/^[a-f\d]{24}$/i.test(cacheKey)) {
-        sizeDoc = await Size.findById(cacheKey).select("_id name code").lean();
-      }
-      if (!sizeDoc) {
-        sizeDoc = await Size.findOne({
-          $or: [
-            {
-              code: String(sizeValue).trim().toUpperCase(),
-            },
-            {
-              name: new RegExp(`^${escapeRegExp(sizeValue)}$`, "i"),
-            },
-          ],
-        })
-          .select("_id name code")
-          .lean();
-      }
-      sizeCache.set(cacheKey, sizeDoc || null);
-      return sizeDoc || null;
-    };
-    const resolveCategory = async (categoryValue) => {
-      const cacheKey = String(categoryValue || "")
-        .trim()
-        .toLowerCase();
-      if (!cacheKey) {
-        return null;
-      }
-      if (categoryCache.has(cacheKey)) {
-        return categoryCache.get(cacheKey);
-      }
-      let categoryDoc;
-      if (/^[a-f\d]{24}$/i.test(cacheKey)) {
-        categoryDoc = await Category.findById(cacheKey)
-          .select("_id name kitchenStation")
-          .lean();
-      }
-      if (!categoryDoc) {
-        categoryDoc = await Category.findOne({
-          name: new RegExp(`^${escapeRegExp(categoryValue)}$`, "i"),
-        })
-          .select("_id name kitchenStation")
-          .lean();
-      }
-      categoryCache.set(cacheKey, categoryDoc || null);
-      return categoryDoc || null;
-    };
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
       try {
@@ -2908,6 +3291,13 @@ exports.bulkImportMenuItems = async (req, res) => {
           "sizeId",
           "sizeCode",
           "Size",
+        ]);
+        const stationValue = getRowValue(row, [
+          "station",
+          "stationName",
+          "kitchenStation",
+          "kitchenStationName",
+          "Station",
         ]);
         const priceValue = getRowValue(row, ["price", "Price"]);
         if (!name || !categoryValue || !sizeValue) {
@@ -2945,39 +3335,24 @@ exports.bulkImportMenuItems = async (req, res) => {
           });
           continue;
         }
-        const sizeDoc = await resolveSize(sizeValue);
-        if (!sizeDoc) {
-          const reason = `Size '${sizeValue}' was not found. Use a size ID, code, or exact name.`;
-          results.failed++;
-          results.errors.push(`Row ${rowNumber}: ${reason}`);
-          addRowResult({
-            rowNumber,
-            itemName: name,
-            category: categoryValue,
-            size: sizeValue,
-            status: "failed",
-            action: "failed",
-            reason,
+        const { sizeDoc, created: createdSize } =
+          await findOrCreateSizeByValue({
+            sizeValue,
+            sizeCache,
           });
-          continue;
-        }
-        const categoryDoc = await resolveCategory(categoryValue);
-        if (!categoryDoc || !categoryDoc.kitchenStation) {
-          const reason = !categoryDoc
-            ? `Category '${categoryValue}' was not found. Use a category ID or exact name.`
-            : `Kitchen station not configured for category '${categoryDoc.name || categoryValue}'.`;
-          results.failed++;
-          results.errors.push(`Row ${rowNumber}: ${reason}`);
-          addRowResult({
-            rowNumber,
-            itemName: name,
-            category: categoryDoc?.name || categoryValue,
-            size: sizeDoc.code || sizeDoc.name || sizeValue,
-            status: "failed",
-            action: "failed",
-            reason,
+        const { categoryDoc, created: createdCategory } =
+          await findOrCreateCategoryByValue({
+            categoryValue,
+            stationValue,
+            userId: req.user._id,
+            categoryCache,
           });
-          continue;
+        if (!sizeDoc || !categoryDoc?.kitchenStation) {
+          throw new Error(
+            !sizeDoc
+              ? `Unable to resolve or create size '${sizeValue}'`
+              : `Kitchen station not configured for category '${categoryValue}'`,
+          );
         }
         const ingredients = parseArrayField(row.ingredients, "ingredients");
         const allergens = parseArrayField(row.allergens, "allergens");
@@ -3052,7 +3427,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeDoc.code || sizeDoc.name || sizeValue,
             status: "success",
             action: "updated",
-            reason: "Menu item updated successfully",
+            reason:
+              createdCategory || createdSize
+                ? `Menu item updated successfully. Auto-created ${[createdCategory ? "category" : "", createdSize ? "size" : ""].filter(Boolean).join(" and ")}.`
+                : "Menu item updated successfully",
           });
         } else {
           menuItem = new MenuItem({
@@ -3097,7 +3475,10 @@ exports.bulkImportMenuItems = async (req, res) => {
             size: sizeDoc.code || sizeDoc.name || sizeValue,
             status: "success",
             action: "created",
-            reason: "Menu item created successfully",
+            reason:
+              createdCategory || createdSize
+                ? `Menu item created successfully. Auto-created ${[createdCategory ? "category" : "", createdSize ? "size" : ""].filter(Boolean).join(" and ")}.`
+                : "Menu item created successfully",
           });
         }
       } catch (err) {
@@ -3131,6 +3512,7 @@ exports.bulkImportMenuItems = async (req, res) => {
         }
       }
     }
+    invalidateMenuReadCaches();
     return res.status(200).json({
       success: true,
       message: "Bulk Import Completed",
