@@ -72,6 +72,12 @@ exports.startPreparingItem = async (req, res) => {
         message: error.message,
       });
     }
+    if (error.message.includes("Only ")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
     res.status(500).json({
       success: false,
       message: "Failed to start preparing item",
@@ -102,6 +108,12 @@ exports.markItemReady = async (req, res) => {
         message: error.message,
       });
     }
+    if (error.message.includes("Only ")) {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
     res.status(500).json({
       success: false,
       message: "Failed to mark item as ready",
@@ -128,6 +140,12 @@ exports.markItemServed = async (req, res) => {
       error.message.includes("Order item not found")
     ) {
       return res.status(404).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    if (error.message.includes("Only ")) {
+      return res.status(400).json({
         success: false,
         message: error.message,
       });

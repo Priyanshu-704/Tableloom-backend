@@ -15,6 +15,105 @@ const ORDER_STATUS_FLOW = [
   "served",
   "completed",
 ];
+const KITCHEN_ITEM_ACTIVE_STATUSES = ["accepted", "preparing"];
+const isKitchenItemLoadActive = (status) =>
+  KITCHEN_ITEM_ACTIVE_STATUSES.includes(status);
+const updateStationLoadDelta = (stationLoadDeltas, item, nextStatus) => {
+  if (!item?.station) {
+    return;
+  }
+  const previousStatus = String(item.status || "").trim();
+  const targetStatus = String(nextStatus || "").trim();
+  const wasCounted = isKitchenItemLoadActive(previousStatus);
+  const willBeCounted = isKitchenItemLoadActive(targetStatus);
+  if (wasCounted === willBeCounted) {
+    return;
+  }
+  const stationId = String(item.station || "").trim();
+  if (!stationId) {
+    return;
+  }
+  const quantityDelta = Number(item.quantity || 0) * (willBeCounted ? 1 : -1);
+  stationLoadDeltas.set(
+    stationId,
+    (stationLoadDeltas.get(stationId) || 0) + quantityDelta,
+  );
+};
+const initializeKitchenItemTiming = (item, referenceTime = new Date()) => {
+  const preparationTime = Number(item?.preparationTime || 0);
+  if (preparationTime > 0) {
+    item.estimatedCompletion = new Date(
+      referenceTime.getTime() + preparationTime * 60000,
+    );
+  } else {
+    item.estimatedCompletion = null;
+  }
+  item.delayStatus = "on_time";
+  item.delayColor = "#4CAF50";
+  item.delayMinutes = 0;
+  item.lastDelayCheck = new Date(referenceTime);
+  return item;
+};
+const markKitchenItemAccepted = (item, referenceTime = new Date()) => {
+  item.status = "accepted";
+  item.colorCode = kitchenItemStatusColors.accepted;
+  initializeKitchenItemTiming(item, referenceTime);
+  return item;
+};
+const markKitchenItemPreparing = (item, referenceTime = new Date()) => {
+  item.status = "preparing";
+  item.colorCode = kitchenItemStatusColors.preparing;
+  item.startTime = new Date(referenceTime);
+  item.timer = 0;
+  initializeKitchenItemTiming(item, referenceTime);
+  return item;
+};
+const buildStationAssignmentsFromItems = (items = []) => {
+  const stationItemsMap = new Map();
+  items.forEach((item) => {
+    if (!item?.station) {
+      return;
+    }
+    const stationId = item.station._id?.toString() || item.station.toString();
+    if (!stationId) {
+      return;
+    }
+    if (!stationItemsMap.has(stationId)) {
+      stationItemsMap.set(stationId, {
+        station: item.station._id || item.station,
+        items: [],
+        stationName: item.station?.name || item.stationName || "Station",
+        stationType: item.station?.stationType || "",
+      });
+    }
+    stationItemsMap.get(stationId).items.push(item._id);
+  });
+  return Array.from(stationItemsMap.values());
+};
+const emitActivatedKitchenOrder = async (kitchenOrder) => {
+  const stationAssignments = buildStationAssignmentsFromItems(
+    kitchenOrder?.items || [],
+  );
+  const orderData = {
+    _id: kitchenOrder?._id,
+    orderNumber: kitchenOrder?.orderNumber,
+    tableNumber: kitchenOrder?.tableNumber,
+    customerName: kitchenOrder?.customerName,
+    priority: kitchenOrder?.priority,
+    orderType: kitchenOrder?.orderType,
+  };
+  const io = getIO();
+  io.to("kitchen-room").emit("new_order", kitchenOrder);
+  await exports.emitStationUpdates();
+  if (stationAssignments.length > 0) {
+    logger.info("Creating kitchen order notification...");
+    await notificationManager.createKitchenOrderNotification(
+      orderData,
+      stationAssignments,
+    );
+    logger.info("Kitchen order notification created successfully");
+  }
+};
 const deriveOrderStatusFromKitchenItems = (items = []) => {
   const activeItems = items.filter((item) => item?.status !== "cancelled");
   if (activeItems.length === 0) {
@@ -48,37 +147,41 @@ exports.syncKitchenOrderFromParentStatus = async (orderId, nextStatus) => {
   }
 
   const stationLoadDeltas = new Map();
-  const decrementStationLoadIfNeeded = (item, targetStatus) => {
-    if (
-      !item?.station ||
-      !["ready", "served", "cancelled"].includes(targetStatus) ||
-      ["ready", "served", "cancelled"].includes(item.status)
-    ) {
-      return;
-    }
-    const stationId = String(item.station || "").trim();
-    if (!stationId) {
-      return;
-    }
-    stationLoadDeltas.set(
-      stationId,
-      (stationLoadDeltas.get(stationId) || 0) - Number(item.quantity || 0),
-    );
-  };
+  let shouldNotifyKitchenActivation = false;
 
-  if (nextStatus === "preparing") {
+  if (nextStatus === "confirmed") {
+    const acceptanceTime = new Date();
     kitchenOrder.items.forEach((item) => {
-      if (["pending", "accepted"].includes(item.status)) {
-        item.status = "preparing";
-        item.colorCode = kitchenItemStatusColors.preparing;
+      if (item.status === "pending") {
+        updateStationLoadDelta(stationLoadDeltas, item, "accepted");
+        markKitchenItemAccepted(item, acceptanceTime);
+        shouldNotifyKitchenActivation = true;
       }
     });
+    if (shouldNotifyKitchenActivation) {
+      kitchenOrder.timers.kitchenAccepted =
+        kitchenOrder.timers.kitchenAccepted || acceptanceTime;
+      kitchenOrder.timeMetrics.acceptTime = Math.floor(
+        (kitchenOrder.timers.kitchenAccepted - kitchenOrder.timers.orderReceived) /
+          1000,
+      );
+    }
+  } else if (nextStatus === "preparing") {
+    const preparationStartTime = new Date();
+    kitchenOrder.items.forEach((item) => {
+      if (["pending", "accepted"].includes(item.status)) {
+        updateStationLoadDelta(stationLoadDeltas, item, "preparing");
+        markKitchenItemPreparing(item, preparationStartTime);
+      }
+    });
+    kitchenOrder.timers.kitchenAccepted =
+      kitchenOrder.timers.kitchenAccepted || preparationStartTime;
     kitchenOrder.timers.startedCooking =
-      kitchenOrder.timers.startedCooking || new Date();
+      kitchenOrder.timers.startedCooking || preparationStartTime;
   } else if (nextStatus === "ready") {
     kitchenOrder.items.forEach((item) => {
       if (!["served", "cancelled"].includes(item.status)) {
-        decrementStationLoadIfNeeded(item, "ready");
+        updateStationLoadDelta(stationLoadDeltas, item, "ready");
         item.status = "ready";
         item.colorCode = kitchenItemStatusColors.ready;
         item.readyTime = item.readyTime || new Date();
@@ -89,7 +192,7 @@ exports.syncKitchenOrderFromParentStatus = async (orderId, nextStatus) => {
   } else if (nextStatus === "served" || nextStatus === "completed") {
     kitchenOrder.items.forEach((item) => {
       if (item.status !== "cancelled") {
-        decrementStationLoadIfNeeded(item, "served");
+        updateStationLoadDelta(stationLoadDeltas, item, "served");
         item.status = "served";
         item.colorCode = kitchenItemStatusColors.served;
         item.readyTime = item.readyTime || new Date();
@@ -101,7 +204,7 @@ exports.syncKitchenOrderFromParentStatus = async (orderId, nextStatus) => {
   } else if (nextStatus === "cancelled") {
     kitchenOrder.items.forEach((item) => {
       if (!["served", "cancelled"].includes(item.status)) {
-        decrementStationLoadIfNeeded(item, "cancelled");
+        updateStationLoadDelta(stationLoadDeltas, item, "cancelled");
         item.status = "cancelled";
         item.colorCode = kitchenItemStatusColors.cancelled;
       }
@@ -124,6 +227,12 @@ exports.syncKitchenOrderFromParentStatus = async (orderId, nextStatus) => {
             }),
       ),
     );
+  }
+
+  if (shouldNotifyKitchenActivation) {
+    await emitActivatedKitchenOrder(kitchenOrder);
+  } else if (stationLoadDeltas.size > 0) {
+    await exports.emitStationUpdates();
   }
 
   return kitchenOrder;
@@ -188,14 +297,15 @@ exports.createKitchenOrder = async (orderId) => {
     if (existingKitchenOrder) {
       return existingKitchenOrder;
     }
+    const isKitchenActionable = !["pending", "cancelled"].includes(
+      order.status,
+    );
     const stationLoadUpdates = new Map();
+    const activationTime = new Date();
     const kitchenItems = await Promise.all(
       order.items.map(async (item) => {
         const menuItem = item.menuItem;
         const preparationTime = menuItem.preparationTime || 15;
-        const estimatedCompletion = new Date(
-          Date.now() + preparationTime * 60000,
-        );
         if (!menuItem.station || !menuItem.station._id) {
           throw new Error(`Invalid station for menu item: ${menuItem.name}`);
         }
@@ -207,20 +317,24 @@ exports.createKitchenOrder = async (orderId) => {
           station: menuItem.station._id,
           stationName: menuItem.station.name,
           allergens: menuItem.allergens || [],
-          status: "accepted",
-          colorCode: kitchenItemStatusColors.confirmed,
-          startTime: new Date(),
+          status: isKitchenActionable ? "accepted" : "pending",
+          colorCode: isKitchenActionable
+            ? kitchenItemStatusColors.accepted
+            : kitchenItemStatusColors.pending,
           preparationTime: preparationTime,
-          estimatedCompletion: estimatedCompletion,
+          estimatedCompletion: null,
           delayStatus: "on_time",
           delayColor: "#4CAF50",
           delayMinutes: 0,
           lastDelayCheck: new Date(),
         };
-        const stationId =
-          menuItem.station._id.toString() || menuItem.station.toString();
-        const currentLoad = stationLoadUpdates.get(stationId) || 0;
-        stationLoadUpdates.set(stationId, currentLoad + item.quantity);
+        if (isKitchenActionable) {
+          markKitchenItemAccepted(kitchenItem, activationTime);
+          const stationId =
+            menuItem.station._id.toString() || menuItem.station.toString();
+          const currentLoad = stationLoadUpdates.get(stationId) || 0;
+          stationLoadUpdates.set(stationId, currentLoad + item.quantity);
+        }
         return kitchenItem;
       }),
     );
@@ -251,60 +365,30 @@ exports.createKitchenOrder = async (orderId) => {
       priority: this.calculateOrderPriority(order),
       timers: {
         orderReceived: new Date(),
-        kitchenAccepted: new Date(),
+        kitchenAccepted: isKitchenActionable ? activationTime : undefined,
       },
       timeMetrics: {
-        acceptTime: 0,
+        acceptTime: isKitchenActionable ? 0 : null,
         preparationTime: 0,
         totalTime: 0,
       },
-      overallStatus: "in_progress",
+      overallStatus: isKitchenActionable ? "in_progress" : "pending",
     });
     await kitchenOrder.populate({
       path: "items.station",
       select: "name stationType colorCode currentLoad capacity",
     });
-    const stationAssignments = [];
-    const stationItemsMap = new Map();
-    kitchenOrder.items.forEach((item) => {
-      if (item.station) {
-        const stationId =
-          item.station._id?.toString() || item.station.toString();
-        if (!stationItemsMap.has(stationId)) {
-          stationItemsMap.set(stationId, {
-            station: item.station._id || item.station,
-            items: [],
-            stationName: item.station.name,
-            stationType: item.station.stationType,
-          });
-        }
-        stationItemsMap.get(stationId).items.push(item._id);
-      }
-    });
-    stationAssignments.push(...stationItemsMap.values());
+    const stationAssignments = buildStationAssignmentsFromItems(
+      kitchenOrder.items,
+    );
     kitchenOrder.stationAssignments = stationAssignments;
     await kitchenOrder.save();
-    const orderData = {
-      _id: kitchenOrder._id,
-      orderNumber: kitchenOrder.orderNumber,
-      tableNumber: kitchenOrder.tableNumber,
-      customerName: kitchenOrder.customerName,
-      priority: kitchenOrder.priority,
-      orderType: kitchenOrder.orderType,
-    };
-    this.emitKitchenUpdate("new_order", kitchenOrder);
-    this.emitStationUpdates();
     logger.info(
       `KitchenOrder created successfully for Order #${order.orderNumber}`,
     );
-    logger.info(`Items assigned to stations:`, stationItemsMap);
-    if (stationAssignments && stationAssignments.length > 0) {
-      logger.info("Creating kitchen order notification...");
-      await notificationManager.createKitchenOrderNotification(
-        orderData,
-        stationAssignments,
-      );
-      logger.info("Kitchen order notification created successfully");
+    logger.info(`Items assigned to stations:`, stationAssignments);
+    if (isKitchenActionable) {
+      await emitActivatedKitchenOrder(kitchenOrder);
     }
     return kitchenOrder;
   } catch (error) {
@@ -392,6 +476,9 @@ exports.markItemReady = async (kitchenOrderId, itemId) => {
     if (!item) {
       throw new Error("Order item not found");
     }
+    if (item.status !== "preparing") {
+      throw new Error("Only preparing kitchen items can be marked ready");
+    }
     item.status = "ready";
     item.colorCode = kitchenItemStatusColors.ready;
     item.readyTime = new Date();
@@ -456,6 +543,9 @@ exports.markItemServed = async (kitchenOrderId, itemId) => {
     const item = kitchenOrder.items.id(itemId);
     if (!item) {
       throw new Error("Order item not found");
+    }
+    if (item.status !== "ready") {
+      throw new Error("Only ready kitchen items can be marked served");
     }
     item.status = "served";
     item.colorCode = kitchenItemStatusColors.served;
@@ -795,17 +885,8 @@ exports.getDelayedOrdersSummary = async (options = {}) => {
   }
 };
 exports.updateItemWithDelayTracking = (item, preparationTime) => {
-  const estimatedCompletion = new Date();
-  estimatedCompletion.setMinutes(
-    estimatedCompletion.getMinutes() + preparationTime,
-  );
-  item.estimatedCompletion = estimatedCompletion;
   item.preparationTime = preparationTime;
-  item.delayStatus = "on_time";
-  item.delayColor = "#4CAF50";
-  item.delayMinutes = 0;
-  item.lastDelayCheck = new Date();
-  return item;
+  return initializeKitchenItemTiming(item, new Date());
 };
 exports.startPreparingItem = async (kitchenOrderId, itemId) => {
   try {
@@ -817,13 +898,10 @@ exports.startPreparingItem = async (kitchenOrderId, itemId) => {
     if (!item) {
       throw new Error("Order item not found");
     }
-    item.status = "preparing";
-    item.colorCode = kitchenItemStatusColors.preparing;
-    item.timer = 0;
-    item.delayStatus = "on_time";
-    item.delayColor = "#4CAF50";
-    item.delayMinutes = 0;
-    item.lastDelayCheck = new Date();
+    if (item.status !== "accepted") {
+      throw new Error("Only accepted kitchen items can be started");
+    }
+    markKitchenItemPreparing(item, new Date());
     await kitchenOrder.save();
     await syncParentOrderStatusFromKitchenOrder(kitchenOrder);
     this.emitKitchenUpdate("item_preparing", kitchenOrder);
