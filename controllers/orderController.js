@@ -473,12 +473,6 @@ exports.updateOrderStatus = async (req, res) => {
         message: error.message,
       });
     }
-    if (error.message.includes("Only chefs can cancel orders")) {
-      return res.status(403).json({
-        success: false,
-        message: error.message,
-      });
-    }
     if (error.message.includes("only have permission to mark")) {
       return res.status(403).json({
         success: false,

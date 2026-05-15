@@ -533,9 +533,6 @@ exports.updateOrderStatus = async (
       }
       userRole = String(user.role || "").toLowerCase();
     }
-    if (newStatus === "cancelled" && userRole && userRole !== "chef") {
-      throw new Error("Only chefs can cancel orders");
-    }
     const rolePermissions = {
       chef: [
         "confirmed",
@@ -612,7 +609,8 @@ exports.updateOrderStatus = async (
         order.cancelledAt = new Date();
         order.cancelledBy = userId;
         order.cancellationReason =
-          String(notes || "").trim() || "Cancelled by chef";
+          String(notes || "").trim() ||
+          `Cancelled by ${userRole || "system"}`;
         break;
     }
     if (
@@ -673,7 +671,7 @@ exports.updateOrderStatus = async (
       try {
         await notificationManager.createNotification({
           title: `Order Cancelled - Table ${orderObj.table?.tableNumber || ""}`,
-          message: `Order #${orderObj.orderNumber || ""} was cancelled by kitchen staff.`,
+          message: `Order #${orderObj.orderNumber || ""} was cancelled by ${userRole || "system"}.`,
           type: "system_alert",
           priority: "medium",
           recipientType: "role",

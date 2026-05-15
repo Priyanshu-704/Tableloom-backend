@@ -890,15 +890,15 @@ class NotificationManager {
       type: "payment_request",
       priority: "high",
       recipientType: "role",
-      roles: ["admin"],
+      roles: ["waiter", "cashier", "manager", "admin"],
       relatedTo: billData._id,
       relatedModel: "Bill",
       actionRequired: true,
       actions: [
         {
-          label: "Open Bills",
+          label: "Process Payment",
           type: "link",
-          action: "/dashboard/customers/bills",
+          action: `/dashboard/customers/bills?bill=${billData._id}`,
           color: "success",
         },
       ],

@@ -178,9 +178,27 @@ class DelayMonitor {
       status: {
         $in: CANCELLABLE_DELAYED_ORDER_STATUSES,
       },
-      orderPlacedAt: {
-        $lte: staleOrderCutoff,
-      },
+      $or: [
+        {
+          orderPlacedAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+        {
+          orderPlacedAt: null,
+          createdAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+        {
+          orderPlacedAt: {
+            $exists: false,
+          },
+          createdAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+      ],
     })
       .select("_id orderNumber status orderPlacedAt")
       .lean();
@@ -233,15 +251,26 @@ class DelayMonitor {
     }
     const state = await this.ensureTenantConfigLoaded(normalizedTenantId);
     try {
-      const { delayedOrders, autoCancelledOrders } = await runWithTenant(
+      const {
+        delayedOrders,
+        autoCancelledOrders,
+        autoCancelledStaleKitchenOrders,
+      } = await runWithTenant(
         normalizedTenantId,
         async () => {
+          const autoCancelledStaleOrders =
+            await kitchenManager.autoCancelExpiredKitchenOrders();
           const detectedDelayedOrders = await kitchenManager.checkDelayedOrders({
             notifyOnDelay: state.config.notifyOnDelay,
             criticalThresholdMinutes: state.config.criticalThresholdMinutes,
             notificationIntervalMinutes: state.config.intervalMinutes,
           });
-          return this.autoCancelExpiredDelayedOrders(detectedDelayedOrders);
+          const delayedCleanupResult =
+            await this.autoCancelExpiredDelayedOrders(detectedDelayedOrders);
+          return {
+            ...delayedCleanupResult,
+            autoCancelledStaleKitchenOrders: autoCancelledStaleOrders,
+          };
         },
       );
       state.lastCheck = new Date();
@@ -255,6 +284,8 @@ class DelayMonitor {
             Number(state.config.criticalThresholdMinutes || 15),
         ).length,
         autoCancelledExpiredOrders: autoCancelledOrders.length,
+        autoCancelledStaleKitchenOrders:
+          autoCancelledStaleKitchenOrders.length,
         checkedAt: state.lastCheck,
       };
       return delayedOrders;

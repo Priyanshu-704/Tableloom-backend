@@ -16,6 +16,23 @@ const ORDER_STATUS_FLOW = [
   "completed",
 ];
 const KITCHEN_ITEM_ACTIVE_STATUSES = ["accepted", "preparing"];
+const STALE_ACTIVE_KITCHEN_ORDER_THRESHOLD_HOURS = 48;
+const ACTIVE_KITCHEN_ORDER_TERMINAL_STATUSES = ["completed", "cancelled"];
+const getStaleKitchenOrderCutoffDate = () =>
+  new Date(
+    Date.now() - STALE_ACTIVE_KITCHEN_ORDER_THRESHOLD_HOURS * 60 * 60 * 1000,
+  );
+const buildActiveKitchenOrderVisibilityQuery = (extraQuery = {}) => ({
+  ...extraQuery,
+  createdAt: {
+    $gte: getStaleKitchenOrderCutoffDate(),
+  },
+  overallStatus: Object.prototype.hasOwnProperty.call(extraQuery, "overallStatus")
+    ? extraQuery.overallStatus
+    : {
+        $nin: ACTIVE_KITCHEN_ORDER_TERMINAL_STATUSES,
+      },
+});
 const isKitchenItemLoadActive = (status) =>
   KITCHEN_ITEM_ACTIVE_STATUSES.includes(status);
 const updateStationLoadDelta = (stationLoadDeltas, item, nextStatus) => {
@@ -566,6 +583,7 @@ exports.markItemServed = async (kitchenOrderId, itemId) => {
 };
 exports.getKitchenDashboard = async (sortBy = "preparationTime") => {
   try {
+    const visibilityCutoff = getStaleKitchenOrderCutoffDate();
     const [
       pendingOrders,
       inProgressOrders,
@@ -576,12 +594,21 @@ exports.getKitchenDashboard = async (sortBy = "preparationTime") => {
     ] = await Promise.all([
       KitchenOrder.countDocuments({
         overallStatus: "pending",
+        createdAt: {
+          $gte: visibilityCutoff,
+        },
       }),
       KitchenOrder.countDocuments({
         overallStatus: "in_progress",
+        createdAt: {
+          $gte: visibilityCutoff,
+        },
       }),
       KitchenOrder.countDocuments({
         overallStatus: "ready",
+        createdAt: {
+          $gte: visibilityCutoff,
+        },
       }),
       KitchenStation.find({
         isActive: true,
@@ -849,6 +876,92 @@ exports.checkDelayedOrders = async (options = {}) => {
     throw error;
   }
 };
+exports.autoCancelExpiredKitchenOrders = async () => {
+  try {
+    const staleOrderCutoff = getStaleKitchenOrderCutoffDate();
+    const staleKitchenOrders = await KitchenOrder.find({
+      overallStatus: {
+        $in: ["pending", "in_progress", "ready"],
+      },
+      createdAt: {
+        $lte: staleOrderCutoff,
+      },
+    })
+      .select("order orderNumber overallStatus createdAt")
+      .lean();
+    const staleOrderIds = [
+      ...new Set(
+        staleKitchenOrders
+          .map((order) => String(order?.order || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (staleOrderIds.length === 0) {
+      return [];
+    }
+    const cancellableOrders = await Order.find({
+      _id: {
+        $in: staleOrderIds,
+      },
+      status: {
+        $in: ["pending", "confirmed", "preparing", "ready"],
+      },
+      $or: [
+        {
+          orderPlacedAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+        {
+          orderPlacedAt: null,
+          createdAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+        {
+          orderPlacedAt: {
+            $exists: false,
+          },
+          createdAt: {
+            $lte: staleOrderCutoff,
+          },
+        },
+      ],
+    })
+      .select("_id orderNumber status orderPlacedAt createdAt")
+      .lean();
+    if (cancellableOrders.length === 0) {
+      return [];
+    }
+    const orderManager = require("./orderManager");
+    const autoCancelledOrders = [];
+    for (const order of cancellableOrders) {
+      try {
+        await orderManager.updateOrderStatus(
+          order._id,
+          "cancelled",
+          null,
+          `Automatically cancelled after remaining active in kitchen for more than ${STALE_ACTIVE_KITCHEN_ORDER_THRESHOLD_HOURS} hours`,
+        );
+        autoCancelledOrders.push({
+          orderId: String(order._id || "").trim(),
+          orderNumber: order.orderNumber || "",
+          previousStatus: order.status || "",
+          orderPlacedAt: order.orderPlacedAt || order.createdAt || null,
+        });
+      } catch (error) {
+        logger.error(
+          `Failed to auto-cancel stale kitchen order ${order.orderNumber || order._id}:`,
+          error,
+        );
+      }
+    }
+    return autoCancelledOrders;
+  } catch (error) {
+    logger.error("Auto-cancel stale kitchen orders failed:", error);
+    throw error;
+  }
+};
 exports.getDelayedOrdersSummary = async (options = {}) => {
   try {
     const criticalThresholdMinutes = Math.max(
@@ -922,13 +1035,10 @@ exports.getOrdersByStation = async (
   sortBy = "preparationTime",
 ) => {
   try {
-    const orders = await KitchenOrder.find({
+    const orders = await KitchenOrder.find(buildActiveKitchenOrderVisibilityQuery({
       "items.station": stationId,
       "items.status": status,
-      overallStatus: {
-        $ne: "completed",
-      },
-    })
+    }))
       .populate("items.station", "name stationType")
       .populate("items.assignedTo", "name")
       .lean();
@@ -1050,11 +1160,7 @@ exports.getOrdersByStation = async (
 };
 exports.getSortedKitchenOrders = async (sortBy = "preparationTime") => {
   try {
-    const query = {
-      overallStatus: {
-        $ne: "completed",
-      },
-    };
+    const query = buildActiveKitchenOrderVisibilityQuery();
     const kitchenOrders = await KitchenOrder.find(query)
       .populate("items.station", "name stationType colorCode")
       .populate("items.assignedTo", "name")
@@ -1113,8 +1219,11 @@ exports.getDelayedOrdersByStation = async (stationId) => {
       "items.status": {
         $in: ["pending", "preparing"],
       },
+      createdAt: {
+        $gte: getStaleKitchenOrderCutoffDate(),
+      },
       overallStatus: {
-        $ne: "completed",
+        $nin: ACTIVE_KITCHEN_ORDER_TERMINAL_STATUSES,
       },
     }).populate("items.station", "name");
     const delayedOrders = [];
