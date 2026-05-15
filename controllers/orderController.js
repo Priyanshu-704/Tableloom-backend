@@ -3,9 +3,21 @@ const Order = require("../models/Order");
 const Customer = require("../models/Customer");
 const orderManager = require("../utils/orderManager");
 const { buildTenantImageAssetUrl } = require("../utils/assetUrl");
+const {
+  isCheckoutMethodAllowed,
+  isManualMethodAllowed,
+  loadTenantPaymentConfiguration,
+} = require("../utils/paymentGatewayManager");
 require("dotenv").config({
   quiet: true,
 });
+const PAYMENT_METHOD_LABELS = {
+  cash: "Cash",
+  online: "Online",
+  card: "Card",
+  upi: "UPI",
+  wallet: "Wallet",
+};
 const shapeOrderHistorySummary = (order) => ({
   _id: order._id,
   orderNumber: order.orderNumber,
@@ -507,10 +519,42 @@ exports.processPayment = async (req, res) => {
         });
       }
     }
+    const orderForPayment = await Order.findById(req.params.id)
+      .select("tenantId")
+      .lean();
+    if (!orderForPayment) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+    const paymentConfiguration = await loadTenantPaymentConfiguration(
+      orderForPayment.tenantId,
+    );
+    const normalizedMethod = String(method || "")
+      .trim()
+      .toLowerCase();
+    const normalizedGateway = String(gateway || "offline")
+      .trim()
+      .toLowerCase();
+    const isAllowed =
+      normalizedGateway === "razorpay"
+        ? isCheckoutMethodAllowed(paymentConfiguration, normalizedMethod)
+        : isManualMethodAllowed(paymentConfiguration, normalizedMethod);
+    if (!isAllowed) {
+      return res.status(400).json({
+        success: false,
+        message:
+          normalizedMethod !== "cash" &&
+          !paymentConfiguration?.paymentGateway?.enabled
+            ? "Only cash payments are available until this tenant securely configures payment gateway credentials."
+            : `${PAYMENT_METHOD_LABELS[normalizedMethod] || "Selected"} payments are not enabled for this tenant.`,
+      });
+    }
     const order = await orderManager.processPayment(req.params.id, {
-      method,
+      method: normalizedMethod,
       transactionId,
-      gateway,
+      gateway: normalizedGateway,
       amount,
     });
     res.status(200).json({

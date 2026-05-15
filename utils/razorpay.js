@@ -5,19 +5,29 @@ require("dotenv").config({
 });
 
 let razorpayClient = null;
+const razorpayClientsByCredentialHash = new Map();
 
-const getRazorpayCredentials = () => ({
-  keyId: String(process.env.RAZORPAY_KEY_ID || "").trim(),
-  keySecret: String(process.env.RAZORPAY_KEY_SECRET || "").trim(),
-});
+const getRazorpayCredentials = (overrideCredentials = null) => {
+  if (overrideCredentials?.keyId || overrideCredentials?.keySecret) {
+    return {
+      keyId: String(overrideCredentials?.keyId || "").trim(),
+      keySecret: String(overrideCredentials?.keySecret || "").trim(),
+    };
+  }
 
-const isRazorpayConfigured = () => {
-  const { keyId, keySecret } = getRazorpayCredentials();
+  return {
+    keyId: String(process.env.RAZORPAY_KEY_ID || "").trim(),
+    keySecret: String(process.env.RAZORPAY_KEY_SECRET || "").trim(),
+  };
+};
+
+const isRazorpayConfigured = (overrideCredentials = null) => {
+  const { keyId, keySecret } = getRazorpayCredentials(overrideCredentials);
   return Boolean(keyId && keySecret);
 };
 
-const assertRazorpayConfigured = () => {
-  if (isRazorpayConfigured()) {
+const assertRazorpayConfigured = (overrideCredentials = null) => {
+  if (isRazorpayConfigured(overrideCredentials)) {
     return;
   }
 
@@ -26,23 +36,48 @@ const assertRazorpayConfigured = () => {
   );
 };
 
-const getRazorpayClient = () => {
-  assertRazorpayConfigured();
+const getCredentialCacheKey = ({ keyId = "", keySecret = "" } = {}) =>
+  crypto
+    .createHash("sha256")
+    .update(`${keyId}:${keySecret}`)
+    .digest("hex");
 
-  if (!razorpayClient) {
-    const { keyId, keySecret } = getRazorpayCredentials();
-    razorpayClient = new Razorpay({
-      key_id: keyId,
-      key_secret: keySecret,
-    });
+const getRazorpayClient = (overrideCredentials = null) => {
+  assertRazorpayConfigured(overrideCredentials);
+  const { keyId, keySecret } = getRazorpayCredentials(overrideCredentials);
+
+  if (!overrideCredentials) {
+    if (!razorpayClient) {
+      razorpayClient = new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      });
+    }
+
+    return razorpayClient;
   }
 
-  return razorpayClient;
+  const credentialCacheKey = getCredentialCacheKey({
+    keyId,
+    keySecret,
+  });
+
+  if (!razorpayClientsByCredentialHash.has(credentialCacheKey)) {
+    razorpayClientsByCredentialHash.set(
+      credentialCacheKey,
+      new Razorpay({
+        key_id: keyId,
+        key_secret: keySecret,
+      }),
+    );
+  }
+
+  return razorpayClientsByCredentialHash.get(credentialCacheKey);
 };
 
-const getRazorpayPublicConfig = () => ({
-  enabled: isRazorpayConfigured(),
-  keyId: getRazorpayCredentials().keyId,
+const getRazorpayPublicConfig = (overrideCredentials = null) => ({
+  enabled: isRazorpayConfigured(overrideCredentials),
+  keyId: getRazorpayCredentials(overrideCredentials).keyId,
 });
 
 const convertAmountToSubunits = (amount = 0) => {
@@ -55,12 +90,15 @@ const convertAmountToSubunits = (amount = 0) => {
   return Math.round(normalizedAmount * 100);
 };
 
-const verifyRazorpaySignature = ({
-  orderId = "",
-  paymentId = "",
-  signature = "",
-}) => {
-  const { keySecret } = getRazorpayCredentials();
+const verifyRazorpaySignature = (
+  {
+    orderId = "",
+    paymentId = "",
+    signature = "",
+  },
+  overrideCredentials = null,
+) => {
+  const { keySecret } = getRazorpayCredentials(overrideCredentials);
   const generatedSignature = crypto
     .createHmac("sha256", keySecret)
     .update(`${orderId}|${paymentId}`)

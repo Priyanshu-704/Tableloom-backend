@@ -207,6 +207,46 @@ const tenantSchema = new mongoose.Schema(
         default: "",
       },
     },
+    paymentGateway: {
+      provider: {
+        type: String,
+        enum: ["razorpay", "none"],
+        default: "none",
+      },
+      status: {
+        type: String,
+        enum: ["inactive", "active"],
+        default: "inactive",
+      },
+      keyIdEncrypted: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      keySecretEncrypted: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      keyIdMask: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      configuredAt: {
+        type: Date,
+        default: null,
+      },
+      updatedAt: {
+        type: Date,
+        default: null,
+      },
+      updatedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

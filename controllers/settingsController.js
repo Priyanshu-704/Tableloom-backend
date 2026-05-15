@@ -1,10 +1,19 @@
 const { logger } = require("./../utils/logger.js");
 const AppSetting = require("../models/AppSetting");
+const Tenant = require("../models/Tenant");
 const { deleteImageVariants } = require("../utils/imageStorage");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const delayMonitor = require("../utils/delayMonitor");
 const { buildTenantImageAssetUrl } = require("../utils/assetUrl");
 const { invalidateTenantTaxSettings } = require("../utils/taxCalculator");
+const {
+  applyPaymentGatewayRestrictions,
+  buildPaymentGatewaySummary,
+  encryptPaymentCredential,
+  loadTenantPaymentConfiguration,
+  maskPaymentCredential,
+  validateEnabledPaymentMethods,
+} = require("../utils/paymentGatewayManager");
 const formatFieldName = (field = "") =>
   String(field)
     .split(".")
@@ -135,17 +144,29 @@ const buildRestaurantSettings = (req, restaurant = {}) => ({
         })
       : restaurant?.logoThumbnail || restaurant?.logo || "/tableloom-mark.svg",
 });
-const toPublicSettings = (req, settings) => ({
+const toPublicSettings = (req, settings, paymentConfiguration = null) => ({
   restaurant: buildRestaurantSettings(req, settings?.restaurant || {}),
   businessHours: settings?.businessHours || {},
-  paymentMethods: settings?.paymentMethods || {},
+  paymentMethods:
+    paymentConfiguration?.paymentMethods ||
+    applyPaymentGatewayRestrictions(
+      settings?.paymentMethods || {},
+      buildPaymentGatewaySummary(null),
+    ),
   taxSettings: settings?.taxSettings || {},
 });
-const toAdminSettings = (req, settings) => ({
+const toAdminSettings = (req, settings, paymentConfiguration = null) => ({
   restaurant: buildRestaurantSettings(req, settings?.restaurant || {}),
   businessHours: settings?.businessHours || {},
   taxSettings: settings?.taxSettings || {},
-  paymentMethods: settings?.paymentMethods || {},
+  paymentMethods:
+    paymentConfiguration?.paymentMethods ||
+    applyPaymentGatewayRestrictions(
+      settings?.paymentMethods || {},
+      buildPaymentGatewaySummary(null),
+    ),
+  paymentGateway:
+    paymentConfiguration?.paymentGateway || buildPaymentGatewaySummary(null),
   notifications: settings?.notifications || {},
   operations: settings?.operations || {},
 });
@@ -171,11 +192,18 @@ const shapeDelayMonitorStatus = (status = {}) => ({
 exports.getPublicSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
+    const rawSettings = settings.toObject();
+    const paymentConfiguration = await loadTenantPaymentConfiguration(
+      req.tenant?._id,
+      {
+        settingsDocument: rawSettings,
+      },
+    );
     return sendSuccess(
       res,
       200,
       null,
-      toPublicSettings(req, settings.toObject()),
+      toPublicSettings(req, rawSettings, paymentConfiguration),
     );
   } catch (error) {
     logger.error("Get public settings failed:", error);
@@ -185,12 +213,19 @@ exports.getPublicSettings = async (req, res) => {
 exports.getAdminSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
+    const rawSettings = settings.toObject();
+    const paymentConfiguration = await loadTenantPaymentConfiguration(
+      req.tenant?._id,
+      {
+        settingsDocument: rawSettings,
+      },
+    );
     await delayMonitor.syncWithSettings(req.tenant?._id);
     return sendSuccess(
       res,
       200,
       null,
-      toAdminSettings(req, settings.toObject()),
+      toAdminSettings(req, rawSettings, paymentConfiguration),
       {
         meta: {
           delayMonitorStatus: shapeDelayMonitorStatus(
@@ -207,6 +242,10 @@ exports.getAdminSettings = async (req, res) => {
 exports.updateSettings = async (req, res) => {
   try {
     const settings = await getOrCreateSettings(req.tenant?._id);
+    const tenant = await Tenant.findById(req.tenant?._id);
+    if (!tenant) {
+      return sendError(res, 404, "Tenant not found");
+    }
     const currentSettings = settings.toObject();
     const parsedPayload = parseSettingsPayload(req.body || {});
     const mergedSettings = deepMerge(currentSettings, parsedPayload);
@@ -239,27 +278,83 @@ exports.updateSettings = async (req, res) => {
         logoProvider: req.file.storageProvider || "cloudinary",
       };
     }
+    const paymentGatewayPayload = parsedPayload?.paymentGateway || {};
+    const shouldUpdateGateway =
+      parsedPayload &&
+      Object.prototype.hasOwnProperty.call(parsedPayload, "paymentGateway");
+    if (shouldUpdateGateway) {
+      const removeCredentials = paymentGatewayPayload?.removeCredentials === true;
+      const nextKeyId = String(paymentGatewayPayload?.keyId || "").trim();
+      const nextKeySecret = String(paymentGatewayPayload?.keySecret || "").trim();
+
+      if (removeCredentials) {
+        tenant.paymentGateway = {
+          provider: "none",
+          status: "inactive",
+          keyIdEncrypted: "",
+          keySecretEncrypted: "",
+          keyIdMask: "",
+          configuredAt: null,
+          updatedAt: new Date(),
+          updatedBy: req.user?._id || null,
+        };
+      } else if (nextKeyId || nextKeySecret) {
+        if (!nextKeyId || !nextKeySecret) {
+          return sendError(
+            res,
+            400,
+            "Provide both Razorpay Key ID and Key Secret to save tenant payment credentials.",
+          );
+        }
+
+        tenant.paymentGateway = {
+          provider: "razorpay",
+          status: "active",
+          keyIdEncrypted: encryptPaymentCredential(nextKeyId),
+          keySecretEncrypted: encryptPaymentCredential(nextKeySecret),
+          keyIdMask: maskPaymentCredential(nextKeyId),
+          configuredAt: tenant.paymentGateway?.configuredAt || new Date(),
+          updatedAt: new Date(),
+          updatedBy: req.user?._id || null,
+        };
+      }
+    }
+    const paymentGatewaySummary = buildPaymentGatewaySummary(tenant.toObject());
+    const nextPaymentMethods = validateEnabledPaymentMethods(
+      applyPaymentGatewayRestrictions(
+        mergedSettings.paymentMethods || settings.paymentMethods,
+        paymentGatewaySummary,
+      ),
+    );
     settings.restaurant = mergedSettings.restaurant || settings.restaurant;
     settings.businessHours =
       mergedSettings.businessHours || settings.businessHours;
     settings.taxSettings = mergedSettings.taxSettings || settings.taxSettings;
-    settings.paymentMethods =
-      mergedSettings.paymentMethods || settings.paymentMethods;
+    settings.paymentMethods = nextPaymentMethods;
     settings.notifications =
       mergedSettings.notifications || settings.notifications;
     settings.staff = mergedSettings.staff || settings.staff;
     settings.operations = mergedSettings.operations || settings.operations;
     settings.updatedBy = req.user?._id || null;
-    await settings.save();
+    await Promise.all([settings.save(), tenant.save()]);
     invalidateTenantTaxSettings(req.tenant?._id);
     await delayMonitor.syncWithSettings(req.tenant?._id);
+    const savedSettings = settings.toObject();
+    const paymentConfiguration = {
+      paymentGateway: paymentGatewaySummary,
+      paymentMethods: nextPaymentMethods,
+    };
     return sendSuccess(
       res,
       200,
       "Settings updated successfully",
-      toAdminSettings(req, settings.toObject()),
+      toAdminSettings(req, savedSettings, paymentConfiguration),
       {
-        publicSettings: toPublicSettings(req, settings.toObject()),
+        publicSettings: toPublicSettings(
+          req,
+          savedSettings,
+          paymentConfiguration,
+        ),
         meta: {
           delayMonitorStatus: shapeDelayMonitorStatus(
             delayMonitor.getStatus(req.tenant?._id),

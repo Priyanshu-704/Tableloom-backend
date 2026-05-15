@@ -158,6 +158,10 @@ const appSettingSchema = new mongoose.Schema(
         type: Boolean,
         default: true,
       },
+      online: {
+        type: Boolean,
+        default: true,
+      },
       card: {
         type: Boolean,
         default: true,

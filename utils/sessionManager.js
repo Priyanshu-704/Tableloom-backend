@@ -15,6 +15,12 @@ const {
   getRazorpayPublicConfig,
   verifyRazorpaySignature,
 } = require("./razorpay");
+const {
+  getTenantRazorpayCredentials,
+  isCheckoutMethodAllowed,
+  isManualMethodAllowed,
+  loadTenantPaymentConfiguration,
+} = require("./paymentGatewayManager");
 require("dotenv").config({
   quiet: true,
 });
@@ -46,6 +52,32 @@ const buildRazorpayReceipt = (bill = {}) => {
 
   return `${baseReceipt}-${suffix}`.slice(0, 40);
 };
+
+const PAYMENT_METHOD_LABELS = {
+  cash: "Cash",
+  online: "Online",
+  card: "Card",
+  upi: "UPI",
+  wallet: "Wallet",
+};
+
+const getCheckoutMethodUnavailableMessage = (
+  paymentConfiguration = {},
+  method = "",
+) => {
+  const normalizedMethod = String(method || "")
+    .trim()
+    .toLowerCase();
+
+  if (normalizedMethod !== "cash" && !paymentConfiguration?.paymentGateway?.enabled) {
+    return "Only cash payments are available until this tenant securely configures payment gateway credentials.";
+  }
+
+  return `${PAYMENT_METHOD_LABELS[normalizedMethod] || "Selected"} payments are not enabled for this tenant.`;
+};
+
+const getManualMethodUnavailableMessage = (method = "") =>
+  `${PAYMENT_METHOD_LABELS[String(method || "").trim().toLowerCase()] || "Selected"} payments are not enabled for this tenant.`;
 
 const emitSessionCompletion = (sessionId, payload = {}) => {
   if (!sessionId) {
@@ -1458,6 +1490,26 @@ exports.requestBillForSession = async (
     if (!paymentEligibility.allOrdersServed) {
       throw new Error(paymentEligibility.message);
     }
+    const normalizedPaymentMethod = String(paymentMethod || "")
+      .trim()
+      .toLowerCase();
+    const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
+      customer.tenantId,
+    );
+    if (
+      normalizedPaymentMethod &&
+      !isCheckoutMethodAllowed(
+        tenantPaymentConfiguration,
+        normalizedPaymentMethod,
+      )
+    ) {
+      throw new Error(
+        getCheckoutMethodUnavailableMessage(
+          tenantPaymentConfiguration,
+          normalizedPaymentMethod,
+        ),
+      );
+    }
     const resolvedEmail =
       String(email || customer.email || "")
         .trim()
@@ -1475,9 +1527,6 @@ exports.requestBillForSession = async (
       forceNew,
     );
     const action = bill?.generationAction || "created";
-    const normalizedPaymentMethod = String(paymentMethod || "")
-      .trim()
-      .toLowerCase();
     const previousCustomerPaymentMethod = String(customer.paymentMethod || "")
       .trim()
       .toLowerCase();
@@ -1571,6 +1620,10 @@ exports.createRazorpayOrderForSession = async (
     );
     const bill = billResponse?.data?.bill || null;
     const customer = billResponse?.data?.session || null;
+    const tenantId = customer?.tenantId || bill?.tenantId || null;
+    const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
+      tenantId,
+    );
 
     if (!bill) {
       throw new Error("Bill is not available for payment");
@@ -1585,7 +1638,22 @@ exports.createRazorpayOrderForSession = async (
       throw new Error("Bill total must be greater than zero");
     }
 
-    const razorpayClient = getRazorpayClient();
+    if (
+      !isCheckoutMethodAllowed(
+        tenantPaymentConfiguration,
+        normalizedPaymentMethod,
+      )
+    ) {
+      throw new Error(
+        getCheckoutMethodUnavailableMessage(
+          tenantPaymentConfiguration,
+          normalizedPaymentMethod,
+        ),
+      );
+    }
+
+    const razorpayCredentials = await getTenantRazorpayCredentials(tenantId);
+    const razorpayClient = getRazorpayClient(razorpayCredentials);
     const razorpayOrder = await razorpayClient.orders.create({
       amount: convertAmountToSubunits(totalAmount),
       currency: bill.currency || "INR",
@@ -1607,7 +1675,7 @@ exports.createRazorpayOrderForSession = async (
       success: true,
       message: "Razorpay order created successfully",
       data: {
-        keyId: getRazorpayPublicConfig().keyId,
+        keyId: getRazorpayPublicConfig(razorpayCredentials).keyId,
         order: {
           id: razorpayOrder.id,
           amount: Number(razorpayOrder.amount || 0),
@@ -1669,6 +1737,9 @@ exports.verifyRazorpayPaymentForSession = async (
     if (String(bill.sessionId) !== String(sessionId)) {
       throw new Error("Bill does not belong to this session");
     }
+    const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
+      bill.tenantId,
+    );
 
     if (bill.paymentStatus === "paid") {
       throw new Error("Bill is already paid");
@@ -1682,17 +1753,21 @@ exports.verifyRazorpayPaymentForSession = async (
       );
     }
 
-    const isSignatureValid = verifyRazorpaySignature({
-      orderId: razorpayOrderId,
-      paymentId: razorpayPaymentId,
-      signature: razorpaySignature,
-    });
+    const razorpayCredentials = await getTenantRazorpayCredentials(bill.tenantId);
+    const isSignatureValid = verifyRazorpaySignature(
+      {
+        orderId: razorpayOrderId,
+        paymentId: razorpayPaymentId,
+        signature: razorpaySignature,
+      },
+      razorpayCredentials,
+    );
 
     if (!isSignatureValid) {
       throw new Error("Razorpay payment signature verification failed");
     }
 
-    const razorpayClient = getRazorpayClient();
+    const razorpayClient = getRazorpayClient(razorpayCredentials);
     const [razorpayOrder, razorpayPayment] = await Promise.all([
       razorpayClient.orders.fetch(razorpayOrderId),
       razorpayClient.payments.fetch(razorpayPaymentId),
@@ -1733,6 +1808,19 @@ exports.verifyRazorpayPaymentForSession = async (
     const resolvedPaymentMethod = toSupportedPaymentMethod(
       razorpayPayment.method || paymentMethod,
     );
+    if (
+      !isCheckoutMethodAllowed(
+        tenantPaymentConfiguration,
+        resolvedPaymentMethod,
+      )
+    ) {
+      throw new Error(
+        getCheckoutMethodUnavailableMessage(
+          tenantPaymentConfiguration,
+          resolvedPaymentMethod,
+        ),
+      );
+    }
 
     return await exports.markBillAsPaid(
       billId,
@@ -1754,9 +1842,37 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
     if (!bill) {
       throw new Error("Bill not found");
     }
+    const normalizedPaymentMethod = toSupportedPaymentMethod(paymentData?.method);
+    const paymentConfiguration = await loadTenantPaymentConfiguration(
+      bill.tenantId,
+    );
+    const normalizedGateway = String(paymentData?.gateway || "")
+      .trim()
+      .toLowerCase();
+    if (normalizedGateway === "razorpay") {
+      if (
+        !isCheckoutMethodAllowed(paymentConfiguration, normalizedPaymentMethod)
+      ) {
+        throw new Error(
+          getCheckoutMethodUnavailableMessage(
+            paymentConfiguration,
+            normalizedPaymentMethod,
+          ),
+        );
+      }
+    } else if (
+      !isManualMethodAllowed(paymentConfiguration, normalizedPaymentMethod)
+    ) {
+      throw new Error(
+        getManualMethodUnavailableMessage(normalizedPaymentMethod),
+      );
+    }
     const updatedBill = await billManager.updateBillPayment(
       billId,
-      paymentData,
+      {
+        ...paymentData,
+        method: normalizedPaymentMethod,
+      },
     );
     const customer = await Customer.findOne({
       sessionId: bill.sessionId,
@@ -1768,7 +1884,7 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
       customer.isActive = false;
       customer.sessionEnd = paidAt;
       customer.paymentStatus = "paid";
-      customer.paymentMethod = paymentData.method;
+      customer.paymentMethod = normalizedPaymentMethod;
       customer.paymentReference = paymentData.transactionId;
       customer.retainSessionData = true;
       customer.retainUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
