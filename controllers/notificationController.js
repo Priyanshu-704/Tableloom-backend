@@ -3,7 +3,7 @@ const notificationManager = require("../utils/notificationManager");
 const { sendSuccess, sendError } = require("../utils/httpResponse");
 const parsePagination = (page, limit) => {
   const pageNum = Math.max(parseInt(page || 1, 10), 1);
-  const limitNum = Math.min(Math.max(parseInt(limit || 20, 10), 1), 100);
+  const limitNum = Math.min(Math.max(parseInt(limit || 20, 10), 1), 500);
   const skip = (pageNum - 1) * limitNum;
   return {
     pageNum,

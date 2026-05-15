@@ -756,6 +756,10 @@ exports.checkDelayedOrders = async (options = {}) => {
       1,
       Number(options?.criticalThresholdMinutes || 15),
     );
+    const notificationIntervalMinutes = Math.max(
+      1,
+      Number(options?.notificationIntervalMinutes || 5),
+    );
     const notifyOnDelay = options?.notifyOnDelay !== false;
     const delayedOrders = [];
     const kitchenOrders = await KitchenOrder.find({
@@ -826,6 +830,7 @@ exports.checkDelayedOrders = async (options = {}) => {
               delayedItems,
               {
                 criticalThresholdMinutes,
+                notificationIntervalMinutes,
               },
             );
           } catch (notifError) {

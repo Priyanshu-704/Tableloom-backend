@@ -2,6 +2,7 @@ const { logger } = require("./logger.js");
 const cron = require("node-cron");
 const kitchenManager = require("./kitchenManager");
 const AppSetting = require("../models/AppSetting");
+const Order = require("../models/Order");
 const { runWithTenant } = require("./tenantContext");
 const DEFAULT_CONFIG = {
   enabled: true,
@@ -9,6 +10,12 @@ const DEFAULT_CONFIG = {
   notifyOnDelay: true,
   criticalThresholdMinutes: 15,
 };
+const EXPIRED_DELAYED_ORDER_THRESHOLD_HOURS = 48;
+const CANCELLABLE_DELAYED_ORDER_STATUSES = [
+  "pending",
+  "confirmed",
+  "preparing",
+];
 class DelayMonitor {
   constructor() {
     this.tenantStates = new Map();
@@ -147,6 +154,78 @@ class DelayMonitor {
     }
     return state;
   }
+  async autoCancelExpiredDelayedOrders(delayedOrders = []) {
+    const delayedOrderIds = [
+      ...new Set(
+        delayedOrders
+          .map((order) => String(order?.orderId || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (delayedOrderIds.length === 0) {
+      return {
+        autoCancelledOrders: [],
+        delayedOrders,
+      };
+    }
+    const staleOrderCutoff = new Date(
+      Date.now() - EXPIRED_DELAYED_ORDER_THRESHOLD_HOURS * 60 * 60 * 1000,
+    );
+    const expiredDelayedOrders = await Order.find({
+      _id: {
+        $in: delayedOrderIds,
+      },
+      status: {
+        $in: CANCELLABLE_DELAYED_ORDER_STATUSES,
+      },
+      orderPlacedAt: {
+        $lte: staleOrderCutoff,
+      },
+    })
+      .select("_id orderNumber status orderPlacedAt")
+      .lean();
+    if (expiredDelayedOrders.length === 0) {
+      return {
+        autoCancelledOrders: [],
+        delayedOrders,
+      };
+    }
+    const orderManager = require("./orderManager");
+    const cancelledOrderIds = new Set();
+    const autoCancelledOrders = [];
+    for (const order of expiredDelayedOrders) {
+      try {
+        await orderManager.updateOrderStatus(
+          order._id,
+          "cancelled",
+          null,
+          `Automatically cancelled after remaining delayed for more than ${EXPIRED_DELAYED_ORDER_THRESHOLD_HOURS} hours`,
+        );
+        const normalizedOrderId = String(order._id || "").trim();
+        if (!normalizedOrderId) {
+          continue;
+        }
+        cancelledOrderIds.add(normalizedOrderId);
+        autoCancelledOrders.push({
+          orderId: normalizedOrderId,
+          orderNumber: order.orderNumber || "",
+          orderPlacedAt: order.orderPlacedAt || null,
+          previousStatus: order.status || "",
+        });
+      } catch (error) {
+        logger.error(
+          `Failed to auto-cancel delayed order ${order.orderNumber || order._id}:`,
+          error,
+        );
+      }
+    }
+    return {
+      autoCancelledOrders,
+      delayedOrders: delayedOrders.filter(
+        (order) => !cancelledOrderIds.has(String(order?.orderId || "").trim()),
+      ),
+    };
+  }
   async runCheck(trigger = "scheduled", tenantId = null) {
     const normalizedTenantId = String(tenantId || "").trim();
     if (!normalizedTenantId) {
@@ -154,11 +233,16 @@ class DelayMonitor {
     }
     const state = await this.ensureTenantConfigLoaded(normalizedTenantId);
     try {
-      const delayedOrders = await runWithTenant(normalizedTenantId, async () =>
-        kitchenManager.checkDelayedOrders({
-          notifyOnDelay: state.config.notifyOnDelay,
-          criticalThresholdMinutes: state.config.criticalThresholdMinutes,
-        }),
+      const { delayedOrders, autoCancelledOrders } = await runWithTenant(
+        normalizedTenantId,
+        async () => {
+          const detectedDelayedOrders = await kitchenManager.checkDelayedOrders({
+            notifyOnDelay: state.config.notifyOnDelay,
+            criticalThresholdMinutes: state.config.criticalThresholdMinutes,
+            notificationIntervalMinutes: state.config.intervalMinutes,
+          });
+          return this.autoCancelExpiredDelayedOrders(detectedDelayedOrders);
+        },
       );
       state.lastCheck = new Date();
       state.lastError = null;
@@ -170,6 +254,7 @@ class DelayMonitor {
             Number(order?.maxDelayMinutes || 0) >=
             Number(state.config.criticalThresholdMinutes || 15),
         ).length,
+        autoCancelledExpiredOrders: autoCancelledOrders.length,
         checkedAt: state.lastCheck,
       };
       return delayedOrders;

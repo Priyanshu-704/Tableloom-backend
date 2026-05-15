@@ -185,6 +185,9 @@ const shapeDelayMonitorStatus = (status = {}) => ({
     criticalDelayedOrders: Number(
       status?.lastRunSummary?.criticalDelayedOrders || 0,
     ),
+    autoCancelledExpiredOrders: Number(
+      status?.lastRunSummary?.autoCancelledExpiredOrders || 0,
+    ),
     trigger: status?.lastRunSummary?.trigger || null,
     checkedAt: status?.lastRunSummary?.checkedAt || null,
   },

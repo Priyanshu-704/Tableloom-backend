@@ -774,7 +774,27 @@ class NotificationManager {
       1,
       Number(options?.criticalThresholdMinutes || 15),
     );
+    const notificationIntervalMinutes = Math.max(
+      1,
+      Number(options?.notificationIntervalMinutes || 5),
+    );
     const priority = delayMinutes >= criticalThresholdMinutes ? "urgent" : "high";
+    const resendThreshold = new Date(
+      Date.now() - notificationIntervalMinutes * 60 * 1000,
+    );
+    const existingNotification = await Notification.findOne({
+      tenantId: orderData.tenantId || null,
+      type: "order_delayed",
+      relatedTo: orderData._id,
+      relatedModel: "KitchenOrder",
+      createdAt: { $gte: resendThreshold },
+    })
+      .sort({ createdAt: -1 })
+      .select("_id")
+      .lean();
+    if (existingNotification) {
+      return null;
+    }
     return this.createNotification({
       tenantId: orderData.tenantId || null,
       title: `Order Delay - #${orderData.orderNumber}`,
@@ -810,6 +830,7 @@ class NotificationManager {
         delayedItems: delayedItems,
         priority: orderData.priority,
         criticalThresholdMinutes,
+        notificationIntervalMinutes,
         createdAt: orderData.createdAt,
       },
     });
