@@ -66,12 +66,13 @@ exports.getTableQRImage = async (req, res) => {
     if (!table) {
       return res.status(404).send("Image not found");
     }
-    if (!table.qrCode && table.qrToken) {
+    if (table.qrToken) {
       const qrUrl = buildTenantTableQrUrl({
         tableId: table._id,
         tableNumber: table.tableNumber,
         token: table.qrToken,
         tenant: req.tenant,
+        branch: req.branch,
       });
       if (!qrUrl) {
         return res.status(404).send("Image not found");

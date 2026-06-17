@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const INVENTORY_UNITS = ["kg", "pieces", "gram", "milligram", "liter", "ton"];
 const inventoryItemSchema = new mongoose.Schema(
   {
@@ -90,6 +91,7 @@ const inventoryItemSchema = new mongoose.Schema(
 inventoryItemSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     ingredientName: 1,
   },
   {
@@ -99,6 +101,7 @@ inventoryItemSchema.index(
 inventoryItemSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     sku: 1,
   },
   {
@@ -111,4 +114,5 @@ inventoryItemSchema.index(
   },
 );
 inventoryItemSchema.plugin(tenantScoped);
+inventoryItemSchema.plugin(branchScoped);
 module.exports = mongoose.model("InventoryItem", inventoryItemSchema);

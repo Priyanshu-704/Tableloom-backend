@@ -7,6 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "migrate:branches": "node scripts/migrate-branches.js",
     "migrate:session-billing-prep": "node migrations/20260409_backfill_session_billing_and_prep_time.js",
     "migrate:rbac": "node migrations/20260421_dynamic_rbac_setup.js",
     "seed:admin": "node seedAdmin.js",

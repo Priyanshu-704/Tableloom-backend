@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
 const { RolePermissions } = require("../config/permissions");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const defaultStaffRoles = [
   {
     id: 1,
@@ -260,9 +261,11 @@ const appSettingSchema = new mongoose.Schema(
   },
 );
 appSettingSchema.plugin(tenantScoped);
+appSettingSchema.plugin(branchScoped);
 appSettingSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     key: 1,
   },
   {

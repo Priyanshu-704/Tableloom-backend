@@ -32,6 +32,19 @@ const buildTenantAdminLoginUrl = (tenant = {}) => {
   }
   return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/login`;
 };
+const buildTenantAdminSubscriptionUrl = (tenant = {}) => {
+  const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const tenantSlug = String(tenant?.slug || "")
+    .trim()
+    .toLowerCase();
+  const tenantKey = String(tenant?.key || "")
+    .trim()
+    .toLowerCase();
+  if (!baseUrl || !tenantSlug || !tenantKey) {
+    return baseUrl || null;
+  }
+  return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/subscription`;
+};
 const buildTenantAdminResetUrl = (tenant = {}, resetToken = "") => {
   const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
   const normalizedResetToken = String(resetToken || "").trim();
@@ -51,6 +64,23 @@ const buildTenantAdminResetUrl = (tenant = {}, resetToken = "") => {
   }
 
   return `${baseUrl}/${tenantSlug}/${tenantKey}/admin/reset-password/${normalizedResetToken}`;
+};
+const buildTenantSubscriptionRenewalUrl = (tenant = {}, renewalToken = "") => {
+  const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
+  const normalizedRenewalToken = String(renewalToken || "").trim();
+  const tenantSlug = String(tenant?.slug || "")
+    .trim()
+    .toLowerCase();
+  const tenantKey = String(tenant?.key || "")
+    .trim()
+    .toLowerCase();
+  if (!baseUrl || !tenantSlug || !tenantKey) {
+    return baseUrl || null;
+  }
+  const tokenQuery = normalizedRenewalToken
+    ? `?token=${encodeURIComponent(normalizedRenewalToken)}`
+    : "";
+  return `${baseUrl}/${tenantSlug}/${tenantKey}/subscription-renewal${tokenQuery}`;
 };
 const sendStaffCredentials = async (
   email,
@@ -257,11 +287,99 @@ const sendTenantRejectionEmail = async ({
     return false;
   }
 };
+const sendSubscriptionExpiryEmail = async ({
+  to,
+  name,
+  tenant,
+  plan,
+  subject,
+  expiresAt,
+  daysRemaining,
+  renewalUrl,
+} = {}) => {
+  const expiryDate = expiresAt ? new Date(expiresAt).toDateString() : "soon";
+  const planName = plan?.name || plan?.key || tenant?.subscription?.planKey || "current";
+  const message =
+    Number(daysRemaining) === 0
+      ? "Your Tableloom subscription has expired."
+      : `Your Tableloom subscription expires in ${daysRemaining} day${Number(daysRemaining) === 1 ? "" : "s"}.`;
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">${subject}</h2>
+        <p>Hello ${name || "there"},</p>
+        <p>${message}</p>
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>Restaurant:</strong> ${tenant?.name || "Tableloom workspace"}</p>
+          <p><strong>Plan:</strong> ${planName}</p>
+          <p><strong>Expiry date:</strong> ${expiryDate}</p>
+        </div>
+        ${
+          renewalUrl
+            ? `<p><a href="${renewalUrl}" style="background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Renew subscription</a></p>`
+            : "<p>Please contact platform support to renew your subscription.</p>"
+        }
+      </div>
+    `,
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    logger.info(`Subscription expiry email sent to ${to}`);
+    return true;
+  } catch (error) {
+    logger.error("Subscription expiry email failed:", error);
+    return false;
+  }
+};
+const sendBranchSubscriptionExpiredEmail = async ({
+  to,
+  name,
+  tenant,
+  plan,
+  subject = "Your Tableloom subscription has expired",
+  expiresAt,
+} = {}) => {
+  const expiryDate = expiresAt ? new Date(expiresAt).toDateString() : "recently";
+  const planName = plan?.name || plan?.key || tenant?.subscription?.planKey || "current";
+  const mailOptions = {
+    from: process.env.EMAIL_FROM,
+    to,
+    subject,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">${subject}</h2>
+        <p>Hello ${name || "there"},</p>
+        <p>The Tableloom subscription for <strong>${tenant?.name || "your restaurant workspace"}</strong> has expired.</p>
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
+          <p><strong>Restaurant:</strong> ${tenant?.name || "Tableloom workspace"}</p>
+          <p><strong>Plan:</strong> ${planName}</p>
+          <p><strong>Expiry date:</strong> ${expiryDate}</p>
+        </div>
+        <p>Please contact the main tenant administrator to renew the subscription.</p>
+      </div>
+    `,
+  };
+  try {
+    await transporter.sendMail(mailOptions);
+    logger.info(`Branch subscription expired email sent to ${to}`);
+    return true;
+  } catch (error) {
+    logger.error("Branch subscription expired email failed:", error);
+    return false;
+  }
+};
 module.exports = {
   sendStaffCredentials,
   sendStaffOnboardingEmail,
   sendPasswordResetEmail,
   sendTenantRejectionEmail,
+  sendSubscriptionExpiryEmail,
+  sendBranchSubscriptionExpiredEmail,
   buildTenantAdminLoginUrl,
+  buildTenantAdminSubscriptionUrl,
   buildTenantAdminResetUrl,
+  buildTenantSubscriptionRenewalUrl,
 };

@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const AppSetting = require("../models/AppSetting");
+const Branch = require("../models/Branch");
 const Tenant = require("../models/Tenant");
 
 const DEFAULT_PAYMENT_METHODS = Object.freeze({
@@ -201,6 +202,8 @@ const validateEnabledPaymentMethods = (paymentMethods = {}) => {
 const loadTenantPaymentConfiguration = async (
   tenantId,
   {
+    branchId = null,
+    branchDocument = null,
     tenantDocument = null,
     settingsDocument = null,
   } = {},
@@ -217,29 +220,60 @@ const loadTenantPaymentConfiguration = async (
     };
   }
 
-  const [tenant, settings] = await Promise.all([
+  const [tenant, branch, settings] = await Promise.all([
     tenantDocument
       ? Promise.resolve(tenantDocument)
       : Tenant.findById(tenantId)
           .select("paymentGateway status subscription")
           .lean(),
+    branchDocument
+      ? Promise.resolve(branchDocument)
+      : branchId
+        ? Branch.findOne({
+            _id: branchId,
+            tenantId,
+          })
+            .select("paymentGateway status type")
+            .lean()
+        : Promise.resolve(null),
     settingsDocument
       ? Promise.resolve(settingsDocument)
-      : AppSetting.findOne({
-          tenantId,
-          key: "app-settings",
-        }).lean(),
+      : branchId
+        ? AppSetting.findOne({
+            tenantId,
+            branchId,
+            key: "app-settings",
+          }).lean()
+        : AppSetting.findOne({
+            tenantId,
+            branchId: null,
+            key: "app-settings",
+          }).lean(),
   ]);
 
-  const paymentGateway = buildPaymentGatewaySummary(tenant);
+  const fallbackSettings =
+    settings ||
+    (branchId
+      ? await AppSetting.findOne({
+          tenantId,
+          branchId: null,
+          key: "app-settings",
+        }).lean()
+      : null);
+  const branchPaymentGateway = buildPaymentGatewaySummary(branch);
+  const tenantPaymentGateway = buildPaymentGatewaySummary(tenant);
+  const paymentGateway = branchPaymentGateway.enabled
+    ? branchPaymentGateway
+    : tenantPaymentGateway;
   const paymentMethods = applyPaymentGatewayRestrictions(
-    settings?.paymentMethods,
+    fallbackSettings?.paymentMethods,
     paymentGateway,
   );
 
   return {
     tenant,
-    settings,
+    branch,
+    settings: fallbackSettings,
     paymentGateway,
     paymentMethods,
   };
@@ -271,12 +305,33 @@ const isManualMethodAllowed = (paymentConfiguration = {}, method = "") => {
   return Boolean(paymentConfiguration?.paymentMethods?.[settingField]);
 };
 
-const getTenantRazorpayCredentials = async (tenantId, tenantDocument = null) => {
-  const tenant = tenantDocument
-    ? tenantDocument
-    : await Tenant.findById(tenantId).select("paymentGateway").lean();
+const getTenantRazorpayCredentials = async (
+  tenantId,
+  tenantDocument = null,
+  { branchId = null, branchDocument = null } = {},
+) => {
+  const [tenant, branch] = await Promise.all([
+    tenantDocument
+      ? Promise.resolve(tenantDocument)
+      : Tenant.findById(tenantId).select("paymentGateway").lean(),
+    branchDocument
+      ? Promise.resolve(branchDocument)
+      : branchId
+        ? Branch.findOne({
+            _id: branchId,
+            tenantId,
+          })
+            .select("paymentGateway")
+            .lean()
+        : Promise.resolve(null),
+  ]);
 
-  const paymentGateway = buildPaymentGatewaySummary(tenant);
+  const branchPaymentGateway = buildPaymentGatewaySummary(branch);
+  const tenantPaymentGateway = buildPaymentGatewaySummary(tenant);
+  const credentialOwner = branchPaymentGateway.enabled ? branch : tenant;
+  const paymentGateway = branchPaymentGateway.enabled
+    ? branchPaymentGateway
+    : tenantPaymentGateway;
 
   if (!paymentGateway.enabled) {
     throw new Error(
@@ -288,9 +343,11 @@ const getTenantRazorpayCredentials = async (tenantId, tenantDocument = null) => 
     throw new Error("Only Razorpay is supported for tenant payment checkout.");
   }
 
-  const keyId = decryptPaymentCredential(tenant?.paymentGateway?.keyIdEncrypted);
+  const keyId = decryptPaymentCredential(
+    credentialOwner?.paymentGateway?.keyIdEncrypted,
+  );
   const keySecret = decryptPaymentCredential(
-    tenant?.paymentGateway?.keySecretEncrypted,
+    credentialOwner?.paymentGateway?.keySecretEncrypted,
   );
 
   if (!keyId || !keySecret) {

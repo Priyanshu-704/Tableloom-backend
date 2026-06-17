@@ -115,18 +115,22 @@ const parseSettingsPayload = (payload = {}) =>
     accumulator[key] = value;
     return accumulator;
   }, {});
-const getOrCreateSettings = async (tenantId) => {
+const getActiveBranchId = (req) =>
+  req.isAllBranches ? null : req.branchId || null;
+const getOrCreateSettings = async (tenantId, branchId = null) => {
   if (!tenantId) {
     throw new Error("Tenant context is required for settings access");
   }
   let settings = await AppSetting.findOne({
     key: "app-settings",
     tenantId,
+    branchId,
   });
   if (!settings) {
     settings = await AppSetting.create({
       key: "app-settings",
       tenantId,
+      branchId,
     });
   }
   return settings;
@@ -194,11 +198,14 @@ const shapeDelayMonitorStatus = (status = {}) => ({
 });
 exports.getPublicSettings = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings(req.tenant?._id);
+    const branchId = getActiveBranchId(req);
+    const settings = await getOrCreateSettings(req.tenant?._id, branchId);
     const rawSettings = settings.toObject();
     const paymentConfiguration = await loadTenantPaymentConfiguration(
       req.tenant?._id,
       {
+        branchId,
+        branchDocument: req.branch?.toObject ? req.branch.toObject() : req.branch,
         settingsDocument: rawSettings,
       },
     );
@@ -215,11 +222,14 @@ exports.getPublicSettings = async (req, res) => {
 };
 exports.getAdminSettings = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings(req.tenant?._id);
+    const branchId = getActiveBranchId(req);
+    const settings = await getOrCreateSettings(req.tenant?._id, branchId);
     const rawSettings = settings.toObject();
     const paymentConfiguration = await loadTenantPaymentConfiguration(
       req.tenant?._id,
       {
+        branchId,
+        branchDocument: req.branch?.toObject ? req.branch.toObject() : req.branch,
         settingsDocument: rawSettings,
       },
     );
@@ -244,11 +254,14 @@ exports.getAdminSettings = async (req, res) => {
 };
 exports.updateSettings = async (req, res) => {
   try {
-    const settings = await getOrCreateSettings(req.tenant?._id);
+    const branchId = getActiveBranchId(req);
+    const settings = await getOrCreateSettings(req.tenant?._id, branchId);
     const tenant = await Tenant.findById(req.tenant?._id);
     if (!tenant) {
       return sendError(res, 404, "Tenant not found");
     }
+    const branch = branchId ? req.branch : null;
+    const paymentOwner = branch || tenant;
     const currentSettings = settings.toObject();
     const parsedPayload = parseSettingsPayload(req.body || {});
     const mergedSettings = deepMerge(currentSettings, parsedPayload);
@@ -291,7 +304,7 @@ exports.updateSettings = async (req, res) => {
       const nextKeySecret = String(paymentGatewayPayload?.keySecret || "").trim();
 
       if (removeCredentials) {
-        tenant.paymentGateway = {
+        paymentOwner.paymentGateway = {
           provider: "none",
           status: "inactive",
           keyIdEncrypted: "",
@@ -306,23 +319,25 @@ exports.updateSettings = async (req, res) => {
           return sendError(
             res,
             400,
-            "Provide both Razorpay Key ID and Key Secret to save tenant payment credentials.",
+            "Provide both Razorpay Key ID and Key Secret to save payment credentials.",
           );
         }
 
-        tenant.paymentGateway = {
+        paymentOwner.paymentGateway = {
           provider: "razorpay",
           status: "active",
           keyIdEncrypted: encryptPaymentCredential(nextKeyId),
           keySecretEncrypted: encryptPaymentCredential(nextKeySecret),
           keyIdMask: maskPaymentCredential(nextKeyId),
-          configuredAt: tenant.paymentGateway?.configuredAt || new Date(),
+          configuredAt: paymentOwner.paymentGateway?.configuredAt || new Date(),
           updatedAt: new Date(),
           updatedBy: req.user?._id || null,
         };
       }
     }
-    const paymentGatewaySummary = buildPaymentGatewaySummary(tenant.toObject());
+    const paymentGatewaySummary = buildPaymentGatewaySummary(
+      paymentOwner.toObject ? paymentOwner.toObject() : paymentOwner,
+    );
     const nextPaymentMethods = validateEnabledPaymentMethods(
       applyPaymentGatewayRestrictions(
         mergedSettings.paymentMethods || settings.paymentMethods,
@@ -339,7 +354,7 @@ exports.updateSettings = async (req, res) => {
     settings.staff = mergedSettings.staff || settings.staff;
     settings.operations = mergedSettings.operations || settings.operations;
     settings.updatedBy = req.user?._id || null;
-    await Promise.all([settings.save(), tenant.save()]);
+    await Promise.all([settings.save(), paymentOwner.save()]);
     invalidateTenantTaxSettings(req.tenant?._id);
     await delayMonitor.syncWithSettings(req.tenant?._id);
     const savedSettings = settings.toObject();

@@ -937,10 +937,8 @@ exports.autoCancelExpiredKitchenOrders = async () => {
     const autoCancelledOrders = [];
     for (const order of cancellableOrders) {
       try {
-        await orderManager.updateOrderStatus(
+        await orderManager.cancelStaleOrder(
           order._id,
-          "cancelled",
-          null,
           `Automatically cancelled after remaining active in kitchen for more than ${STALE_ACTIVE_KITCHEN_ORDER_THRESHOLD_HOURS} hours`,
         );
         autoCancelledOrders.push({

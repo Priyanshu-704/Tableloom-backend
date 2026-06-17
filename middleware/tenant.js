@@ -71,6 +71,34 @@ const resolveTenantLookupFromAccessToken = async (req) => {
     return null;
   }
 };
+const isBypassedPath = (path = "") => {
+  const normalized = String(path || "").trim().toLowerCase();
+  return (
+    normalized.includes("/users/login") ||
+    normalized.includes("/users/refresh-token") ||
+    normalized.includes("/users/logout") ||
+    normalized.includes("/subscription-renewal") ||
+    normalized.includes("/subscription-renewal-order") ||
+    normalized.includes("/subscription-renewal-verify")
+  );
+};
+const checkIsSuperAdmin = async (req) => {
+  const accessToken = extractAccessToken(req);
+  if (!accessToken) {
+    return false;
+  }
+  try {
+    const decoded = verifyAccessToken(accessToken);
+    const userId = getTokenUserId(decoded);
+    if (!userId) {
+      return false;
+    }
+    const user = await User.findById(userId).select("role").lean();
+    return user && String(user.role || "").toLowerCase() === "super_admin";
+  } catch (e) {
+    return false;
+  }
+};
 exports.resolveTenant = async (req, res, next) => {
   try {
     const lookup =
@@ -83,7 +111,7 @@ exports.resolveTenant = async (req, res, next) => {
     let tenant = cacheKey ? getCacheEntry(cacheKey) : null;
     if (!tenant) {
       tenant = await Tenant.findOne(lookup)
-        .select("_id name slug key status branding")
+        .select("_id name slug key status branding contact payment subscription mainBranchId")
         .lean();
       if (tenant && cacheKey) {
         setCacheEntry(cacheKey, tenant, TENANT_LOOKUP_CACHE_TTL_MS);
@@ -102,6 +130,18 @@ exports.resolveTenant = async (req, res, next) => {
       return res.status(404).json({
         success: false,
         message: "Restaurant workspace not found or inactive",
+      });
+    }
+    const { isSubscriptionActive } = require("../services/subscriptionService");
+    const isSuperAdminUser = await checkIsSuperAdmin(req);
+    if (!isBypassedPath(req.originalUrl || req.path) && !isSuperAdminUser && !isSubscriptionActive(tenant)) {
+      return res.status(402).json({
+        success: false,
+        code: "SUBSCRIPTION_INACTIVE",
+        message: "This restaurant subscription has expired. Renew the subscription to access the main branch and sub-branches.",
+        subscriptionState: "expired",
+        tenantSlug: tenant.slug,
+        tenantKey: tenant.key,
       });
     }
     req.tenant = tenant;

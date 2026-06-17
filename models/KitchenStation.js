@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const kitchenStationSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -78,6 +79,7 @@ kitchenStationSchema.pre("save", function () {
 kitchenStationSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     name: 1,
   },
   {
@@ -85,4 +87,5 @@ kitchenStationSchema.index(
   },
 );
 kitchenStationSchema.plugin(tenantScoped);
+kitchenStationSchema.plugin(branchScoped);
 module.exports = mongoose.model("KitchenStation", kitchenStationSchema);

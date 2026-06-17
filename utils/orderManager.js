@@ -234,6 +234,7 @@ exports.createOrder = async (sessionId, orderData) => {
       customer: customer._id,
       sessionId: customer.sessionId,
       table: customer.table._id,
+      branchId: customer.branchId || customer.table?.branchId || null,
       items: orderItems,
       subtotal,
       taxAmount: pricingBreakdown.taxAmount,
@@ -696,6 +697,49 @@ exports.updateOrderStatus = async (
     return orderObj;
   } catch (error) {
     logger.error("Update order status failed:", error);
+    throw error;
+  }
+};
+exports.cancelStaleOrder = async (orderId, reason = "") => {
+  try {
+    const order = await Order.findById(orderId);
+    if (!order) {
+      throw new Error("Order not found");
+    }
+    if (["completed", "cancelled"].includes(order.status)) {
+      return {
+        ...(order.toObject ? order.toObject() : order),
+        alreadyTerminal: true,
+      };
+    }
+    order.status = "cancelled";
+    order.cancelledAt = new Date();
+    order.cancelledBy = null;
+    order.cancellationReason =
+      String(reason || "").trim() || "Automatically cancelled as stale";
+    order.lastUpdatedBy = null;
+    order.lastUpdatedAt = new Date();
+    if (Array.isArray(order.items)) {
+      order.items.forEach((item) => {
+        if (!["served", "cancelled"].includes(item.itemStatus)) {
+          item.itemStatus = "cancelled";
+        }
+      });
+    }
+    await order.save();
+    await kitchenManager.syncKitchenOrderFromParentStatus(order._id, "cancelled");
+    const orderObj = order.toObject ? order.toObject() : order;
+    socketManager.emitOrderStatusUpdate(orderObj);
+    socketManager.emitOrderUpdateToKitchen(orderObj);
+    if (order.sessionId) {
+      socketManager.emitOrderStatusToCustomer(order.sessionId, orderObj);
+    }
+    logger.info(
+      `Stale order ${order.orderNumber || order._id} moved to cancelled state`,
+    );
+    return orderObj;
+  } catch (error) {
+    logger.error("Cancel stale order failed:", error);
     throw error;
   }
 };

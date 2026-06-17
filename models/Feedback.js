@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const feedbackSchema = new mongoose.Schema({
   customer: {
     type: mongoose.Schema.ObjectId,
@@ -175,6 +176,7 @@ const feedbackSchema = new mongoose.Schema({
   },
 });
 feedbackSchema.plugin(tenantScoped);
+feedbackSchema.plugin(branchScoped);
 feedbackSchema.pre("save", function () {
   this.updatedAt = Date.now();
   if (this.isModified("ratings") || this.isModified("comments")) {

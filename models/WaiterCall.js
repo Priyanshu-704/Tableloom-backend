@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const waiterCallSchema = new mongoose.Schema({
   callId: {
     type: String,
@@ -145,6 +146,7 @@ const waiterCallSchema = new mongoose.Schema({
   },
 });
 waiterCallSchema.plugin(tenantScoped);
+waiterCallSchema.plugin(branchScoped);
 waiterCallSchema.pre("save", function () {
   this.updatedAt = Date.now();
 });

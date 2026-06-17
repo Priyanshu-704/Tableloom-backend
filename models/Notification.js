@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const notificationActionSchema = new mongoose.Schema(
   {
     label: {
@@ -57,8 +58,14 @@ const notificationSchema = new mongoose.Schema(
         "rating_received",
         "shift_change",
         "task_assigned",
+        "subscription",
       ],
       required: true,
+    },
+    severity: {
+      type: String,
+      enum: ["info", "warning", "critical"],
+      default: "info",
     },
     priority: {
       type: String,
@@ -228,6 +235,7 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.plugin(tenantScoped, {
   required: false,
 });
+notificationSchema.plugin(branchScoped);
 notificationSchema.index({
   recipients: 1,
   status: 1,

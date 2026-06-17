@@ -213,10 +213,8 @@ class DelayMonitor {
     const autoCancelledOrders = [];
     for (const order of expiredDelayedOrders) {
       try {
-        await orderManager.updateOrderStatus(
+        await orderManager.cancelStaleOrder(
           order._id,
-          "cancelled",
-          null,
           `Automatically cancelled after remaining delayed for more than ${EXPIRED_DELAYED_ORDER_THRESHOLD_HOURS} hours`,
         );
         const normalizedOrderId = String(order._id || "").trim();

@@ -53,6 +53,29 @@ const userSchema = new mongoose.Schema({
     default: null,
     index: true,
   },
+  branchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Branch",
+    default: null,
+    index: true,
+  },
+  branchIds: [
+    {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+    },
+  ],
+  branchScope: {
+    type: String,
+    enum: ["global", "all", "own"],
+    default: "own",
+  },
+  homeBranchId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Branch",
+    default: null,
+    index: true,
+  },
   customPermissions: [
     {
       type: String,

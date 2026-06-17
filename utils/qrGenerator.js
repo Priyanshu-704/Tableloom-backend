@@ -45,6 +45,7 @@ const buildTenantTableQrUrl = ({
   tableNumber,
   token,
   tenant,
+  branch,
 } = {}) => {
   const baseUrl = normalizeBaseUrl(process.env.FRONTEND_URL);
   const encodedTableNumber = encodeURIComponent(String(tableNumber || ""));
@@ -59,9 +60,13 @@ const buildTenantTableQrUrl = ({
     .toLowerCase();
   const tenantPrefix =
     tenantSlug && tenantKey ? `/${tenantSlug}/${tenantKey}` : "";
-  return `${baseUrl}${tenantPrefix}/table/${encodedTableNumber}?table=${tableId}&token=${token}`;
+  const branchSlug = String(branch?.slug || "")
+    .trim()
+    .toLowerCase();
+  const branchPrefix = branchSlug ? `/branch/${branchSlug}` : "";
+  return `${baseUrl}${tenantPrefix}${branchPrefix}/table/${encodedTableNumber}?table=${tableId}&token=${token}`;
 };
-const generateQRData = (tableId, tableNumber, tenant = null) => {
+const generateQRData = (tableId, tableNumber, tenant = null, branch = null) => {
   const timestamp = Date.now();
   const token = crypto.randomBytes(32).toString("hex");
   const qrUrl = buildTenantTableQrUrl({
@@ -69,6 +74,7 @@ const generateQRData = (tableId, tableNumber, tenant = null) => {
     tableNumber,
     token,
     tenant,
+    branch,
   });
   return {
     url: qrUrl,
@@ -132,13 +138,13 @@ const verifyQRToken = async (tableId, token) => {
     };
   }
 };
-const refreshQRToken = async (tableId, tenant = null) => {
+const refreshQRToken = async (tableId, tenant = null, branch = null) => {
   try {
     const table = await Table.findById(tableId);
     if (!table) {
       throw new Error("Table not found");
     }
-    const qrInfo = generateQRData(tableId, table.tableNumber, tenant);
+    const qrInfo = generateQRData(tableId, table.tableNumber, tenant, branch);
     table.qrToken = qrInfo.token;
     table.qrTokenExpiry = qrInfo.expiry;
     const qrUpload = await generateQRCode(qrInfo.url, table.tableNumber);

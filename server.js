@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 const { initializeSocket, shutdownSocket } = require("./utils/socketManager");
 const cookieParser = require("cookie-parser");
 const delayMonitor = require("./utils/delayMonitor");
+const subscriptionExpiryJob = require("./jobs/subscriptionExpiryJob");
 const setupSwagger = require("./docs/setupSwagger");
 const { notFoundHandler, errorHandler } = require("./middleware/errorHandler");
 const {
@@ -15,6 +16,7 @@ const {
 } = require("./middleware/requestProfiler");
 const {
   getAllowedOrigins,
+  isOriginAllowed,
   normalizeOrigin,
   securityHeaders,
 } = require("./middleware/security");
@@ -48,7 +50,7 @@ const allowedOrigins = getAllowedOrigins();
 const corsOptions = {
   origin: function (origin, callback) {
     const requestOrigin = normalizeOrigin(origin);
-    if (!origin || allowedOrigins.has(requestOrigin)) {
+    if (isOriginAllowed(origin, allowedOrigins)) {
       callback(null, true);
     } else {
       logger.warn(`Blocked CORS origin: ${requestOrigin || origin}`);
@@ -63,6 +65,9 @@ const corsOptions = {
     "x-tenant-id",
     "x-tenant-slug",
     "x-tenant-key",
+    "x-branch-id",
+    "x-payment-access-token",
+    "x-subscription-renewal-token",
   ],
 };
 app.use(cors(corsOptions));
@@ -173,6 +178,7 @@ const bootstrapServices = async () => {
   delayMonitor.start().catch((error) => {
     logger.error("Failed to start delay monitor:", error.message);
   });
+  subscriptionExpiryJob.start();
 };
 const startServer = () => {
   server.listen(PORT, () => {
@@ -190,6 +196,7 @@ const shutdown = async (signal) => {
   }
   isShuttingDown = true;
   delayMonitor.stop();
+  subscriptionExpiryJob.stop();
   logger.info(`Received ${signal}. Shutting down gracefully...`);
   await shutdownSocket().catch((error) => {
     logger.error("Socket shutdown failed:", error.message);

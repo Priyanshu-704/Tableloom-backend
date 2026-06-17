@@ -1,6 +1,7 @@
 const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const resolveStationFromCategory = async (categoryId) => {
   if (!categoryId) {
     return null;
@@ -387,6 +388,7 @@ menuItemSchema.statics.syncAllStationsFromCategories = async function () {
 menuItemSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     name: 1,
     category: 1,
   },
@@ -422,6 +424,7 @@ menuItemSchema.index({
 menuItemSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     name: 1,
   },
   {
@@ -429,4 +432,5 @@ menuItemSchema.index(
   },
 );
 menuItemSchema.plugin(tenantScoped);
+menuItemSchema.plugin(branchScoped);
 module.exports = mongoose.model("MenuItem", menuItemSchema);

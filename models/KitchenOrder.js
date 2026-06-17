@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const kitchenOrderSchema = new mongoose.Schema({
   order: {
     type: mongoose.Schema.ObjectId,
@@ -148,6 +149,26 @@ const kitchenOrderSchema = new mongoose.Schema({
   },
 });
 kitchenOrderSchema.plugin(tenantScoped);
+kitchenOrderSchema.plugin(branchScoped);
+
+const preventKitchenOrderHardDelete = function preventKitchenOrderHardDelete(next) {
+  if (String(process.env.ALLOW_ORDER_HARD_DELETE || "").toLowerCase() === "true") {
+    return next();
+  }
+  return next(
+    new Error(
+      "Hard deleting kitchen orders is disabled. Move kitchen orders to cancelled state instead.",
+    ),
+  );
+};
+
+kitchenOrderSchema.pre(
+  "deleteOne",
+  { document: false, query: true },
+  preventKitchenOrderHardDelete,
+);
+kitchenOrderSchema.pre("deleteMany", preventKitchenOrderHardDelete);
+kitchenOrderSchema.pre("findOneAndDelete", preventKitchenOrderHardDelete);
 kitchenOrderSchema.pre("save", function () {
   this.updatedAt = Date.now();
   if (this.items && this.items.length > 0) {

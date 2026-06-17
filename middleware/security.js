@@ -14,19 +14,58 @@ const normalizeOrigin = (value = "") => {
   }
 };
 
+const escapeRegExp = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const buildOriginPattern = (origin = "") => {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized || !normalized.includes("*")) {
+    return null;
+  }
+  return new RegExp(`^${escapeRegExp(normalized).replace(/\\\*/g, ".*")}$`);
+};
+
+const isPrivateNetworkHostname = (hostname = "") =>
+  /^(localhost|127(?:\.\d{1,3}){3}|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/i.test(
+    hostname,
+  );
+
+const isDevelopmentOrigin = (origin = "") => {
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+  try {
+    const url = new URL(origin);
+    return ["http:", "https:"].includes(url.protocol) &&
+      isPrivateNetworkHostname(url.hostname);
+  } catch {
+    return false;
+  }
+};
+
 const getAllowedOrigins = () => {
-  const configuredOrigins = [
+  const configuredValues = [
     process.env.FRONTEND_URL,
     process.env.CORS_ORIGIN,
     process.env.CORS_ORIGINS,
-    "http://192.168.1.156:5173"
+    "http://192.168.1.156:5173",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
   ]
     .filter(Boolean)
-    .flatMap((value) => String(value).split(","))
+    .flatMap((value) => String(value).split(","));
+
+  const configuredOrigins = configuredValues
     .map(normalizeOrigin)
+    .filter((origin) => !origin.includes("*"))
     .filter(Boolean);
 
   const allowedOrigins = new Set(configuredOrigins);
+  const allowedOriginPatterns = configuredValues
+    .map(buildOriginPattern)
+    .filter(Boolean);
 
   if (process.env.NODE_ENV !== "production") {
     [
@@ -39,7 +78,34 @@ const getAllowedOrigins = () => {
     ].forEach((origin) => allowedOrigins.add(origin));
   }
 
-  return allowedOrigins;
+  return {
+    exact: allowedOrigins,
+    patterns: allowedOriginPatterns,
+  };
+};
+
+const isOriginAllowed = (origin = "", allowedOrigins = getAllowedOrigins()) => {
+  const requestOrigin = normalizeOrigin(origin);
+  if (!requestOrigin) {
+    return true;
+  }
+  if (process.env.CORS_ALLOW_ALL === "true") {
+    return true;
+  }
+  if (
+    allowedOrigins instanceof Set
+      ? allowedOrigins.has(requestOrigin)
+      : allowedOrigins.exact?.has(requestOrigin)
+  ) {
+    return true;
+  }
+  if (
+    Array.isArray(allowedOrigins.patterns) &&
+    allowedOrigins.patterns.some((pattern) => pattern.test(requestOrigin))
+  ) {
+    return true;
+  }
+  return isDevelopmentOrigin(requestOrigin);
 };
 
 const getClientIp = (req = {}) => {
@@ -161,6 +227,7 @@ module.exports = {
   createRateLimit,
   getAllowedOrigins,
   getClientIp,
+  isOriginAllowed,
   normalizeOrigin,
   sanitizeLogMeta,
   securityHeaders,

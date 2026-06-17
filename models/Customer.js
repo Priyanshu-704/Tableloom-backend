@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const customerSchema = new mongoose.Schema({
   sessionId: {
     type: String,
@@ -163,6 +164,7 @@ const customerSchema = new mongoose.Schema({
   },
 });
 customerSchema.plugin(tenantScoped);
+customerSchema.plugin(branchScoped);
 customerSchema.index({
   tenantId: 1,
   sessionStart: -1,

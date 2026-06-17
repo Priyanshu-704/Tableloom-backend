@@ -321,10 +321,16 @@ exports.initializeSocket = (server, { allowedOrigins = new Set() } = {}) => {
   io = socketIo(server, {
     cors: {
       origin: (origin, callback) => {
-        if (!origin || allowedOrigins.has(origin)) {
+        const {
+          isOriginAllowed,
+          normalizeOrigin,
+        } = require("../middleware/security");
+        if (isOriginAllowed(origin, allowedOrigins)) {
           callback(null, true);
           return;
         }
+        const requestOrigin = normalizeOrigin(origin);
+        logger.warn(`Blocked socket CORS origin: ${requestOrigin || origin}`);
         callback(new Error("CORS not allowed"));
       },
       methods: ["GET", "POST"],

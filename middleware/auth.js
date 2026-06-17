@@ -1,5 +1,6 @@
 const { logger } = require("./../utils/logger.js");
 const User = require("../models/User");
+const Tenant = require("../models/Tenant");
 const {
   hydrateUserPermissions,
   normalizePermission,
@@ -18,9 +19,65 @@ const {
   setAccessTokenCookie,
   setRefreshTokenCookie,
 } = require("../utils/cookieOptions");
+const {
+  getSubscriptionState,
+  isSubscriptionActive,
+} = require("../services/subscriptionService");
 require("dotenv").config({
   quiet: true,
 });
+const buildSubscriptionInactiveResponse = (tenant = {}) => ({
+  success: false,
+  code: "SUBSCRIPTION_INACTIVE",
+  message:
+    "This restaurant subscription has expired. Renew the subscription to access the main branch and sub-branches.",
+  subscriptionState: getSubscriptionState(tenant || {}),
+});
+const getUserTenant = async (user = {}, resolvedTenant = null) => {
+  if (!user?.tenantId || String(user.role || "").toLowerCase() === "super_admin") {
+    return null;
+  }
+  if (resolvedTenant?._id && resolvedTenant?.slug && resolvedTenant?.key) {
+    return resolvedTenant;
+  }
+  return Tenant.findById(user.tenantId)
+    .select("_id slug key subscription status")
+    .lean();
+};
+const enforceActiveTenantSubscription = async (req, res) => {
+  const tenant = await getUserTenant(req.user, req.tenant);
+  if (!tenant || isSubscriptionActive(tenant)) {
+    return true;
+  }
+  clearAuthCookies(res);
+
+  let renewalToken = "";
+  if (req.user && String(req.user.role || "").toLowerCase() === "admin") {
+    const crypto = require("crypto");
+    renewalToken = crypto.randomBytes(32).toString("hex");
+    const RENEWAL_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+    const renewalTokenExpiresAt = new Date(Date.now() + RENEWAL_TOKEN_TTL_MS);
+
+    await Tenant.updateOne(
+      { _id: tenant._id },
+      {
+        "subscription.renewalTokenHash": crypto
+          .createHash("sha256")
+          .update(renewalToken)
+          .digest("hex"),
+        "subscription.renewalTokenExpiresAt": renewalTokenExpiresAt,
+      }
+    );
+  }
+
+  res.status(402).json({
+    ...buildSubscriptionInactiveResponse(tenant),
+    renewalToken: renewalToken || undefined,
+    tenantSlug: tenant.slug,
+    tenantKey: tenant.key,
+  });
+  return false;
+};
 const getUserRoleKeys = (user) => {
   const explicitRoles = Array.isArray(user?.roles)
     ? user.roles.map((role) => normalizeRoleKey(role?.key || role))
@@ -57,6 +114,9 @@ exports.protect = async (req, res, next) => {
         success: false,
         message: "Not authorized to access this route",
       });
+    }
+    if (!(await enforceActiveTenantSubscription(req, res))) {
+      return;
     }
     const requestTenantId = normalizeTenantId(req.tenant);
     const userTenantId = normalizeTenantId(req.user?.tenantId);
@@ -122,6 +182,9 @@ exports.refreshAccessToken = async (req, res, next) => {
         success: false,
         message: "Not authorized to access this route",
       });
+    }
+    if (!(await enforceActiveTenantSubscription(req, res))) {
+      return;
     }
     const requestTenantId = normalizeTenantId(req.tenant);
     const userTenantId = normalizeTenantId(req.user?.tenantId);

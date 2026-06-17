@@ -37,6 +37,11 @@ const tenantSchema = new mongoose.Schema(
       default: "active",
     },
     subscription: {
+      planKey: {
+        type: String,
+        enum: ["starter", "growth", "enterprise"],
+        default: "starter",
+      },
       plan: {
         type: String,
         enum: ["starter", "growth", "enterprise"],
@@ -44,8 +49,38 @@ const tenantSchema = new mongoose.Schema(
       },
       status: {
         type: String,
-        enum: ["trial", "active", "past_due", "cancelled"],
-        default: "trial",
+        enum: ["trial", "trialing", "active", "past_due", "expired", "cancelled"],
+        default: "trialing",
+      },
+      startedAt: Date,
+      currentPeriodStart: Date,
+      currentPeriodEnd: Date,
+      expiresAt: Date,
+      cancelledAt: Date,
+      razorpaySubscriptionId: String,
+      razorpayOrderId: String,
+      razorpayPaymentId: String,
+      lastPaymentVerifiedAt: Date,
+      billingPeriod: {
+        type: String,
+        enum: ["trial", "monthly", "half_yearly", "annually", ""],
+        default: "",
+      },
+      renewalTokenHash: {
+        type: String,
+        trim: true,
+        default: "",
+      },
+      renewalTokenExpiresAt: {
+        type: Date,
+        default: null,
+      },
+      gracePeriodEndsAt: Date,
+      expiryNotifications: {
+        sevenDaySentAt: Date,
+        threeDaySentAt: Date,
+        oneDaySentAt: Date,
+        expiredSentAt: Date,
       },
       startsAt: {
         type: Date,
@@ -54,6 +89,70 @@ const tenantSchema = new mongoose.Schema(
       endsAt: Date,
       trialEndsAt: Date,
     },
+    subscriptionHistory: [
+      {
+        planKey: {
+          type: String,
+          enum: ["starter", "growth", "enterprise"],
+          default: "starter",
+        },
+        planName: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        billingPeriod: {
+          type: String,
+          enum: ["trial", "monthly", "half_yearly", "annually", ""],
+          default: "",
+        },
+        status: {
+          type: String,
+          enum: ["trialing", "active", "paid", "approved", "expired", "cancelled"],
+          default: "active",
+        },
+        amount: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
+        currency: {
+          type: String,
+          default: "INR",
+        },
+        periodStart: Date,
+        periodEnd: Date,
+        purchasedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        paymentMethod: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        gateway: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        transactionId: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        razorpayOrderId: {
+          type: String,
+          trim: true,
+          default: "",
+        },
+        source: {
+          type: String,
+          enum: ["registration", "renewal", "manual", "trial", ""],
+          default: "",
+        },
+      },
+    ],
     contact: {
       email: {
         type: String,
@@ -64,6 +163,12 @@ const tenantSchema = new mongoose.Schema(
         type: String,
         trim: true,
       },
+    },
+    organizationType: {
+      type: String,
+      enum: ["restaurant", "cafe", "cloud_kitchen", "food_court", "hotel", "other", ""],
+      default: "",
+      trim: true,
     },
     branding: {
       logo: {
@@ -79,6 +184,12 @@ const tenantSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
+    },
+    mainBranchId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Branch",
+      default: null,
+      index: true,
     },
     requestedAdmin: {
       name: {

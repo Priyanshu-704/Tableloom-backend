@@ -1,5 +1,6 @@
 const { logger } = require("./../utils/logger.js");
 const User = require("../models/User");
+const Tenant = require("../models/Tenant");
 require("dotenv").config({
   quiet: true,
 });
@@ -29,12 +30,68 @@ const {
   passwordPolicyMessage,
   validatePasswordStrength,
 } = require("../utils/passwordPolicy");
+const {
+  getSubscriptionState,
+  isSubscriptionActive,
+} = require("../services/subscriptionService");
 
 const setTokensInCookies = (res, accessToken, refreshToken) => {
   setAccessTokenCookie(res, accessToken);
   setRefreshTokenCookie(res, refreshToken);
 };
 const clearTokensFromCookies = (res) => clearAuthCookies(res);
+const buildSubscriptionInactiveResponse = (tenant = {}) => ({
+  success: false,
+  code: "SUBSCRIPTION_INACTIVE",
+  message:
+    "This restaurant subscription has expired. Renew the subscription to access the main branch and sub-branches.",
+  subscriptionState: getSubscriptionState(tenant || {}),
+});
+const getTenantForUser = async (user = {}, resolvedTenant = null) => {
+  if (!user?.tenantId || String(user.role || "").toLowerCase() === "super_admin") {
+    return null;
+  }
+  if (resolvedTenant?._id && resolvedTenant?.slug && resolvedTenant?.key) {
+    return resolvedTenant;
+  }
+  return Tenant.findById(user.tenantId)
+    .select("_id slug key subscription status")
+    .lean();
+};
+const ensureTenantSubscriptionForLogin = async (user = {}, req, res) => {
+  const tenant = await getTenantForUser(user, req.tenant);
+  if (!tenant || isSubscriptionActive(tenant)) {
+    return true;
+  }
+  clearTokensFromCookies(res);
+  
+  let renewalToken = "";
+  if (user && String(user.role || "").toLowerCase() === "admin") {
+    const crypto = require("crypto");
+    renewalToken = crypto.randomBytes(32).toString("hex");
+    const RENEWAL_TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+    const renewalTokenExpiresAt = new Date(Date.now() + RENEWAL_TOKEN_TTL_MS);
+    
+    await Tenant.updateOne(
+      { _id: tenant._id },
+      {
+        "subscription.renewalTokenHash": crypto
+          .createHash("sha256")
+          .update(renewalToken)
+          .digest("hex"),
+        "subscription.renewalTokenExpiresAt": renewalTokenExpiresAt,
+      }
+    );
+  }
+  
+  res.status(402).json({
+    ...buildSubscriptionInactiveResponse(tenant),
+    renewalToken: renewalToken || undefined,
+    tenantSlug: tenant.slug,
+    tenantKey: tenant.key,
+  });
+  return false;
+};
 const canManageRole = (requesterRole, targetRole) => {
   const hierarchy = {
     super_admin: ["admin", "manager", "chef", "waiter"],
@@ -242,16 +299,22 @@ exports.loginStaff = async (req, res) => {
           role: 1,
           createdAt: 1,
         })
-        .limit(2)
         .select("+password");
-      if (matchingUsers.length > 1) {
+      const superAdminUser = matchingUsers.find(
+        (candidate) =>
+          String(candidate?.role || "").toLowerCase() === "super_admin",
+      );
+      if (superAdminUser) {
+        user = superAdminUser;
+      } else if (matchingUsers.length > 1) {
         return res.status(400).json({
           success: false,
           message:
             "Restaurant workspace is required for this account. Please login from the restaurant workspace or provide tenant headers.",
         });
+      } else {
+        [user] = matchingUsers;
       }
-      [user] = matchingUsers;
     }
     if (user && (await user.matchPassword(password))) {
       if (!user.isActive) {
@@ -266,6 +329,9 @@ exports.loginStaff = async (req, res) => {
           message:
             "This account must sign in from its restaurant workspace admin panel. Use your tenant admin login URL.",
         });
+      }
+      if (!(await ensureTenantSubscriptionForLogin(user, req, res))) {
+        return;
       }
       await hydrateUserPermissions(user);
       const accessToken = signAccessToken(user);
@@ -348,6 +414,9 @@ exports.refreshToken = async (req, res) => {
         success: false,
         message: "Invalid or expired refresh token. Please login again.",
       });
+    }
+    if (!(await ensureTenantSubscriptionForLogin(user, req, res))) {
+      return;
     }
     await hydrateUserPermissions(user);
     const accessToken = signAccessToken(user);

@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const categorySchema = new mongoose.Schema({
   name: {
     type: String,
@@ -61,6 +62,7 @@ categorySchema.index({
 categorySchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     name: 1,
   },
   {
@@ -68,4 +70,5 @@ categorySchema.index(
   },
 );
 categorySchema.plugin(tenantScoped);
+categorySchema.plugin(branchScoped);
 module.exports = mongoose.model("Category", categorySchema);

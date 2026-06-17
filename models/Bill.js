@@ -1,6 +1,7 @@
 const { logger } = require("./../utils/logger.js");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const billSchema = new mongoose.Schema({
   billNumber: {
     type: String,
@@ -187,6 +188,7 @@ const billSchema = new mongoose.Schema({
   },
 });
 billSchema.plugin(tenantScoped);
+billSchema.plugin(branchScoped);
 billSchema.pre("save", function () {
   this.updatedAt = Date.now();
 });

@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const sizeSchema = new mongoose.Schema(
   {
     name: {
@@ -27,6 +28,7 @@ sizeSchema.pre("save", function () {
 sizeSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     name: 1,
   },
   {
@@ -36,6 +38,7 @@ sizeSchema.index(
 sizeSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     code: 1,
   },
   {
@@ -43,4 +46,5 @@ sizeSchema.index(
   },
 );
 sizeSchema.plugin(tenantScoped);
+sizeSchema.plugin(branchScoped);
 module.exports = mongoose.model("Size", sizeSchema);

@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
@@ -225,6 +226,22 @@ const orderSchema = new mongoose.Schema({
   },
 });
 orderSchema.plugin(tenantScoped);
+orderSchema.plugin(branchScoped);
+
+const preventOrderHardDelete = function preventOrderHardDelete(next) {
+  if (String(process.env.ALLOW_ORDER_HARD_DELETE || "").toLowerCase() === "true") {
+    return next();
+  }
+  return next(
+    new Error(
+      "Hard deleting orders is disabled. Move orders to cancelled state instead.",
+    ),
+  );
+};
+
+orderSchema.pre("deleteOne", { document: false, query: true }, preventOrderHardDelete);
+orderSchema.pre("deleteMany", preventOrderHardDelete);
+orderSchema.pre("findOneAndDelete", preventOrderHardDelete);
 orderSchema.pre("save", function () {
   this.updatedAt = Date.now();
   if (this.isNew && !this.orderNumber) {

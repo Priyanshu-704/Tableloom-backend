@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const cartSchema = new mongoose.Schema({
   sessionId: {
     type: String,
@@ -174,6 +175,7 @@ const cartSchema = new mongoose.Schema({
   },
 });
 cartSchema.plugin(tenantScoped);
+cartSchema.plugin(branchScoped);
 cartSchema.pre("save", function () {
   this.updatedAt = Date.now();
   this.lastUpdated = new Date();

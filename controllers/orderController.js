@@ -514,7 +514,7 @@ exports.processPayment = async (req, res) => {
       }
     }
     const orderForPayment = await Order.findById(req.params.id)
-      .select("tenantId")
+      .select("tenantId branchId")
       .lean();
     if (!orderForPayment) {
       return res.status(404).json({
@@ -524,6 +524,9 @@ exports.processPayment = async (req, res) => {
     }
     const paymentConfiguration = await loadTenantPaymentConfiguration(
       orderForPayment.tenantId,
+      {
+        branchId: orderForPayment.branchId,
+      },
     );
     const normalizedMethod = String(method || "")
       .trim()

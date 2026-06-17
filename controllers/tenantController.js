@@ -1,6 +1,19 @@
 const crypto = require("crypto");
 const Tenant = require("../models/Tenant");
 const User = require("../models/User");
+const { ensureMainBranch } = require("../services/branchService");
+const {
+  sendExpiredSubscriptionEmails,
+} = require("../services/subscriptionExpiryService");
+const {
+  BILLING_PERIODS,
+  getBillingPeriod,
+  getPlan,
+  getPlanPrice,
+  PLANS,
+  normalizeBillingPeriod,
+  normalizePlanKey,
+} = require("../config/subscriptionPlans");
 const AppSetting = require("../models/AppSetting");
 const Category = require("../models/Category");
 const InventoryItem = require("../models/InventoryItem");
@@ -37,9 +50,9 @@ const {
   normalizeTenantKey,
   normalizeTenantSlug,
 } = require("../utils/tenantWorkspace");
-const TENANT_REGISTRATION_AMOUNT = 10000;
 const TENANT_REGISTRATION_CURRENCY = "INR";
 const TENANT_PAYMENT_ACCESS_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
+const TENANT_TRIAL_DAYS = 7;
 
 const hashTenantPaymentAccessToken = (token = "") =>
   crypto.createHash("sha256").update(String(token || "")).digest("hex");
@@ -124,6 +137,125 @@ const normalizeTenantRegistrationPaymentMethod = (value = "") => {
     .toLowerCase();
   return normalizedValue === "manual" ? "manual" : "online";
 };
+const normalizeTenantOrganizationType = (value = "") => {
+  const normalizedValue = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return [
+    "restaurant",
+    "cafe",
+    "cloud_kitchen",
+    "food_court",
+    "hotel",
+    "other",
+  ].includes(normalizedValue)
+    ? normalizedValue
+    : "restaurant";
+};
+const normalizeRegistrationBillingPeriod = (value = "") => {
+  const normalizedValue = String(value || "")
+    .trim()
+    .toLowerCase();
+  return normalizedValue === "trial"
+    ? "trial"
+    : normalizeBillingPeriod(normalizedValue || "monthly");
+};
+const isTrialBillingPeriod = (billingPeriod = "") =>
+  String(billingPeriod || "").toLowerCase() === "trial";
+const normalizeAdminSubscriptionPlanKey = (value = "") => {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "grower") {
+    return "growth";
+  }
+  return PLANS[normalized] ? normalized : "";
+};
+const getRegistrationPricing = (payload = {}) => {
+  const planKey = normalizePlanKey(payload.subscriptionPlan || payload.planKey);
+  const billingPeriod = normalizeRegistrationBillingPeriod(payload.billingPeriod);
+  const isTrial = isTrialBillingPeriod(billingPeriod);
+  const period = isTrial
+    ? {
+        key: "trial",
+        name: "7 day trial",
+        months: 0,
+        multiplier: 0,
+      }
+    : getBillingPeriod(billingPeriod);
+  return {
+    plan: getPlan(planKey),
+    planKey,
+    billingPeriod,
+    period,
+    amount: isTrial ? 0 : getPlanPrice(planKey, billingPeriod),
+    currency: TENANT_REGISTRATION_CURRENCY,
+    isTrial,
+  };
+};
+const hasAdminEmailUsedTrial = async (email = "", excludeTenantId = null) => {
+  const normalizedEmail = String(email || "")
+    .trim()
+    .toLowerCase();
+  if (!normalizedEmail) return false;
+  const query = {
+    ...(excludeTenantId
+      ? {
+          _id: {
+            $ne: excludeTenantId,
+          },
+        }
+      : {}),
+    status: {
+      $ne: "cancelled",
+    },
+    $and: [
+      {
+        $or: [
+          {
+            "subscription.billingPeriod": "trial",
+          },
+          {
+            "subscription.trialEndsAt": {
+              $ne: null,
+            },
+          },
+        ],
+      },
+    ],
+    $or: [
+      {
+        "requestedAdmin.email": normalizedEmail,
+      },
+      {
+        "contact.email": normalizedEmail,
+      },
+    ],
+  };
+  return Boolean(await Tenant.exists(query));
+};
+const getSubscriptionPeriodRange = (pricing = {}, now = new Date()) => {
+  const periodStart = now;
+  if (pricing.isTrial) {
+    const trialEnd = new Date(
+      now.getTime() + TENANT_TRIAL_DAYS * 24 * 60 * 60 * 1000,
+    );
+    return {
+      periodStart,
+      periodEnd: trialEnd,
+      trialEndsAt: trialEnd,
+      status: "trialing",
+    };
+  }
+  const periodEnd = addMonths(periodStart, pricing.period?.months || 1);
+  return {
+    periodStart,
+    periodEnd,
+    trialEndsAt: null,
+    status: "active",
+  };
+};
 const buildTenantRegistrationReceipt = (tenant = {}) => {
   const baseReceipt =
     String(tenant?.slug || tenant?._id || "tenant")
@@ -149,6 +281,232 @@ const getTenantPaymentSummary = (tenant = {}) =>
   ]);
 const toTenantPaymentObject = (tenant = {}) =>
   tenant?.payment?.toObject?.() || tenant?.payment || {};
+const toTenantSubscriptionObject = (tenant = {}) =>
+  tenant?.subscription?.toObject?.() || tenant?.subscription || {};
+const getSubscriptionHistoryEntries = (tenant = {}) => {
+  const explicitHistory = Array.isArray(tenant?.subscriptionHistory)
+    ? tenant.subscriptionHistory.map((entry) => entry?.toObject?.() || entry)
+    : [];
+  if (explicitHistory.length > 0) {
+    return explicitHistory;
+  }
+  const subscription = toTenantSubscriptionObject(tenant);
+  const payment = toTenantPaymentObject(tenant);
+  const plan = getPlan(subscription.planKey || subscription.plan);
+  return [
+    {
+      planKey: plan.key,
+      planName: plan.name,
+      billingPeriod: subscription.billingPeriod || "",
+      status: subscription.status || payment.status || "",
+      amount: Number(payment.amount || 0),
+      currency: payment.currency || TENANT_REGISTRATION_CURRENCY,
+      periodStart: subscription.currentPeriodStart || subscription.startsAt || null,
+      periodEnd:
+        subscription.currentPeriodEnd ||
+        subscription.expiresAt ||
+        subscription.endsAt ||
+        subscription.trialEndsAt ||
+        null,
+      purchasedAt:
+        payment.approvedAt ||
+        payment.depositedAt ||
+        payment.requestedAt ||
+        subscription.startedAt ||
+        subscription.startsAt ||
+        null,
+      paymentMethod: payment.method || "",
+      gateway: payment.gateway || "",
+      transactionId: payment.transactionId || "",
+      razorpayOrderId: payment.razorpayOrderId || "",
+      source:
+        subscription.billingPeriod === "trial"
+          ? "trial"
+          : payment.approvalNotes?.toLowerCase?.().includes("renewal")
+            ? "renewal"
+            : "registration",
+    },
+  ].filter((entry) => entry.planKey || entry.amount || entry.periodEnd);
+};
+const formatSubscriptionHistoryEntry = (entry = {}) => ({
+  _id: entry._id,
+  planKey: entry.planKey || "starter",
+  planName: entry.planName || getPlan(entry.planKey).name,
+  billingPeriod: entry.billingPeriod || "",
+  status: entry.status || "",
+  amount: Number(entry.amount || 0),
+  currency: entry.currency || TENANT_REGISTRATION_CURRENCY,
+  periodStart: entry.periodStart || null,
+  periodEnd: entry.periodEnd || null,
+  purchasedAt: entry.purchasedAt || null,
+  paymentMethod: entry.paymentMethod || "",
+  gateway: entry.gateway || "",
+  transactionId: entry.transactionId || "",
+  razorpayOrderId: entry.razorpayOrderId || "",
+  source: entry.source || "",
+});
+const appendSubscriptionHistoryEntry = (tenant = {}, entry = {}) => {
+  const history = Array.isArray(tenant.subscriptionHistory)
+    ? tenant.subscriptionHistory
+    : [];
+  const transactionId = String(entry.transactionId || "").trim();
+  const razorpayOrderId = String(entry.razorpayOrderId || "").trim();
+  const alreadyRecorded = history.some((historyEntry) => {
+    const existing = historyEntry?.toObject?.() || historyEntry || {};
+    return (
+      (transactionId && existing.transactionId === transactionId) ||
+      (razorpayOrderId && existing.razorpayOrderId === razorpayOrderId)
+    );
+  });
+  if (alreadyRecorded) return;
+  history.push({
+    planKey: entry.planKey || "starter",
+    planName: entry.planName || getPlan(entry.planKey).name,
+    billingPeriod: entry.billingPeriod || "",
+    status: entry.status || "active",
+    amount: Number(entry.amount || 0),
+    currency: entry.currency || TENANT_REGISTRATION_CURRENCY,
+    periodStart: entry.periodStart || null,
+    periodEnd: entry.periodEnd || null,
+    purchasedAt: entry.purchasedAt || new Date(),
+    paymentMethod: entry.paymentMethod || "",
+    gateway: entry.gateway || "",
+    transactionId,
+    razorpayOrderId,
+    source: entry.source || "",
+  });
+  tenant.subscriptionHistory = history;
+};
+const hashSubscriptionRenewalToken = (token = "") =>
+  crypto.createHash("sha256").update(String(token || "")).digest("hex");
+const getSubscriptionRenewalToken = (req = {}) =>
+  String(
+    req.body?.token ||
+      req.query?.token ||
+      req.header("x-subscription-renewal-token") ||
+      "",
+  ).trim();
+const isSubscriptionRenewalTokenValid = (tenant = {}, token = "") => {
+  const normalizedToken = String(token || "").trim();
+  const storedHash = String(tenant?.subscription?.renewalTokenHash || "").trim();
+  const expiresAt = tenant?.subscription?.renewalTokenExpiresAt
+    ? new Date(tenant.subscription.renewalTokenExpiresAt)
+    : null;
+  if (
+    !normalizedToken ||
+    !storedHash ||
+    !expiresAt ||
+    Number.isNaN(expiresAt.getTime()) ||
+    expiresAt.getTime() <= Date.now()
+  ) {
+    return false;
+  }
+  const providedHash = hashSubscriptionRenewalToken(normalizedToken);
+  const storedBuffer = Buffer.from(storedHash, "hex");
+  const providedBuffer = Buffer.from(providedHash, "hex");
+  if (storedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(storedBuffer, providedBuffer);
+};
+const findTenantForRenewal = async (req = {}) => {
+  const query = {};
+  const tenantId = req.params?.id || req.body?.tenantId || req.query?.tenantId || "";
+  const tenantSlug = req.params?.tenantSlug || req.body?.tenantSlug || req.query?.tenantSlug || "";
+  const tenantKey = req.params?.tenantKey || req.body?.tenantKey || req.query?.tenantKey || "";
+  if (tenantId) {
+    query._id = tenantId;
+  } else if (tenantSlug && tenantKey) {
+    query.slug = String(tenantSlug).trim().toLowerCase();
+    query.key = String(tenantKey).trim().toLowerCase();
+  }
+  if (!Object.keys(query).length) {
+    return null;
+  }
+  return Tenant.findOne(query);
+};
+const ensureSubscriptionRenewalAccess = (req, res, tenant = {}) => {
+  if (isSubscriptionRenewalTokenValid(tenant, getSubscriptionRenewalToken(req))) {
+    return true;
+  }
+  if (
+    req.user &&
+    String(req.user.role || "").toLowerCase() === "admin" &&
+    String(req.user.tenantId || "") === String(tenant._id || "")
+  ) {
+    return true;
+  }
+  if (req.user && String(req.user.role || "").toLowerCase() === "super_admin") {
+    return true;
+  }
+  sendError(
+    res,
+    403,
+    "Subscription renewal link has expired or is invalid. Ask the main tenant admin to request a fresh renewal link.",
+  );
+  return false;
+};
+const buildSubscriptionRenewalReceipt = (tenant = {}) => {
+  const baseReceipt =
+    String(tenant?.slug || tenant?._id || "renewal")
+      .replace(/[^a-zA-Z0-9_-]/g, "")
+      .slice(0, 22) || "renewal";
+  const suffix = Date.now().toString().slice(-8);
+  return `${baseReceipt}-rn-${suffix}`.slice(0, 40);
+};
+const addMonths = (date, months = 1) => {
+  const nextDate = new Date(date);
+  const originalDate = nextDate.getDate();
+  nextDate.setMonth(nextDate.getMonth() + Number(months || 1));
+  if (nextDate.getDate() < originalDate) {
+    nextDate.setDate(0);
+  }
+  return nextDate;
+};
+const getRenewalPricing = (tenant = {}, payload = {}) => {
+  const planKey = normalizePlanKey(
+    payload.planKey || tenant?.subscription?.planKey || tenant?.subscription?.plan,
+  );
+  const billingPeriod = normalizeBillingPeriod(
+    payload.billingPeriod || tenant?.subscription?.billingPeriod || "monthly",
+  );
+  const amount = getPlanPrice(planKey, billingPeriod);
+  const period = getBillingPeriod(billingPeriod);
+  return {
+    plan: getPlan(planKey),
+    planKey,
+    billingPeriod,
+    period,
+    amount,
+    currency: TENANT_REGISTRATION_CURRENCY,
+  };
+};
+exports.getSubscriptionPlans = async (req, res) =>
+  sendSuccess(res, 200, "Subscription plans loaded", {
+    plans: Object.values(PLANS).map((plan) => ({
+      key: plan.key,
+      name: plan.name,
+      monthlyPrice: plan.monthlyPrice,
+      branchLimit: plan.branchLimit,
+      allowSubBranches: plan.allowSubBranches,
+    })),
+    billingPeriods: [
+      {
+        key: "trial",
+        name: "7 day trial",
+        months: 0,
+        multiplier: 0,
+      },
+      ...Object.values(BILLING_PERIODS).map((period) => ({
+        key: period.key,
+        name: period.name,
+        months: period.months,
+        multiplier: period.multiplier,
+      })),
+    ],
+    trialDays: TENANT_TRIAL_DAYS,
+    currency: TENANT_REGISTRATION_CURRENCY,
+  });
 const ensureTenantUniqueness = async ({
   slug,
   key,
@@ -287,6 +645,7 @@ const ensureAppSettings = async (
   );
 const createTenantAdminUser = async ({
   tenant,
+  mainBranch = null,
   adminName,
   adminEmail,
   createdBy = null,
@@ -300,6 +659,9 @@ const createTenantAdminUser = async ({
     password: tempPassword,
     role: "admin",
     tenantId: tenant._id,
+    branchScope: "all",
+    homeBranchId: mainBranch?._id || tenant.mainBranchId || null,
+    branchIds: mainBranch?._id ? [mainBranch._id] : [],
     forcePasswordChange: true,
     isActive,
     createdBy,
@@ -318,8 +680,10 @@ const provisionTenantAdmin = async ({
   createdBy = null,
   updatedBy = null,
 }) => {
+  const mainBranch = await ensureMainBranch(tenant, createdBy || updatedBy || null);
   const { adminUser, tempPassword } = await createTenantAdminUser({
     tenant,
+    mainBranch,
     adminName,
     adminEmail,
     createdBy,
@@ -501,9 +865,15 @@ const getNormalizedTenantPayload = (payload = {}, tenant = null) => {
       tenant?.contact?.phone ??
       "",
   ).trim();
+  const organizationType = normalizeTenantOrganizationType(
+    payload.organizationType ?? tenant?.organizationType ?? "restaurant",
+  );
   const subscriptionPlan = String(
     payload.subscriptionPlan ?? tenant?.subscription?.plan ?? "starter",
   ).trim();
+  const billingPeriod = normalizeRegistrationBillingPeriod(
+    payload.billingPeriod ?? tenant?.subscription?.billingPeriod ?? "monthly",
+  );
   const paymentMethod = normalizeTenantRegistrationPaymentMethod(
     payload.paymentMethod ?? tenant?.payment?.method ?? "online",
   );
@@ -517,7 +887,9 @@ const getNormalizedTenantPayload = (payload = {}, tenant = null) => {
     adminName,
     adminEmail,
     phone,
+    organizationType,
     subscriptionPlan,
+    billingPeriod,
     paymentMethod,
     paymentReference,
   };
@@ -803,6 +1175,142 @@ exports.getTenantOverview = async (req, res) => {
     }),
   );
 };
+const getTenantSubscriptionDetailsPayload = (tenant = {}) => {
+  const subscription = toTenantSubscriptionObject(tenant);
+  const plan = getPlan(subscription.planKey || subscription.plan);
+  const periodKey = subscription.billingPeriod || "monthly";
+  const period =
+    periodKey === "trial"
+      ? { key: "trial", name: "7 day trial" }
+      : getBillingPeriod(periodKey);
+  const history = getSubscriptionHistoryEntries(tenant)
+    .map(formatSubscriptionHistoryEntry)
+    .sort((a, b) => new Date(b.purchasedAt || 0) - new Date(a.purchasedAt || 0));
+  const currentPeriodEnd =
+    subscription.currentPeriodEnd ||
+    subscription.expiresAt ||
+    subscription.endsAt ||
+    subscription.trialEndsAt ||
+    null;
+  const now = new Date();
+  const endDate = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
+  const daysRemaining =
+    endDate && !Number.isNaN(endDate.getTime())
+      ? Math.ceil((endDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))
+      : null;
+  return {
+    tenant: {
+      _id: tenant._id,
+      name: tenant.name,
+      slug: tenant.slug,
+      key: tenant.key,
+      status: tenant.status,
+      adminName: tenant.requestedAdmin?.name || tenant.name,
+      adminEmail: tenant.requestedAdmin?.email || tenant.contact?.email || "",
+      phone: tenant.requestedAdmin?.phone || tenant.contact?.phone || "",
+    },
+    subscription: {
+      planKey: plan.key,
+      planName: plan.name,
+      billingPeriod: periodKey,
+      periodName: period.name,
+      status: subscription.status || "trialing",
+      currentPeriodStart: subscription.currentPeriodStart || subscription.startsAt || null,
+      currentPeriodEnd,
+      trialEndsAt: subscription.trialEndsAt || null,
+      daysRemaining,
+    },
+    payment: getTenantPaymentSummary(tenant),
+    history,
+    totals: {
+      paidAmount: history.reduce((sum, entry) => sum + Number(entry.amount || 0), 0),
+      purchaseCount: history.length,
+      currency:
+        history.find((entry) => entry.currency)?.currency ||
+        tenant?.payment?.currency ||
+        TENANT_REGISTRATION_CURRENCY,
+    },
+  };
+};
+exports.getMySubscriptionDetails = async (req, res) => {
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) {
+    return sendError(res, 404, "Tenant subscription not found");
+  }
+  const tenant = await Tenant.findById(tenantId);
+  if (!tenant) {
+    return sendError(res, 404, "Tenant subscription not found");
+  }
+  return sendSuccess(
+    res,
+    200,
+    "Subscription details loaded",
+    getTenantSubscriptionDetailsPayload(tenant),
+  );
+};
+exports.getSubscriptionReport = async (_req, res) => {
+  const tenants = await Tenant.find({
+    status: { $nin: ["cancelled"] },
+  }).select("name slug key status contact requestedAdmin subscription subscriptionHistory payment");
+  const rows = tenants.map((tenant) => {
+    const payload = getTenantSubscriptionDetailsPayload(tenant);
+    return {
+      tenant: payload.tenant,
+      subscription: payload.subscription,
+      payment: payload.payment,
+      totals: payload.totals,
+      history: payload.history,
+    };
+  });
+  const turnover = rows.reduce(
+    (summary, row) => {
+      summary.amount += Number(row.totals?.paidAmount || 0);
+      summary.purchaseCount += Number(row.totals?.purchaseCount || 0);
+      return summary;
+    },
+    { amount: 0, purchaseCount: 0, currency: TENANT_REGISTRATION_CURRENCY },
+  );
+  return sendSuccess(res, 200, "Subscription report loaded", {
+    summary: {
+      tenants: rows.length,
+      activeSubscriptions: rows.filter(
+        (row) =>
+          ["active", "trialing", "trial", "past_due"].includes(
+            String(row.subscription?.status || "").toLowerCase(),
+          ) &&
+          (row.subscription?.daysRemaining === null ||
+            row.subscription?.daysRemaining === undefined ||
+            Number(row.subscription?.daysRemaining) >= 0),
+      ).length,
+      expiredSubscriptions: rows.filter(
+        (row) =>
+          String(row.subscription?.status || "").toLowerCase() === "expired" ||
+          Number(row.subscription?.daysRemaining) < 0,
+      ).length,
+      expiringSoonSubscriptions: rows.filter(
+        (row) =>
+          Number(row.subscription?.daysRemaining) >= 0 &&
+          Number(row.subscription?.daysRemaining) <= 7,
+      ).length,
+      turnover,
+    },
+    tenants: rows,
+  });
+};
+exports.updateTenantSubscription = async (_req, res) => {
+  return sendError(
+    res,
+    400,
+    "Subscription plan and billing period can only be changed while renewing the subscription.",
+  );
+};
+exports.updateMySubscription = async (_req, res) => {
+  return sendError(
+    res,
+    400,
+    "Subscription plan and billing period can only be changed while renewing the subscription.",
+  );
+};
 exports.createTenant = async (req, res) => {
   const {
     restaurantName,
@@ -811,7 +1319,9 @@ exports.createTenant = async (req, res) => {
     adminName,
     adminEmail,
     phone,
+    organizationType,
     subscriptionPlan,
+    billingPeriod,
   } = getNormalizedTenantPayload(req.body);
   if (!restaurantName || !slug || !key || !adminName || !adminEmail) {
     return res.status(400).json({
@@ -863,6 +1373,16 @@ exports.createTenant = async (req, res) => {
       message: "A tenant admin already exists with this email",
     });
   }
+  const pricing = getRegistrationPricing({ subscriptionPlan, billingPeriod });
+  if (pricing.isTrial && (await hasAdminEmailUsedTrial(normalizedAdminEmail))) {
+    return sendError(
+      res,
+      400,
+      "This admin email has already used the 7 day trial.",
+    );
+  }
+  const now = new Date();
+  const subscriptionRange = getSubscriptionPeriodRange(pricing, now);
   let tenant;
   try {
     tenant = await Tenant.create({
@@ -870,6 +1390,7 @@ exports.createTenant = async (req, res) => {
       slug: normalizedSlug,
       key: normalizedKey,
       status: "active",
+      organizationType,
       contact: {
         email: normalizedAdminEmail,
         phone,
@@ -880,10 +1401,17 @@ exports.createTenant = async (req, res) => {
         phone,
       },
       subscription: {
-        plan: subscriptionPlan,
-        status: "trial",
-        startsAt: new Date(),
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        planKey: pricing.planKey,
+        plan: pricing.planKey,
+        status: subscriptionRange.status,
+        billingPeriod: pricing.billingPeriod,
+        startedAt: now,
+        currentPeriodStart: subscriptionRange.periodStart,
+        currentPeriodEnd: subscriptionRange.periodEnd,
+        expiresAt: subscriptionRange.periodEnd,
+        startsAt: now,
+        endsAt: subscriptionRange.periodEnd,
+        trialEndsAt: subscriptionRange.trialEndsAt,
       },
       onboarding: {
         source: "platform_admin",
@@ -893,8 +1421,8 @@ exports.createTenant = async (req, res) => {
         verifiedBy: req.user?._id || null,
       },
       payment: {
-        amount: TENANT_REGISTRATION_AMOUNT,
-        currency: TENANT_REGISTRATION_CURRENCY,
+        amount: pricing.amount,
+        currency: pricing.currency,
         method: "manual",
         status: "approved",
         requestedAt: new Date(),
@@ -903,6 +1431,21 @@ exports.createTenant = async (req, res) => {
         approvedBy: req.user?._id || null,
         approvalNotes: "Provisioned directly by platform admin",
       },
+      subscriptionHistory: [
+        {
+          planKey: pricing.planKey,
+          planName: pricing.plan.name,
+          billingPeriod: pricing.billingPeriod,
+          status: subscriptionRange.status,
+          amount: pricing.amount,
+          currency: pricing.currency,
+          periodStart: subscriptionRange.periodStart,
+          periodEnd: subscriptionRange.periodEnd,
+          purchasedAt: now,
+          paymentMethod: "manual",
+          source: pricing.isTrial ? "trial" : "manual",
+        },
+      ],
       createdBy: req.user?._id || null,
       updatedBy: req.user?._id || null,
     });
@@ -944,7 +1487,9 @@ exports.registerTenant = async (req, res) => {
     adminName,
     adminEmail,
     phone,
+    organizationType,
     subscriptionPlan,
+    billingPeriod,
     paymentMethod,
     paymentReference,
   } = getNormalizedTenantPayload(req.body);
@@ -998,11 +1543,21 @@ exports.registerTenant = async (req, res) => {
       message: "A tenant admin already exists with this email",
     });
   }
+  const pricing = getRegistrationPricing({ subscriptionPlan, billingPeriod });
+  if (pricing.isTrial && (await hasAdminEmailUsedTrial(normalizedAdminEmail))) {
+    return sendError(
+      res,
+      400,
+      "This admin email has already used the 7 day trial.",
+    );
+  }
+  const effectivePaymentMethod = pricing.isTrial ? "" : paymentMethod;
   const tenant = new Tenant({
     name: restaurantName,
     slug: normalizedSlug,
     key: normalizedKey,
     status: "pending",
+    organizationType,
     contact: {
       email: normalizedAdminEmail,
       phone,
@@ -1013,8 +1568,14 @@ exports.registerTenant = async (req, res) => {
       phone,
     },
     subscription: {
-      plan: subscriptionPlan,
-      status: "trial",
+      planKey: pricing.planKey,
+      plan: pricing.planKey,
+      status: "trialing",
+      billingPeriod: pricing.billingPeriod,
+      startedAt: null,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+      expiresAt: null,
       startsAt: null,
       trialEndsAt: null,
     },
@@ -1024,15 +1585,21 @@ exports.registerTenant = async (req, res) => {
       submittedAt: new Date(),
     },
     payment: {
-      amount: TENANT_REGISTRATION_AMOUNT,
-      currency: TENANT_REGISTRATION_CURRENCY,
-      method: paymentMethod,
+      amount: pricing.amount,
+      currency: pricing.currency,
+      method: effectivePaymentMethod,
       status:
-        paymentMethod === "manual" ? "approval_requested" : "unpaid",
+        pricing.isTrial
+          ? "not_required"
+          : effectivePaymentMethod === "manual"
+            ? "approval_requested"
+            : "unpaid",
       requestedAt: new Date(),
       reference: paymentReference,
       approvalNotes:
-        paymentMethod === "manual"
+        pricing.isTrial
+          ? "7 day trial requested. Super admin approval is pending."
+          : effectivePaymentMethod === "manual"
           ? "Manual/testing payment approval requested"
           : "",
     },
@@ -1040,6 +1607,7 @@ exports.registerTenant = async (req, res) => {
   const { paymentAccessToken, accessTokenExpiresAt } =
     issueTenantPaymentAccessToken(tenant);
   await tenant.save();
+  await ensureMainBranch(tenant);
   createSuperAdminTenantRegistrationNotification(tenant).catch((error) => {
     logger.error(
       "Failed to create super admin tenant-registration notification:",
@@ -1049,15 +1617,24 @@ exports.registerTenant = async (req, res) => {
   return sendSuccess(
     res,
     201,
-    paymentMethod === "manual"
+    pricing.isTrial
+      ? "Tenant registration submitted successfully. Your 7 day trial will start after platform approval."
+      : effectivePaymentMethod === "manual"
       ? "Tenant registration submitted successfully. Payment approval and platform verification are pending."
-      : "Tenant registration submitted successfully. Complete the ₹10,000 payment to continue with platform approval.",
+      : `Tenant registration submitted successfully. Complete the ${pricing.currency} ${pricing.amount} payment to continue with platform approval.`,
     {
       tenantId: tenant._id,
       status: tenant.status,
       verificationStatus: tenant.onboarding?.verificationStatus,
       paymentAccessToken,
       paymentAccessTokenExpiresAt: accessTokenExpiresAt,
+      subscription: {
+        planKey: pricing.planKey,
+        planName: pricing.plan.name,
+        billingPeriod: pricing.billingPeriod,
+        periodName: pricing.period.name,
+        trialDays: pricing.isTrial ? TENANT_TRIAL_DAYS : 0,
+      },
       payment: getTenantPaymentSummary(tenant),
     },
   );
@@ -1091,10 +1668,23 @@ exports.createRegistrationPaymentOrder = async (req, res) => {
         "Registration payment has already been completed for this tenant",
       );
     }
+    if (
+      isTrialBillingPeriod(tenant?.subscription?.billingPeriod) ||
+      Number(tenant?.payment?.amount || 0) <= 0 ||
+      String(tenant?.payment?.status || "") === "not_required"
+    ) {
+      return sendError(
+        res,
+        400,
+        "Payment is not required for this trial registration",
+      );
+    }
+    const pricing = getRegistrationPricing({
+      subscriptionPlan: tenant.subscription?.planKey || tenant.subscription?.plan,
+      billingPeriod: tenant.subscription?.billingPeriod || "monthly",
+    });
     const razorpayClient = getRazorpayClient();
-    const amount = Number(
-      tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT,
-    );
+    const amount = Number(tenant?.payment?.amount ?? pricing.amount);
     const razorpayOrder = await razorpayClient.orders.create({
       amount: convertAmountToSubunits(amount),
       currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
@@ -1240,8 +1830,12 @@ exports.verifyRegistrationPayment = async (req, res) => {
     ) {
       return sendError(res, 400, "Payment is not authorized yet");
     }
+    const pricing = getRegistrationPricing({
+      subscriptionPlan: tenant.subscription?.planKey || tenant.subscription?.plan,
+      billingPeriod: tenant.subscription?.billingPeriod || "monthly",
+    });
     const expectedAmount = convertAmountToSubunits(
-      Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
+      Number(tenant?.payment?.amount ?? pricing.amount),
     );
     if (Number(razorpayOrder.amount || 0) !== expectedAmount) {
       return sendError(
@@ -1259,8 +1853,8 @@ exports.verifyRegistrationPayment = async (req, res) => {
     }
     tenant.payment = {
       ...toTenantPaymentObject(tenant),
-      amount: Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
-      currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+      amount: Number(tenant?.payment?.amount ?? pricing.amount),
+      currency: tenant?.payment?.currency || pricing.currency,
       method: "online",
       status: "paid",
       gateway: "razorpay",
@@ -1293,6 +1887,290 @@ exports.verifyRegistrationPayment = async (req, res) => {
       res,
       400,
       error?.message || "Failed to verify tenant payment",
+    );
+  }
+};
+exports.getSubscriptionRenewal = async (req, res) => {
+  try {
+    const tenant = await findTenantForRenewal(req);
+    if (!tenant) return sendError(res, 404, "Tenant subscription not found");
+    if (!ensureSubscriptionRenewalAccess(req, res, tenant)) return null;
+    const pricing = getRenewalPricing(tenant, req.query || {});
+    return sendSuccess(res, 200, "Subscription renewal details loaded", {
+      tenant: {
+        _id: tenant._id,
+        name: tenant.name,
+        slug: tenant.slug,
+        key: tenant.key,
+        adminName: tenant.requestedAdmin?.name || tenant.name,
+        adminEmail: tenant.requestedAdmin?.email || tenant.contact?.email || "",
+        phone: tenant.requestedAdmin?.phone || tenant.contact?.phone || "",
+      },
+      subscription: {
+        planKey: pricing.planKey,
+        planName: pricing.plan.name,
+        billingPeriod: pricing.billingPeriod,
+        periodName: pricing.period.name,
+        currentPeriodEnd:
+          tenant.subscription?.currentPeriodEnd ||
+          tenant.subscription?.expiresAt ||
+          tenant.subscription?.endsAt ||
+          tenant.subscription?.trialEndsAt ||
+          null,
+        status: tenant.subscription?.status || "expired",
+      },
+      payment: {
+        amount: pricing.amount,
+        currency: pricing.currency,
+      },
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      400,
+      error?.message || "Failed to load subscription renewal details",
+    );
+  }
+};
+exports.createSubscriptionRenewalPaymentOrder = async (req, res) => {
+  try {
+    const tenant = await findTenantForRenewal(req);
+    if (!tenant) return sendError(res, 404, "Tenant subscription not found");
+    if (!ensureSubscriptionRenewalAccess(req, res, tenant)) return null;
+    const pricing = getRenewalPricing(tenant, req.body || {});
+    const razorpayClient = getRazorpayClient();
+    const razorpayOrder = await razorpayClient.orders.create({
+      amount: convertAmountToSubunits(pricing.amount),
+      currency: pricing.currency,
+      receipt: buildSubscriptionRenewalReceipt(tenant),
+      notes: {
+        purpose: "subscription_renewal",
+        tenantId: String(tenant._id),
+        tenantName: tenant.name || "",
+        planKey: pricing.planKey,
+        billingPeriod: pricing.billingPeriod,
+      },
+    });
+    tenant.payment = {
+      ...toTenantPaymentObject(tenant),
+      amount: pricing.amount,
+      currency: pricing.currency,
+      method: "online",
+      status: "initiated",
+      gateway: "razorpay",
+      razorpayOrderId: razorpayOrder.id,
+      requestedAt: new Date(),
+      approvalNotes: "Subscription renewal payment initiated.",
+    };
+    await tenant.save();
+    return sendSuccess(res, 200, "Subscription renewal order created", {
+      tenantId: tenant._id,
+      keyId: getRazorpayPublicConfig().keyId,
+      order: {
+        id: razorpayOrder.id,
+        amount: Number(razorpayOrder.amount || 0),
+        currency: razorpayOrder.currency || pricing.currency,
+        receipt: razorpayOrder.receipt || "",
+        status: razorpayOrder.status || "created",
+      },
+      tenant: {
+        _id: tenant._id,
+        name: tenant.name,
+        adminName: tenant.requestedAdmin?.name || tenant.name,
+        adminEmail: tenant.requestedAdmin?.email || tenant.contact?.email || "",
+        phone: tenant.requestedAdmin?.phone || tenant.contact?.phone || "",
+      },
+      subscription: {
+        planKey: pricing.planKey,
+        planName: pricing.plan.name,
+        billingPeriod: pricing.billingPeriod,
+        periodName: pricing.period.name,
+      },
+      payment: getTenantPaymentSummary(tenant),
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      400,
+      error?.message || "Failed to create subscription renewal order",
+    );
+  }
+};
+exports.verifySubscriptionRenewalPayment = async (req, res) => {
+  try {
+    const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = req.body || {};
+    if (!razorpayOrderId || !razorpayPaymentId || !razorpaySignature) {
+      return sendError(
+        res,
+        400,
+        "Razorpay order, payment, and signature are required",
+      );
+    }
+    const tenant = await findTenantForRenewal(req);
+    if (!tenant) return sendError(res, 404, "Tenant subscription not found");
+    if (!ensureSubscriptionRenewalAccess(req, res, tenant)) return null;
+    if (
+      tenant?.payment?.razorpayOrderId &&
+      String(tenant.payment.razorpayOrderId) !== String(razorpayOrderId)
+    ) {
+      return sendError(
+        res,
+        400,
+        "Payment verification must use the latest renewal order for this tenant",
+      );
+    }
+    const isSignatureValid = verifyRazorpaySignature({
+      orderId: razorpayOrderId,
+      paymentId: razorpayPaymentId,
+      signature: razorpaySignature,
+    });
+    if (!isSignatureValid) {
+      return sendError(res, 400, "Razorpay payment signature verification failed");
+    }
+    const razorpayClient = getRazorpayClient();
+    const [razorpayOrder, razorpayPayment] = await Promise.all([
+      razorpayClient.orders.fetch(razorpayOrderId),
+      razorpayClient.payments.fetch(razorpayPaymentId),
+    ]);
+    if (String(razorpayOrder.notes?.purpose || "") !== "subscription_renewal") {
+      return sendError(res, 400, "Payment is not a subscription renewal order");
+    }
+    if (String(razorpayOrder.notes?.tenantId || "") !== String(tenant._id)) {
+      return sendError(res, 400, "Payment does not belong to this tenant");
+    }
+    if (String(razorpayPayment.order_id || "") !== String(razorpayOrderId)) {
+      return sendError(res, 400, "Payment does not match the created order");
+    }
+    if (
+      !["authorized", "captured"].includes(
+        String(razorpayPayment.status || "").toLowerCase(),
+      )
+    ) {
+      return sendError(res, 400, "Payment is not authorized yet");
+    }
+    const pricing = getRenewalPricing(tenant, {
+      planKey: razorpayOrder.notes?.planKey,
+      billingPeriod: razorpayOrder.notes?.billingPeriod,
+    });
+    const expectedAmount = convertAmountToSubunits(pricing.amount);
+    if (Number(razorpayOrder.amount || 0) !== expectedAmount) {
+      return sendError(res, 400, "Order amount does not match the subscription plan");
+    }
+    if (Number(razorpayPayment.amount || 0) !== expectedAmount) {
+      return sendError(res, 400, "Payment amount does not match the subscription plan");
+    }
+    const now = new Date();
+    const existingEndDate =
+      tenant.subscription?.currentPeriodEnd ||
+      tenant.subscription?.expiresAt ||
+      tenant.subscription?.endsAt ||
+      tenant.subscription?.trialEndsAt ||
+      null;
+    const periodStart =
+      existingEndDate && new Date(existingEndDate) > now
+        ? new Date(existingEndDate)
+        : now;
+    const periodEnd = addMonths(periodStart, pricing.period.months);
+    tenant.subscription = {
+      ...(tenant.subscription?.toObject?.() || tenant.subscription || {}),
+      planKey: pricing.planKey,
+      plan: pricing.planKey,
+      status: "active",
+      billingPeriod: pricing.billingPeriod,
+      startedAt: tenant.subscription?.startedAt || now,
+      currentPeriodStart: periodStart,
+      currentPeriodEnd: periodEnd,
+      expiresAt: periodEnd,
+      endsAt: periodEnd,
+      gracePeriodEndsAt: null,
+      renewalTokenHash: "",
+      renewalTokenExpiresAt: null,
+      expiryNotifications: {
+        sevenDaySentAt: null,
+        threeDaySentAt: null,
+        oneDaySentAt: null,
+        expiredSentAt: null,
+      },
+    };
+    tenant.status = "active";
+    tenant.payment = {
+      ...toTenantPaymentObject(tenant),
+      amount: pricing.amount,
+      currency: pricing.currency,
+      method: "online",
+      status: "paid",
+      gateway: "razorpay",
+      transactionId: razorpayPaymentId,
+      razorpayOrderId,
+      depositedAt: now,
+      approvedAt: now,
+      approvalNotes: "Subscription renewal payment verified.",
+    };
+    appendSubscriptionHistoryEntry(tenant, {
+      planKey: pricing.planKey,
+      planName: pricing.plan.name,
+      billingPeriod: pricing.billingPeriod,
+      status: "active",
+      amount: pricing.amount,
+      currency: pricing.currency,
+      periodStart,
+      periodEnd,
+      purchasedAt: now,
+      paymentMethod: "online",
+      gateway: "razorpay",
+      transactionId: razorpayPaymentId,
+      razorpayOrderId,
+      source: "renewal",
+    });
+    await tenant.save();
+    return sendSuccess(res, 200, "Subscription renewed successfully", {
+      tenantId: tenant._id,
+      subscription: {
+        planKey: pricing.planKey,
+        billingPeriod: pricing.billingPeriod,
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        status: tenant.subscription.status,
+      },
+      payment: getTenantPaymentSummary(tenant),
+    });
+  } catch (error) {
+    return sendError(
+      res,
+      400,
+      error?.message || "Failed to verify subscription renewal payment",
+    );
+  }
+};
+exports.createMySubscriptionRenewalPaymentOrder = async (req, res) => {
+  req.params = {
+    ...(req.params || {}),
+    id: req.user?.tenantId,
+  };
+  return exports.createSubscriptionRenewalPaymentOrder(req, res);
+};
+exports.verifyMySubscriptionRenewalPayment = async (req, res) => {
+  req.params = {
+    ...(req.params || {}),
+    id: req.user?.tenantId,
+  };
+  return exports.verifySubscriptionRenewalPayment(req, res);
+};
+exports.sendExpiredSubscriptionEmailsToAdmins = async (_req, res) => {
+  try {
+    const result = await sendExpiredSubscriptionEmails(new Date());
+    return sendSuccess(
+      res,
+      200,
+      `Expired subscription emails sent to ${result.emailsSent} recipient${result.emailsSent === 1 ? "" : "s"}`,
+      result,
+    );
+  } catch (error) {
+    logger.error("Send expired subscription emails failed:", error);
+    return sendError(
+      res,
+      500,
+      error?.message || "Failed to send expired subscription emails",
     );
   }
 };
@@ -1337,24 +2215,63 @@ exports.verifyTenant = async (req, res) => {
     updatedBy: req.user?._id || null,
   });
   tenant.status = "active";
+  const pricing = getRegistrationPricing({
+    subscriptionPlan: tenant.subscription?.planKey || tenant.subscription?.plan,
+    billingPeriod: tenant.subscription?.billingPeriod || "monthly",
+  });
+  if (
+    pricing.isTrial &&
+    !tenant.subscription?.trialEndsAt &&
+    (await hasAdminEmailUsedTrial(adminEmail, tenant._id))
+  ) {
+    return sendError(
+      res,
+      400,
+      "This admin email has already used the 7 day trial.",
+    );
+  }
+  const now = new Date();
+  const subscriptionRange = getSubscriptionPeriodRange(pricing, now);
   tenant.subscription = {
     ...tenant.subscription,
-    status: "trial",
-    startsAt: tenant.subscription?.startsAt || new Date(),
-    trialEndsAt:
-      tenant.subscription?.trialEndsAt ||
-      new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+    planKey: pricing.planKey,
+    plan: pricing.planKey,
+    status: subscriptionRange.status,
+    billingPeriod: pricing.billingPeriod,
+    startedAt: tenant.subscription?.startedAt || tenant.subscription?.startsAt || now,
+    currentPeriodStart: subscriptionRange.periodStart,
+    currentPeriodEnd: subscriptionRange.periodEnd,
+    expiresAt: subscriptionRange.periodEnd,
+    startsAt: tenant.subscription?.startsAt || now,
+    endsAt: subscriptionRange.periodEnd,
+    trialEndsAt: subscriptionRange.trialEndsAt,
   };
   tenant.payment = {
     ...toTenantPaymentObject(tenant),
-    amount: Number(tenant?.payment?.amount || TENANT_REGISTRATION_AMOUNT),
-    currency: tenant?.payment?.currency || TENANT_REGISTRATION_CURRENCY,
+    amount: Number(tenant?.payment?.amount ?? pricing.amount),
+    currency: tenant?.payment?.currency || pricing.currency,
     status: "approved",
     depositedAt: tenant?.payment?.depositedAt || null,
     approvedAt: new Date(),
     approvedBy: req.user?._id || null,
     approvalNotes: getTenantApprovalNote(tenant),
   };
+  appendSubscriptionHistoryEntry(tenant, {
+    planKey: pricing.planKey,
+    planName: pricing.plan.name,
+    billingPeriod: pricing.billingPeriod,
+    status: subscriptionRange.status,
+    amount: Number(tenant?.payment?.amount ?? pricing.amount),
+    currency: tenant?.payment?.currency || pricing.currency,
+    periodStart: subscriptionRange.periodStart,
+    periodEnd: subscriptionRange.periodEnd,
+    purchasedAt: now,
+    paymentMethod: tenant?.payment?.method || "",
+    gateway: tenant?.payment?.gateway || "",
+    transactionId: tenant?.payment?.transactionId || "",
+    razorpayOrderId: tenant?.payment?.razorpayOrderId || "",
+    source: pricing.isTrial ? "trial" : "registration",
+  });
   clearTenantPaymentAccessToken(tenant);
   tenant.onboarding = {
     ...tenant.onboarding,

@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const tableSchema = new mongoose.Schema({
   tableNumber: {
     type: String,
@@ -104,6 +105,7 @@ const tableSchema = new mongoose.Schema({
 tableSchema.index(
   {
     tenantId: 1,
+    branchId: 1,
     tableNumber: 1,
   },
   {
@@ -111,6 +113,7 @@ tableSchema.index(
   },
 );
 tableSchema.plugin(tenantScoped);
+tableSchema.plugin(branchScoped);
 tableSchema.pre("findOneAndUpdate", function () {
   this.set({
     updatedAt: Date.now(),

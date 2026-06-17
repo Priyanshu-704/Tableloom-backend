@@ -171,6 +171,7 @@ exports.createCustomerSession = async (tableId, token, customerData = {}) => {
     const customer = await Customer.create({
       sessionId,
       table: tableId,
+      branchId: table.branchId || null,
       name: normalizedName || undefined,
       phone: normalizedPhone || undefined,
       email: normalizedEmail || undefined,
@@ -1495,6 +1496,9 @@ exports.requestBillForSession = async (
       .toLowerCase();
     const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
       customer.tenantId,
+      {
+        branchId: customer.branchId,
+      },
     );
     if (
       normalizedPaymentMethod &&
@@ -1623,6 +1627,9 @@ exports.createRazorpayOrderForSession = async (
     const tenantId = customer?.tenantId || bill?.tenantId || null;
     const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
       tenantId,
+      {
+        branchId: customer?.branchId || bill?.branchId,
+      },
     );
 
     if (!bill) {
@@ -1652,7 +1659,13 @@ exports.createRazorpayOrderForSession = async (
       );
     }
 
-    const razorpayCredentials = await getTenantRazorpayCredentials(tenantId);
+    const razorpayCredentials = await getTenantRazorpayCredentials(
+      tenantId,
+      null,
+      {
+        branchId: customer?.branchId || bill?.branchId,
+      },
+    );
     const razorpayClient = getRazorpayClient(razorpayCredentials);
     const razorpayOrder = await razorpayClient.orders.create({
       amount: convertAmountToSubunits(totalAmount),
@@ -1739,6 +1752,9 @@ exports.verifyRazorpayPaymentForSession = async (
     }
     const tenantPaymentConfiguration = await loadTenantPaymentConfiguration(
       bill.tenantId,
+      {
+        branchId: bill.branchId,
+      },
     );
 
     if (bill.paymentStatus === "paid") {
@@ -1753,7 +1769,13 @@ exports.verifyRazorpayPaymentForSession = async (
       );
     }
 
-    const razorpayCredentials = await getTenantRazorpayCredentials(bill.tenantId);
+    const razorpayCredentials = await getTenantRazorpayCredentials(
+      bill.tenantId,
+      null,
+      {
+        branchId: bill.branchId,
+      },
+    );
     const isSignatureValid = verifyRazorpaySignature(
       {
         orderId: razorpayOrderId,
@@ -1845,6 +1867,9 @@ exports.markBillAsPaid = async (billId, paymentData, staffId = null) => {
     const normalizedPaymentMethod = toSupportedPaymentMethod(paymentData?.method);
     const paymentConfiguration = await loadTenantPaymentConfiguration(
       bill.tenantId,
+      {
+        branchId: bill.branchId,
+      },
     );
     const normalizedGateway = String(paymentData?.gateway || "")
       .trim()
