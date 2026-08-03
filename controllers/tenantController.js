@@ -281,8 +281,14 @@ const getTenantPaymentSummary = (tenant = {}) =>
   ]);
 const toTenantPaymentObject = (tenant = {}) =>
   tenant?.payment?.toObject?.() || tenant?.payment || {};
-const toTenantSubscriptionObject = (tenant = {}) =>
-  tenant?.subscription?.toObject?.() || tenant?.subscription || {};
+const toTenantSubscriptionObject = (tenant = {}) => {
+  const raw = tenant?.subscription?.toObject?.() || tenant?.subscription || {};
+  if (!raw || typeof raw !== "object") {
+    return {};
+  }
+  const { _id, ...clean } = raw;
+  return clean;
+};
 const getSubscriptionHistoryEntries = (tenant = {}) => {
   const explicitHistory = Array.isArray(tenant?.subscriptionHistory)
     ? tenant.subscriptionHistory.map((entry) => entry?.toObject?.() || entry)
@@ -2233,7 +2239,7 @@ exports.verifyTenant = async (req, res) => {
   const now = new Date();
   const subscriptionRange = getSubscriptionPeriodRange(pricing, now);
   tenant.subscription = {
-    ...tenant.subscription,
+    ...toTenantSubscriptionObject(tenant),
     planKey: pricing.planKey,
     plan: pricing.planKey,
     status: subscriptionRange.status,

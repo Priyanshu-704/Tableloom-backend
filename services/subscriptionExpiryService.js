@@ -89,8 +89,10 @@ const getSubscriptionRecipients = async (tenant = {}) => {
 const issueSubscriptionRenewalToken = async (tenant = {}, now = new Date()) => {
   const renewalToken = crypto.randomBytes(32).toString("hex");
   const renewalTokenExpiresAt = new Date(now.getTime() + RENEWAL_TOKEN_TTL_MS);
+  const rawSub = tenant.subscription?.toObject?.() || tenant.subscription || {};
+  const { _id, ...cleanSub } = typeof rawSub === "object" && rawSub !== null ? rawSub : {};
   tenant.subscription = {
-    ...(tenant.subscription?.toObject?.() || tenant.subscription || {}),
+    ...cleanSub,
     renewalTokenHash: crypto
       .createHash("sha256")
       .update(renewalToken)

@@ -77,10 +77,10 @@ const tenantSchema = new mongoose.Schema(
       },
       gracePeriodEndsAt: Date,
       expiryNotifications: {
-        sevenDaySentAt: Date,
-        threeDaySentAt: Date,
-        oneDaySentAt: Date,
-        expiredSentAt: Date,
+        sevenDaySentAt: { type: Date, default: null },
+        threeDaySentAt: { type: Date, default: null },
+        oneDaySentAt: { type: Date, default: null },
+        expiredSentAt: { type: Date, default: null },
       },
       startsAt: {
         type: Date,
