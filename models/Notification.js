@@ -300,7 +300,7 @@ notificationSchema.statics.markAsRead = async function (
       },
     },
     {
-      new: true,
+      returnDocument: "after",
     },
   );
 };
@@ -322,7 +322,7 @@ notificationSchema.statics.markAsAcknowledged = async function (
       },
     },
     {
-      new: true,
+      returnDocument: "after",
     },
   );
 };

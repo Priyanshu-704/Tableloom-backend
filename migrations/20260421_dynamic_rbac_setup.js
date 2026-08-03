@@ -77,7 +77,7 @@ const upsertTenantRolesFromSettings = async () => {
           },
         },
         {
-          new: true,
+          returnDocument: "after",
           upsert: true,
         },
       );

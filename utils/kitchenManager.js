@@ -365,7 +365,7 @@ exports.createKitchenOrder = async (orderId) => {
             },
           },
           {
-            new: true,
+            returnDocument: "after",
           },
         );
       },

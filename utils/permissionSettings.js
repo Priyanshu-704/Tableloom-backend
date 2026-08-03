@@ -459,7 +459,7 @@ const getOrCreateCustomRoleForUser = async (user, permissions = []) => {
       },
     },
     {
-      new: true,
+      returnDocument: "after",
       upsert: true,
     },
   );

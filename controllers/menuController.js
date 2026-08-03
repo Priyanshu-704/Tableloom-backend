@@ -377,7 +377,7 @@ const findOrCreateCategoryByValue = async ({
         kitchenStation: stationDoc._id,
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     )
       .select("_id name kitchenStation")
@@ -619,7 +619,7 @@ exports.updateSize = async (req, res) => {
         updatedBy: req.user._id,
       },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     );
@@ -904,7 +904,7 @@ exports.updateCategory = async (req, res) => {
       req.params.id,
       updateData,
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     ).populate("kitchenStation", "name stationType");
@@ -2004,7 +2004,7 @@ exports.updateMenuItem = async (req, res) => {
       req.params.id,
       updateData,
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     )
@@ -2173,7 +2173,7 @@ exports.updateCoupon = async (req, res) => {
       payload.code = String(payload.code).trim().toUpperCase();
     }
     const coupon = await Coupon.findByIdAndUpdate(req.params.id, payload, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
     if (!coupon) {

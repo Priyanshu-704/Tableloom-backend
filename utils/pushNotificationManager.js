@@ -88,7 +88,7 @@ class PushNotificationManager {
         },
       },
       {
-        new: true,
+        returnDocument: "after",
         upsert: true,
         setDefaultsOnInsert: true,
       },
@@ -125,7 +125,7 @@ class PushNotificationManager {
         },
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     );
   }

@@ -320,7 +320,7 @@ exports.updateOrderPriority = async (req, res) => {
         priority,
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     );
     if (!kitchenOrder) {

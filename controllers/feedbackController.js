@@ -353,7 +353,7 @@ exports.updateFeedbackStatus = async (req, res) => {
         followUpRequired,
       },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     )

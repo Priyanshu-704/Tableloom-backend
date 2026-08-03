@@ -1170,7 +1170,7 @@ class NotificationManager {
           },
         },
         {
-          new: true,
+          returnDocument: "after",
         },
       );
       socketManager.emitNotificationUpdate(notification._id, userId, "read");
@@ -1208,7 +1208,7 @@ class NotificationManager {
           },
         },
         {
-          new: true,
+          returnDocument: "after",
         },
       );
       socketManager.emitNotificationUpdate(
@@ -1273,7 +1273,7 @@ class NotificationManager {
           },
         },
         {
-          new: true,
+          returnDocument: "after",
         },
       );
       socketManager.emitNotificationUpdate(
@@ -1353,7 +1353,7 @@ class NotificationManager {
         },
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     );
     if (!notification) {

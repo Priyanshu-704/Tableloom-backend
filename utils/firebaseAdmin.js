@@ -8,13 +8,19 @@ const parseServiceAccount = () => {
     process.env.FIREBASE_CLIENT_EMAIL &&
     process.env.FIREBASE_PRIVATE_KEY
   ) {
+    let rawKey = String(process.env.FIREBASE_PRIVATE_KEY).trim();
+    if (
+      (rawKey.startsWith('"') && rawKey.endsWith('"')) ||
+      (rawKey.startsWith("'") && rawKey.endsWith("'"))
+    ) {
+      rawKey = rawKey.slice(1, -1);
+    }
+    rawKey = rawKey.replace(/^["'\\]+/, "").replace(/["'\\]+$/, "").trim();
+    const privateKey = rawKey.replace(/\\n/g, "\n");
     return {
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: String(process.env.FIREBASE_PRIVATE_KEY).replace(
-        /\\n/g,
-        "\n",
-      ),
+      privateKey,
     };
   }
   return null;

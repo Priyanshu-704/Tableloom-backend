@@ -279,7 +279,7 @@ exports.updateTable = async (req, res) => {
         notes,
       },
       {
-        new: true,
+        returnDocument: "after",
         runValidators: true,
       },
     ).lean();
@@ -380,7 +380,7 @@ exports.updateTableStatus = async (req, res) => {
       updateData.notes = notes;
     }
     await Table.findByIdAndUpdate(tableId, updateData, {
-      new: true,
+      returnDocument: "after",
       runValidators: true,
     });
     res.status(200).json({

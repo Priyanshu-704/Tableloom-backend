@@ -4,6 +4,7 @@ require("dotenv").config({
   quiet: true,
 });
 const transporter = nodemailer.createTransport({
+  pool: true,
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
@@ -14,6 +15,8 @@ const transporter = nodemailer.createTransport({
   tls: {
     rejectUnauthorized: false,
   },
+  maxConnections: 5,
+  maxMessages: 100,
 });
 const normalizeBaseUrl = (value = "") =>
   String(value || "")

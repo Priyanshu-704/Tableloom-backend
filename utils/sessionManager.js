@@ -261,7 +261,7 @@ exports.updateSessionActivity = async (sessionId) => {
         },
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     );
     if (!customer) {
@@ -634,7 +634,7 @@ exports.extendSession = async (sessionId, minutes = 30, staffId) => {
         lastActivity: new Date(Date.now() + minutes * 60 * 1000),
       },
       {
-        new: true,
+        returnDocument: "after",
       },
     );
     if (!customer) {

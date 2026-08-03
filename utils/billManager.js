@@ -1031,7 +1031,7 @@ exports.markBillAsViewed = async (billId, sessionId = null) => {
       updateData.sessionId = sessionId;
     }
     const bill = await Bill.findByIdAndUpdate(billId, updateData, {
-      new: true,
+      returnDocument: "after",
     });
     if (!bill) {
       throw new Error("Bill not found");
