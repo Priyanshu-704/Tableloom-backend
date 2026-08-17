@@ -32,6 +32,7 @@ const {
   createCoupon,
   updateCoupon,
   toggleCouponStatus,
+  deleteCoupon,
 } = require("../controllers/menuController");
 const { protect, hasPermission, optionalAuth } = require("../middleware/auth");
 const {
@@ -61,6 +62,11 @@ router.patch(
   "/coupons/:id/toggle-status",
   hasPermission("MENU_DISCOUNT_TOGGLE_STATUS"),
   toggleCouponStatus,
+);
+router.delete(
+  "/coupons/:id",
+  hasPermission("MENU_DISCOUNT_EDIT"),
+  deleteCoupon,
 );
 router.post(
   "/categories",

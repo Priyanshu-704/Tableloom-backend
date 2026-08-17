@@ -2225,6 +2225,29 @@ exports.toggleCouponStatus = async (req, res) => {
     });
   }
 };
+exports.deleteCoupon = async (req, res) => {
+  try {
+    const coupon = await Coupon.findByIdAndDelete(req.params.id);
+    if (!coupon) {
+      return res.status(404).json({
+        success: false,
+        message: "Coupon not found",
+      });
+    }
+    invalidateMenuReadCaches();
+    return res.status(200).json({
+      success: true,
+      message: "Coupon deleted successfully",
+      data: coupon,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete coupon",
+      error: error.message,
+    });
+  }
+};
 exports.deleteMenuItem = async (req, res) => {
   try {
     const menuItem = await MenuItem.findByIdAndDelete(req.params.id);

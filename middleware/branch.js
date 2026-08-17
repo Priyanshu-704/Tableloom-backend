@@ -20,6 +20,7 @@ const ALLOWLIST_PATH_FRAGMENTS = [
   "/logout",
   "/profile",
   "/settings",
+  "/branches",
 ];
 
 const extractAccessToken = (req) => {

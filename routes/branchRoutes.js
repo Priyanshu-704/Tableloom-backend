@@ -19,6 +19,8 @@ router.get("/", listBranches);
 router.get("/:id", getBranch);
 router.post("/", createBranch);
 router.patch("/:id", updateBranch);
+router.put("/:id", updateBranch);
 router.patch("/:id/status", updateBranchStatus);
+router.put("/:id/status", updateBranchStatus);
 
 module.exports = router;
