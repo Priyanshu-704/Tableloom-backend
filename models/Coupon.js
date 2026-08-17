@@ -1,5 +1,6 @@
 const mongoose = require("mongoose");
 const tenantScoped = require("../plugins/tenantScoped");
+const branchScoped = require("../plugins/branchScoped");
 const couponSchema = new mongoose.Schema(
   {
     code: {
@@ -102,4 +103,5 @@ couponSchema.index(
   },
 );
 couponSchema.plugin(tenantScoped);
+couponSchema.plugin(branchScoped);
 module.exports = mongoose.model("Coupon", couponSchema);

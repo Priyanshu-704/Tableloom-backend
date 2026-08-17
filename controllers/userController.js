@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const generatePassword = require("../utils/passwordGenerator");
 const {
   sendStaffOnboardingEmail,
+  sendStaffUpdateEmail,
   sendPasswordResetEmail,
 } = require("../utils/emailService");
 const { Permissions } = require("../config/permissions");
@@ -169,7 +170,7 @@ const shapeStaffUser = (user = {}, { permissions } = {}) => ({
 });
 exports.registerStaff = async (req, res) => {
   try {
-    const { name, email, role, permissions = [] } = req.body;
+    const { name, email, role, permissions = [], branchId, homeBranchId } = req.body;
     const requestingUser = req.user;
     const tenantId = normalizeTenantId(requestingUser.tenantId);
     if (!requestingUser.hasPermission(Permissions.USER_CREATE)) {
@@ -194,6 +195,7 @@ exports.registerStaff = async (req, res) => {
         message: "User already exists with this email",
       });
     }
+    const assignedBranchId = branchId || homeBranchId || req.branchId || req.branch?._id || null;
     const tempPassword = generatePassword();
     const userData = {
       name,
@@ -201,6 +203,8 @@ exports.registerStaff = async (req, res) => {
       password: tempPassword,
       role,
       tenantId,
+      homeBranchId: assignedBranchId,
+      branchScope: role === "admin" && !assignedBranchId ? "all" : "own",
       forcePasswordChange: true,
       createdBy: requestingUser._id,
       updatedBy: requestingUser._id,
@@ -239,10 +243,22 @@ exports.registerStaff = async (req, res) => {
       await user.save({
         validateBeforeSave: false,
       });
+
+      let branchName = null;
+      if (assignedBranchId) {
+        try {
+          const Branch = require("../models/Branch");
+          const b = await Branch.findById(assignedBranchId).select("name").lean();
+          if (b) branchName = b.name;
+        } catch (_) {}
+      }
+
       const emailSent = await sendStaffOnboardingEmail({
         email,
         name,
         role,
+        tempPassword,
+        branchName,
         resetToken: onboardingResetToken,
         tenant: req.tenant || null,
       });
@@ -250,7 +266,7 @@ exports.registerStaff = async (req, res) => {
         success: true,
         message:
           "Staff member registered successfully" +
-          (emailSent ? " and setup email sent" : " but email failed"),
+          (emailSent ? " and credentials sent via email" : " but email notification failed"),
         data: {
           ...shapeStaffUser(user, {
             permissions: user.resolvedPermissions || [],
@@ -990,15 +1006,134 @@ exports.updateUserRole = async (req, res) => {
     });
     await resetUserCustomPermissions(targetUser, req.user._id);
     await hydrateUserPermissions(targetUser);
+
+    let branchName = null;
+    if (targetUser.homeBranchId) {
+      try {
+        const Branch = require("../models/Branch");
+        const b = await Branch.findById(targetUser.homeBranchId).select("name").lean();
+        if (b) branchName = b.name;
+      } catch (_) {}
+    }
+
+    await sendStaffUpdateEmail({
+      email: targetUser.email,
+      name: targetUser.name,
+      role: targetUser.role,
+      branchName,
+      tenant: req.tenant || null,
+    });
+
     res.status(200).json({
       success: true,
-      message: `User role updated to ${role} successfully`,
+      message: `User role updated to ${role} successfully and notification email sent`,
       data: shapeStaffUser(targetUser, {
         permissions: targetUser.resolvedPermissions || [],
       }),
     });
   } catch (error) {
     logger.error("Update user role error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+exports.updateStaff = async (req, res) => {
+  try {
+    if (!req.user.hasPermission(Permissions.USER_EDIT)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to edit staff members",
+      });
+    }
+
+    const { name, email, role, phone, branchId, homeBranchId, password } = req.body;
+    const targetUserId = req.params.id;
+
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: "Staff member not found",
+      });
+    }
+
+    if (!ensureSameTenantAccess(req.user, targetUser)) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to manage staff from another restaurant",
+      });
+    }
+
+    if (role && !canManageRole(req.user.role, role)) {
+      return res.status(403).json({
+        success: false,
+        message: `You are not authorized to assign ${role} role`,
+      });
+    }
+
+    if (name) targetUser.name = name;
+    if (email) targetUser.email = String(email).trim().toLowerCase();
+    if (phone !== undefined) targetUser.phone = phone;
+
+    let newPasswordSet = null;
+    if (password && String(password).trim().length > 0) {
+      targetUser.password = String(password).trim();
+      targetUser.forcePasswordChange = true;
+      newPasswordSet = String(password).trim();
+    }
+
+    const assignedBranchId = branchId || homeBranchId || null;
+    if (assignedBranchId !== null) {
+      targetUser.homeBranchId = assignedBranchId;
+      targetUser.branchScope = (role || targetUser.role) === "admin" && !assignedBranchId ? "all" : "own";
+    }
+
+    if (role && role !== targetUser.role) {
+      targetUser.role = role;
+      await assignRolesToUser(targetUser, [role], {
+        assignedBy: req.user._id,
+      });
+      await resetUserCustomPermissions(targetUser, req.user._id);
+    }
+
+    targetUser.updatedBy = req.user._id;
+    await targetUser.save();
+
+    await hydrateUserPermissions(targetUser);
+
+    let branchName = null;
+    if (targetUser.homeBranchId) {
+      try {
+        const Branch = require("../models/Branch");
+        const b = await Branch.findById(targetUser.homeBranchId).select("name").lean();
+        if (b) branchName = b.name;
+      } catch (_) {}
+    }
+
+    const emailSent = await sendStaffUpdateEmail({
+      email: targetUser.email,
+      name: targetUser.name,
+      role: targetUser.role,
+      password: newPasswordSet,
+      branchName,
+      tenant: req.tenant || null,
+    });
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Staff member updated successfully" +
+        (emailSent ? " and update notification email sent." : "."),
+      data: shapeStaffUser(targetUser, {
+        permissions: targetUser.resolvedPermissions || [],
+      }),
+    });
+  } catch (error) {
+    logger.error("Update staff error:", error);
     res.status(500).json({
       success: false,
       message: "Server error",

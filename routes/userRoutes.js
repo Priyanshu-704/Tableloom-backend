@@ -15,6 +15,7 @@ const {
   toggleStaffStatus,
   deleteStaff,
   updateUserRole,
+  updateStaff,
 } = require("../controllers/userController");
 const { protect, hasPermission } = require("../middleware/auth");
 const { createRateLimit, getClientIp } = require("../middleware/security");
@@ -67,5 +68,6 @@ router.put(
   toggleStaffStatus,
 );
 router.put("/:id/role", hasPermission("USER_CHANGE_ROLE"), updateUserRole);
+router.put("/:id", hasPermission("USER_EDIT"), updateStaff);
 router.delete("/:id", hasPermission("USER_DELETE"), deleteStaff);
 module.exports = router;
