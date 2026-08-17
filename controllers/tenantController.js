@@ -570,12 +570,13 @@ const getTenantApprovalNote = (tenant = {}) => {
   }
   return "Tenant approved by super admin";
 };
-const buildTenantSectionFilter = (section = "all") => {
+const buildTenantSectionFilter = (section = "all", options = {}) => {
   const normalizedSection = String(section || "all")
     .trim()
     .toLowerCase();
+  let baseFilter = {};
   if (normalizedSection === "pending") {
-    return {
+    baseFilter = {
       adminUser: null,
       status: {
         $nin: ["cancelled"],
@@ -589,9 +590,8 @@ const buildTenantSectionFilter = (section = "all") => {
         },
       ],
     };
-  }
-  if (normalizedSection === "registered") {
-    return {
+  } else if (normalizedSection === "registered") {
+    baseFilter = {
       status: {
         $nin: ["pending", "cancelled"],
       },
@@ -607,7 +607,44 @@ const buildTenantSectionFilter = (section = "all") => {
       ],
     };
   }
-  return {};
+
+  const { search = "", status = "all", plan = "all" } = options;
+  const conditions = [];
+
+  if (search && String(search).trim()) {
+    const searchRegex = new RegExp(
+      String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "i",
+    );
+    conditions.push({
+      $or: [
+        { name: searchRegex },
+        { slug: searchRegex },
+        { key: searchRegex },
+        { "contact.email": searchRegex },
+        { "contact.phone": searchRegex },
+        { "requestedAdmin.email": searchRegex },
+        { "requestedAdmin.name": searchRegex },
+        { "requestedAdmin.phone": searchRegex },
+      ],
+    });
+  }
+
+  if (status && status !== "all") {
+    conditions.push({ status: String(status).toLowerCase() });
+  }
+
+  if (plan && plan !== "all") {
+    conditions.push({ "subscription.plan": String(plan).toLowerCase() });
+  }
+
+  if (conditions.length === 0) {
+    return baseFilter;
+  }
+
+  return {
+    $and: [baseFilter, ...conditions],
+  };
 };
 const parsePagination = (page, limit, defaultLimit = 10) => {
   const pageNum = Math.max(parseInt(page || 1, 10), 1);
@@ -975,8 +1012,8 @@ const createPlatformAdminTenantPaymentNotification = async (tenant) => {
   });
 };
 exports.getTenants = async (req, res) => {
-  const { section = "all", page = 1, limit = 10 } = req.query || {};
-  const filter = buildTenantSectionFilter(section);
+  const { section = "all", page = 1, limit = 10, search = "", status = "all", plan = "all" } = req.query || {};
+  const filter = buildTenantSectionFilter(section, { search, status, plan });
   const { pageNum, limitNum, skip } = parsePagination(page, limit);
   const [tenants, total] = await Promise.all([
     Tenant.find(filter)
@@ -1002,6 +1039,9 @@ exports.getTenants = async (req, res) => {
     null,
     {
       section: String(section || "all").trim().toLowerCase(),
+      search: String(search || "").trim(),
+      status: String(status || "all").trim().toLowerCase(),
+      plan: String(plan || "all").trim().toLowerCase(),
     },
   );
 };

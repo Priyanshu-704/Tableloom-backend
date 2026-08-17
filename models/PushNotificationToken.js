@@ -70,7 +70,7 @@ const pushNotificationTokenSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
-pushNotificationTokenSchema.plugin(tenantScoped);
+pushNotificationTokenSchema.plugin(tenantScoped, { required: false });
 pushNotificationTokenSchema.index(
   {
     tenantId: 1,

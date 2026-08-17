@@ -51,7 +51,7 @@ const getPrimaryLink = (actions = [], fallbackLink = "") => {
 };
 class PushNotificationManager {
   async registerToken({
-    tenantId,
+    tenantId = null,
     token,
     audience,
     userId = null,
@@ -61,17 +61,17 @@ class PushNotificationManager {
     device = {},
   } = {}) {
     const normalizedToken = String(token || "").trim();
-    if (!tenantId || !normalizedToken || !audience) {
-      throw new Error("tenantId, token, and audience are required");
+    if (!normalizedToken || !audience) {
+      throw new Error("token and audience are required");
     }
     return PushNotificationToken.findOneAndUpdate(
       {
-        tenantId,
+        tenantId: tenantId || null,
         token: normalizedToken,
       },
       {
         $set: {
-          tenantId,
+          tenantId: tenantId || null,
           token: normalizedToken,
           audience,
           user: userId || null,
@@ -95,18 +95,18 @@ class PushNotificationManager {
     );
   }
   async unregisterToken({
-    tenantId,
+    tenantId = null,
     token,
     audience,
     userId = null,
     customerSessionId = null,
   } = {}) {
     const normalizedToken = String(token || "").trim();
-    if (!tenantId || !normalizedToken || !audience) {
-      throw new Error("tenantId, token, and audience are required");
+    if (!normalizedToken || !audience) {
+      throw new Error("token and audience are required");
     }
     const query = {
-      tenantId,
+      tenantId: tenantId || null,
       token: normalizedToken,
       audience,
     };
@@ -129,27 +129,30 @@ class PushNotificationManager {
       },
     );
   }
-  async getRoleTokens(tenantId, roles = []) {
+  async getRoleTokens(tenantId = null, roles = []) {
     const normalizedRoles = [
       ...new Set(
         (roles || []).map((role) => String(role || "").trim()).filter(Boolean),
       ),
     ];
-    if (!tenantId || !normalizedRoles.length) {
+    if (!normalizedRoles.length) {
       return [];
     }
-    return PushNotificationToken.find({
-      tenantId,
+    const query = {
       audience: "staff",
       role: {
         $in: normalizedRoles,
       },
       isActive: true,
-    })
+    };
+    if (tenantId) {
+      query.$or = [{ tenantId }, { tenantId: null }];
+    }
+    return PushNotificationToken.find(query)
       .select("token")
       .lean();
   }
-  async getUserTokens(tenantId, userIds = []) {
+  async getUserTokens(tenantId = null, userIds = []) {
     const normalizedUserIds = [
       ...new Set(
         (userIds || [])
@@ -157,17 +160,20 @@ class PushNotificationManager {
           .filter(Boolean),
       ),
     ];
-    if (!tenantId || !normalizedUserIds.length) {
+    if (!normalizedUserIds.length) {
       return [];
     }
-    return PushNotificationToken.find({
-      tenantId,
+    const query = {
       audience: "staff",
       user: {
         $in: normalizedUserIds,
       },
       isActive: true,
-    })
+    };
+    if (tenantId) {
+      query.$or = [{ tenantId }, { tenantId: null }];
+    }
+    return PushNotificationToken.find(query)
       .select("token")
       .lean();
   }
@@ -184,7 +190,7 @@ class PushNotificationManager {
       .select("token")
       .lean();
   }
-  async deactivateInvalidTokens(tenantId, tokens = []) {
+  async deactivateInvalidTokens(tenantId = null, tokens = []) {
     const invalidTokens = [
       ...new Set(
         (tokens || [])
@@ -192,16 +198,19 @@ class PushNotificationManager {
           .filter(Boolean),
       ),
     ];
-    if (!tenantId || !invalidTokens.length) {
+    if (!invalidTokens.length) {
       return;
     }
-    await PushNotificationToken.updateMany(
-      {
-        tenantId,
-        token: {
-          $in: invalidTokens,
-        },
+    const query = {
+      token: {
+        $in: invalidTokens,
       },
+    };
+    if (tenantId) {
+      query.$or = [{ tenantId }, { tenantId: null }];
+    }
+    await PushNotificationToken.updateMany(
+      query,
       {
         $set: {
           isActive: false,
@@ -260,7 +269,7 @@ class PushNotificationManager {
         invalidTokens.push(uniqueRecords[index]?.token);
       }
     });
-    if (invalidTokens.length && payload.tenantId) {
+    if (invalidTokens.length) {
       await this.deactivateInvalidTokens(payload.tenantId, invalidTokens);
     }
     return {
@@ -273,19 +282,14 @@ class PushNotificationManager {
   async sendNotificationPush(notification = {}) {
     const tenantId =
       notification?.tenantId || notification?._doc?.tenantId || null;
-    if (!tenantId) {
-      return {
-        success: false,
-        skipped: true,
-        message: "Notification tenantId missing",
-      };
-    }
     let tokenRecords = [];
     if (notification.customerSessionId) {
-      tokenRecords = await this.getCustomerSessionTokens(
-        tenantId,
-        notification.customerSessionId,
-      );
+      if (tenantId) {
+        tokenRecords = await this.getCustomerSessionTokens(
+          tenantId,
+          notification.customerSessionId,
+        );
+      }
     } else if ((notification.recipients || []).length > 0) {
       tokenRecords = await this.getUserTokens(
         tenantId,
@@ -302,11 +306,14 @@ class PushNotificationManager {
         notification.roles || [],
       );
     } else if (notification.recipientType === "all") {
-      tokenRecords = await PushNotificationToken.find({
-        tenantId,
+      const query = {
         audience: "staff",
         isActive: true,
-      })
+      };
+      if (tenantId) {
+        query.$or = [{ tenantId }, { tenantId: null }];
+      }
+      tokenRecords = await PushNotificationToken.find(query)
         .select("token")
         .lean();
     }
